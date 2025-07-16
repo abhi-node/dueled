@@ -89,7 +89,7 @@ export class SpriteSheet {
       
       this.image.onerror = (event) => {
         clearTimeout(timeout);
-        console.error(`❌ SpriteSheet: Failed to load image from ${imageUrl}`);
+        console.error(`❌ SpriteSheet: Failed to load image from ${this.image?.src || imageUrl}`);
         
         // Safely access image properties to prevent null reference errors
         const safeImageData = this.image ? {
@@ -99,7 +99,8 @@ export class SpriteSheet {
         } : { naturalWidth: 0, naturalHeight: 0, complete: false };
         
         console.error(`📋 Error details:`, {
-          url: imageUrl,
+          originalUrl: imageUrl,
+          actualUrl: this.image?.src || 'unknown',
           imageElement: this.image,
           event: event,
           ...safeImageData
@@ -113,8 +114,12 @@ export class SpriteSheet {
         reject(new Error(`Failed to load sprite sheet: ${imageUrl}`));
       };
       
-      // Set the image source (no CORS needed for same-origin requests)
-      this.image.src = imageUrl;
+      // Set the image source with cache-busting to force fresh load
+      // This prevents browser from using cached 404 responses
+      const cacheBuster = `?t=${Date.now()}`;
+      const finalUrl = imageUrl + cacheBuster;
+      console.log(`🌐 SpriteSheet: Setting image src to: ${finalUrl}`);
+      this.image.src = finalUrl;
     });
     
     return this.loadPromise;
