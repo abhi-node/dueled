@@ -100,6 +100,11 @@ export class GameHandler {
     socket.on('player:attack', (data) => this.handlePlayerAttack(socket, data));
     socket.on('game:action', (action) => this.handleGameAction(socket, action));
     
+    // Debug endpoints
+    socket.on('debug:test_projectile', () => this.handleDebugTestProjectile(socket));
+    socket.on('debug:game_status', () => this.handleDebugGameStatus(socket));
+    socket.on('debug:init_game', (data) => this.handleDebugInitGame(socket, data));
+    
     socket.on('disconnect', () => this.handleDisconnect(socket));
   }
 
@@ -297,15 +302,93 @@ export class GameHandler {
         if (matchState.joinedPlayers.size === matchState.expectedPlayers.size) {
           matchState.allPlayersJoinedAt = Date.now();
           logger.info(`All players have joined match ${data.matchId}`);
+          
+          // Ensure game state exists and start game loop
+          await this.ensureGameStateAndStart(data.matchId);
         }
         
         logger.info(`Player ${userId} joined match ${data.matchId}. Players in match: ${matchState.joinedPlayers.size}/${matchState.expectedPlayers.size}`);
       } else {
         logger.info(`Player ${userId} joined match ${data.matchId}`);
+        
+        // If no match state tracking, try to ensure game state anyway
+        await this.ensureGameStateAndStart(data.matchId);
       }
     } catch (error) {
       logger.error('Error joining match:', error);
       socket.emit('match_error', { error: error instanceof Error ? error.message : 'Unknown error' });
+    }
+  }
+  
+  /**
+   * Ensure game state exists and start the game
+   */
+  private async ensureGameStateAndStart(matchId: string): Promise<void> {
+    try {
+      // Check if game state already exists
+      let gameState = await gameStateService.getGameState(matchId);
+      
+      if (!gameState) {
+        logger.warn(`🎮 Game state not found for match ${matchId}, creating it now...`);
+        
+        // Get match data
+        const matchData = await matchmakingService.getMatch(matchId);
+        if (!matchData) {
+          logger.error(`Cannot create game state: Match ${matchId} not found`);
+          return;
+        }
+        
+        // Get player profiles
+        const player1Profile = await playerService.getPlayerProfile(matchData.player1.playerId);
+        const player2Profile = await playerService.getPlayerProfile(matchData.player2.playerId);
+        
+        if (!player1Profile || !player2Profile) {
+          logger.error(`Cannot create game state: Player profiles not found`);
+          return;
+        }
+        
+        // Create player objects
+        const player1 = {
+          id: matchData.player1.playerId,
+          username: matchData.player1.username,
+          rating: matchData.player1.rating,
+          isAnonymous: player1Profile.isAnonymous
+        };
+        
+        const player2 = {
+          id: matchData.player2.playerId,
+          username: matchData.player2.username,
+          rating: matchData.player2.rating,
+          isAnonymous: player2Profile.isAnonymous
+        };
+        
+        // Initialize game state
+        const initialized = await gameStateService.initializeGameState(
+          matchId,
+          player1,
+          player2,
+          matchData.player1.classType,
+          matchData.player2.classType
+        );
+        
+        if (!initialized) {
+          logger.error(`Failed to initialize game state for match ${matchId}`);
+          return;
+        }
+        
+        logger.info(`✅ Game state created for match ${matchId}`);
+      }
+      
+      // Start game loop if not already running
+      const started = await gameStateService.startGameLoop(matchId);
+      if (started) {
+        logger.info(`🎮 Game loop started for match ${matchId}`);
+      } else {
+        logger.warn(`⚠️ Failed to start game loop for match ${matchId} (may already be running)`);
+      }
+      
+    } catch (error) {
+      logger.error(`Error ensuring game state for match ${matchId}:`, error);
     }
   }
 
@@ -434,19 +517,81 @@ export class GameHandler {
     });
   }
 
-  private handlePlayerAttack(socket: Socket, data: any) {
+  private async handlePlayerAttack(socket: Socket, data: any) {
     const userId = socket.data.userId;
     const roomId = this.playerToRoom.get(userId);
     
+    logger.info(`🎯 Received player:attack from ${userId}, roomId: ${roomId}`);
+    
     if (!roomId) {
+      logger.warn(`❌ Player ${userId} tried to attack without being in a room`);
       return;
     }
     
-    // Broadcast attack to other players in the room
-    socket.to(roomId).emit('player:attacked', {
-      playerId: userId,
-      ...data
+    // Extract match ID from room ID
+    const matchId = roomId.replace('match:', '');
+    logger.info(`📍 Attack for match: ${matchId}`);
+    
+    // Ensure game state exists before processing attack
+    const gameState = await gameStateService.getGameState(matchId);
+    if (!gameState) {
+      logger.warn(`⚠️ Game state not found for match ${matchId}, attempting to create it...`);
+      await this.ensureGameStateAndStart(matchId);
+      
+      // Check again after creation attempt
+      const newGameState = await gameStateService.getGameState(matchId);
+      if (!newGameState) {
+        logger.error(`❌ Failed to create game state for match ${matchId}`);
+        return;
+      }
+    }
+    
+    // Get player class for attack processing
+    let classType = this.playerClasses.get(userId);
+    if (!classType) {
+      try {
+        const matchData = await matchmakingService.getMatch(matchId);
+        if (matchData) {
+          classType = userId === matchData.player1.playerId ? matchData.player1.classType : matchData.player2.classType;
+          if (classType) {
+            this.playerClasses.set(userId, classType);
+            logger.info(`🔍 Retrieved class ${classType} for player ${userId}`);
+          }
+        }
+      } catch (error) {
+        logger.error(`Error retrieving player class for attack:`, error);
+      }
+    }
+    
+    if (!classType) {
+      logger.warn(`❌ Player ${userId} attack without class type`);
+      return;
+    }
+    
+    logger.info(`⚔️ Processing attack from ${userId} (${classType}):`, {
+      direction: data.direction,
+      targetPosition: data.targetPosition,
+      attackType: data.attackType
     });
+    
+    // Create attack action for server processing
+    const action: GameAction = {
+      type: ActionType.ATTACK,
+      playerId: userId,
+      data: {
+        direction: data.direction,
+        targetPosition: data.targetPosition,
+        attackType: data.attackType || 'basic',
+        classType: classType,
+        timestamp: data.timestamp
+      },
+      timestamp: Date.now()
+    };
+    
+    // Process attack through game state service
+    const added = await gameStateService.addPlayerInput(matchId, userId, action);
+    
+    logger.info(`📨 Attack action ${added ? 'successfully added' : 'FAILED to add'} to game state for processing`);
   }
 
   private handleGameAction(socket: Socket, action: GameAction) {
@@ -474,6 +619,73 @@ export class GameHandler {
     this.io.of('/game').to(roomId).emit('game:state', serverAction);
     
     logger.debug(`Game action ${action.type} from player ${userId} in room ${roomId}`);
+  }
+
+  // Debug method to test projectile creation
+  private async handleDebugTestProjectile(socket: Socket) {
+    const userId = socket.data.userId;
+    const roomId = this.playerToRoom.get(userId);
+    
+    logger.info(`🧪 DEBUG: Test projectile requested by ${userId}`);
+    
+    if (!roomId) {
+      logger.warn(`🧪 DEBUG: User ${userId} not in a room`);
+      return;
+    }
+    
+    const matchId = roomId.replace('match:', '');
+    
+    // Manually trigger an attack
+    const testAttackData = {
+      direction: { x: 1, y: 0 },
+      targetPosition: { x: 500, y: 300 },
+      attackType: 'basic',
+      timestamp: Date.now()
+    };
+    
+    logger.info(`🧪 DEBUG: Simulating attack for ${userId} in match ${matchId}`);
+    await this.handlePlayerAttack(socket, testAttackData);
+  }
+
+  // Debug method to check game state status
+  private async handleDebugGameStatus(socket: Socket) {
+    const userId = socket.data.userId;
+    const roomId = this.playerToRoom.get(userId);
+    
+    if (!roomId) {
+      socket.emit('debug:status', { error: 'Not in a room' });
+      return;
+    }
+    
+    const matchId = roomId.replace('match:', '');
+    const status = await gameStateService.getGameStateStatus(matchId);
+    
+    logger.info(`🔍 DEBUG: Game status for match ${matchId}:`, status);
+    socket.emit('debug:status', status);
+  }
+
+  // Debug method to force initialize game state
+  private async handleDebugInitGame(socket: Socket, data: { matchId: string }) {
+    try {
+      logger.info(`🔧 DEBUG: Force initializing game state for match ${data.matchId}`);
+      
+      await this.ensureGameStateAndStart(data.matchId);
+      
+      // Check status
+      const status = await gameStateService.getGameStateStatus(data.matchId);
+      
+      socket.emit('debug:init_result', {
+        success: true,
+        matchId: data.matchId,
+        status
+      });
+    } catch (error) {
+      logger.error(`Failed to force init game state:`, error);
+      socket.emit('debug:init_result', {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
   }
 
   private async handleDisconnect(socket: Socket) {

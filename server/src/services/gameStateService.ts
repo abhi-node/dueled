@@ -26,6 +26,7 @@ import {
 export interface ServerGameState {
   matchId: string;
   players: Map<string, ServerPlayer>;
+  projectiles: Map<string, ServerProjectile>; // Add projectile tracking
   arena: Arena;
   gameTime: number;
   status: MatchStatus;
@@ -103,6 +104,7 @@ export interface GameUpdate {
   tick: number;
   timestamp: number;
   players: Partial<ServerPlayer>[];
+  projectiles?: Partial<ServerProjectile>[];
   events: GameEvent[];
   worldState?: any;
 }
@@ -111,6 +113,38 @@ export interface ValidationResult {
   valid: boolean;
   error?: string;
   correctedValue?: any;
+}
+
+export interface ServerProjectile {
+  id: string;
+  type: 'arrow' | 'ice_shard' | 'fire_bomb' | 'magic_missile';
+  ownerId: string;
+  position: Vector2;
+  velocity: Vector2;
+  rotation: number;
+  speed: number;
+  damage: number;
+  range: number;
+  distanceTraveled: number;
+  size: { width: number; height: number };
+  piercing: boolean;
+  homing: boolean;
+  targetId?: string;
+  armorPenetration: number;
+  isActive: boolean;
+  createdAt: number;
+  lastUpdate: number;
+}
+
+export interface ProjectileHit {
+  projectileId: string;
+  targetId: string;
+  damage: number;
+  finalDamage: number;
+  armorReduction: number;
+  effects: string[];
+  position: Vector2;
+  isKilled: boolean;
 }
 
 export class GameStateService {
@@ -197,7 +231,8 @@ export class GameStateService {
         playerInputs: new Map([
           [player1.id, []],
           [player2.id, []]
-        ])
+        ]),
+        projectiles: new Map()
       };
       
       // Store in memory
@@ -219,15 +254,27 @@ export class GameStateService {
    */
   async startGameLoop(matchId: string): Promise<boolean> {
     try {
+      logger.info(`🚀 Attempting to start game loop for match ${matchId}`);
+      
+      // Check if game loop is already running
+      if (this.gameLoops.has(matchId)) {
+        logger.warn(`⚠️ Game loop already running for match ${matchId}`);
+        return true; // Already running is considered success
+      }
+      
       const gameState = await this.getGameState(matchId);
       if (!gameState) {
         logger.error(`Cannot start game loop: Game state not found for match ${matchId}`);
         return false;
       }
       
+      logger.info(`📊 Game state status before start: ${gameState.status}`);
+      
       // Update status to in progress
       gameState.status = MatchStatus.IN_PROGRESS;
       await this.updateGameState(matchId, gameState);
+      
+      logger.info(`✅ Game state status updated to: ${gameState.status}`);
       
       // Start fixed timestep game loop
       const gameLoop = setInterval(() => {
@@ -238,7 +285,13 @@ export class GameStateService {
       
       this.gameLoops.set(matchId, gameLoop);
       
-      logger.info(`Game loop started for match ${matchId} at ${this.TICK_RATE} TPS`);
+      logger.info(`🎮 Game loop started for match ${matchId} at ${this.TICK_RATE} TPS (tick every ${this.TICK_INTERVAL}ms)`);
+      
+      // Do an immediate tick to test
+      this.processGameTick(matchId).catch(error => {
+        logger.error(`Initial game tick error for match ${matchId}:`, error);
+      });
+      
       return true;
     } catch (error) {
       logger.error('Error starting game loop:', error);
@@ -265,14 +318,23 @@ export class GameStateService {
     try {
       const gameState = await this.getGameState(matchId);
       if (!gameState || gameState.status !== MatchStatus.IN_PROGRESS) {
+        logger.warn(`⏸️ Skipping tick for match ${matchId}: status=${gameState?.status}`);
         return;
       }
       
       const now = Date.now();
       const deltaTime = now - gameState.lastUpdate;
       
+      // Log tick info periodically
+      if (Math.floor(gameState.gameTime / 1000) % 5 === 0 && deltaTime < 100) {
+        logger.debug(`🎮 Game tick ${Math.floor(gameState.gameTime / this.TICK_INTERVAL)} for match ${matchId}`);
+      }
+      
       // Process player inputs
       await this.processPlayerInputs(gameState, deltaTime);
+      
+      // Update projectile physics and collisions
+      this.updateProjectiles(gameState, deltaTime);
       
       // Update game physics
       this.updateGamePhysics(gameState, deltaTime);
@@ -308,22 +370,34 @@ export class GameStateService {
    * Process player inputs for this tick
    */
   private async processPlayerInputs(gameState: ServerGameState, deltaTime: number): Promise<void> {
+    let totalInputsProcessed = 0;
+    
     for (const [playerId, inputs] of gameState.playerInputs) {
       const player = gameState.players.get(playerId);
       if (!player || !player.isAlive) continue;
       
       // Process unprocessed inputs
       const unprocessedInputs = inputs.filter(input => !input.processed);
+      
+      if (unprocessedInputs.length > 0) {
+        logger.info(`📥 Processing ${unprocessedInputs.length} inputs for player ${playerId}`);
+      }
+      
       const inputsToProcess = unprocessedInputs.slice(0, this.MAX_EVENTS_PER_TICK);
       
       for (const input of inputsToProcess) {
         await this.processPlayerInput(gameState, player, input, deltaTime);
         input.processed = true;
+        totalInputsProcessed++;
       }
       
       // Remove processed inputs (keep recent ones for validation)
       const cutoffTime = Date.now() - this.INTERPOLATION_BUFFER;
       gameState.playerInputs.set(playerId, inputs.filter(input => input.timestamp > cutoffTime));
+    }
+    
+    if (totalInputsProcessed > 0) {
+      logger.info(`✅ Processed ${totalInputsProcessed} total player inputs this tick`);
     }
   }
 
@@ -332,6 +406,8 @@ export class GameStateService {
    */
   private async processPlayerInput(gameState: ServerGameState, player: ServerPlayer, input: PlayerInput, deltaTime: number): Promise<void> {
     const action = input.action;
+    
+    logger.info(`🎮 Processing ${action.type} action for player ${player.id}`);
     
     // Validate input timing
     if (input.timestamp < player.lastInputTime) {
@@ -348,6 +424,7 @@ export class GameStateService {
         break;
         
       case ActionType.ATTACK:
+        logger.info(`⚔️ Processing ATTACK action for player ${player.id}`);
         await this.processAttack(gameState, player, action.data);
         break;
         
@@ -396,6 +473,65 @@ export class GameStateService {
    * Process player attack
    */
   private async processAttack(gameState: ServerGameState, player: ServerPlayer, attackData: any): Promise<void> {
+    const { direction, attackType, targetPosition } = attackData;
+    
+    logger.info(`⚔️ Processing ${attackType || 'basic'} attack from player ${player.id} (${player.classType})`);
+    
+    // Check if this is a projectile-based attack
+    if (this.isProjectileClass(player.classType)) {
+      logger.info(`🏹 Player ${player.id} is projectile class, processing projectile attack`);
+      await this.processProjectileAttack(gameState, player, attackData);
+    } else {
+      // Handle melee/instant attacks for other classes
+      logger.info(`🗡️ Player ${player.id} is melee class, processing melee attack`);
+      await this.processMeleeAttack(gameState, player, attackData);
+    }
+  }
+
+  /**
+   * Process projectile-based attack (Archer, Mage with projectiles)
+   */
+  private async processProjectileAttack(gameState: ServerGameState, player: ServerPlayer, attackData: any): Promise<void> {
+    const { direction, attackType, targetPosition } = attackData;
+    
+    // Calculate direction vector
+    let attackDirection = direction;
+    if (targetPosition) {
+      const dx = targetPosition.x - player.position.x;
+      const dy = targetPosition.y - player.position.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      if (distance > 0) {
+        attackDirection = { x: dx / distance, y: dy / distance };
+      }
+    }
+    
+    // Determine projectile type based on class
+    let projectileType = 'arrow';
+    if (player.classType === ClassType.ARCHER) {
+      projectileType = 'arrow';
+    } else if (player.classType === ClassType.MAGE) {
+      projectileType = 'magic_missile';
+    }
+    
+    // Create projectile
+    const projectile = this.createProjectile(gameState, {
+      type: projectileType,
+      ownerId: player.id,
+      position: player.position,
+      direction: attackDirection,
+      classType: player.classType,
+      attackType: attackType || 'basic'
+    });
+    
+    if (projectile) {
+      logger.debug(`Player ${player.id} (${player.classType}) fired ${projectileType} projectile`);
+    }
+  }
+
+  /**
+   * Process melee/instant attack (Berserker, Bomber)
+   */
+  private async processMeleeAttack(gameState: ServerGameState, player: ServerPlayer, attackData: any): Promise<void> {
     const { target, direction, attackType } = attackData;
     
     // Calculate damage based on class and stats
@@ -447,6 +583,15 @@ export class GameStateService {
         gameState.events.push(deathEvent);
       }
     }
+  }
+
+  /**
+   * Check if class uses projectile-based attacks
+   */
+  private isProjectileClass(classType: ClassType): boolean {
+    const result = classType === ClassType.ARCHER || classType === ClassType.MAGE;
+    logger.debug(`🔍 isProjectileClass check: ${classType} -> ${result}`);
+    return result;
   }
 
   /**
@@ -606,18 +751,46 @@ export class GameStateService {
       buffs: player.buffs.filter(buff => buff.startTime > gameState.lastUpdate - this.TICK_INTERVAL)
     }));
     
+    // Include all active projectiles for synchronization
+    const allProjectiles = Array.from(gameState.projectiles.values());
+    const activeProjectiles = allProjectiles.filter(projectile => projectile.isActive);
+    
+    if (allProjectiles.length > 0) {
+      logger.info(`📊 Projectiles in game state: ${allProjectiles.length} total, ${activeProjectiles.length} active`);
+    }
+    
+    const projectileUpdates = activeProjectiles.map(projectile => ({
+      id: projectile.id,
+      type: projectile.type,
+      ownerId: projectile.ownerId,
+      position: projectile.position,
+      velocity: projectile.velocity,
+      rotation: projectile.rotation,
+      damage: projectile.damage,
+      piercing: projectile.piercing,
+      homing: projectile.homing,
+      targetId: projectile.targetId
+    }));
+    
     // Get new events since last update
     const newEvents = gameState.events.filter(event => 
       event.timestamp > gameState.lastUpdate - this.TICK_INTERVAL
     );
     
-    return {
+    const update = {
       matchId: gameState.matchId,
       tick,
       timestamp: Date.now(),
       players: playerUpdates,
+      projectiles: projectileUpdates,
       events: newEvents
     };
+    
+    if (projectileUpdates.length > 0) {
+      logger.info(`📤 Including ${projectileUpdates.length} projectiles in game update for match ${gameState.matchId}`);
+    }
+    
+    return update;
   }
 
   /**
@@ -625,6 +798,11 @@ export class GameStateService {
    */
   private async broadcastGameUpdate(matchId: string, gameUpdate: GameUpdate): Promise<void> {
     try {
+      // Log projectile count for debugging
+      if (gameUpdate.projectiles && gameUpdate.projectiles.length > 0) {
+        logger.info(`📡 Broadcasting game update for match ${matchId} with ${gameUpdate.projectiles.length} projectiles`);
+      }
+      
       // Store update in Redis for WebSocket handler
       await redis.lpush(`match:${matchId}:updates`, JSON.stringify(gameUpdate));
       
@@ -651,10 +829,15 @@ export class GameStateService {
    */
   async addPlayerInput(matchId: string, playerId: string, action: GameAction): Promise<boolean> {
     try {
+      logger.info(`➕ Adding ${action.type} input for player ${playerId} in match ${matchId}`);
+      
       const gameState = await this.getGameState(matchId);
       if (!gameState) {
+        logger.error(`❌ Cannot add input: Game state not found for match ${matchId}`);
         return false;
       }
+      
+      logger.info(`📊 Game state status: ${gameState.status}, Players: ${gameState.players.size}, Projectiles: ${gameState.projectiles.size}`);
       
       const input: PlayerInput = {
         playerId,
@@ -666,6 +849,8 @@ export class GameStateService {
       const playerInputs = gameState.playerInputs.get(playerId) || [];
       playerInputs.push(input);
       gameState.playerInputs.set(playerId, playerInputs);
+      
+      logger.info(`✅ Input added. Player ${playerId} now has ${playerInputs.length} inputs queued`);
       
       return true;
     } catch (error) {
@@ -679,20 +864,26 @@ export class GameStateService {
    */
   async getGameState(matchId: string): Promise<ServerGameState | null> {
     try {
-      // Check memory cache first
+      // Always check memory cache first
       const memoryState = this.gameStates.get(matchId);
       if (memoryState) {
+        logger.debug(`🧠 Using in-memory game state for ${matchId} - Projectiles: ${memoryState.projectiles.size}`);
         return memoryState;
       }
       
-      // Check Redis cache
+      logger.warn(`⚠️ Game state not in memory for ${matchId}, checking Redis cache...`);
+      
+      // Check Redis cache only if not in memory
       const cachedState = await redis.get(`gamestate:${matchId}`);
       if (cachedState) {
         const gameState = this.deserializeGameState(JSON.parse(cachedState));
+        // Put it back in memory
         this.gameStates.set(matchId, gameState);
+        logger.info(`📥 Restored game state from cache for ${matchId} - Projectiles: ${gameState.projectiles.size}`);
         return gameState;
       }
       
+      logger.error(`❌ Game state not found anywhere for match ${matchId}`);
       return null;
     } catch (error) {
       logger.error('Error getting game state:', error);
@@ -705,8 +896,13 @@ export class GameStateService {
    */
   async updateGameState(matchId: string, gameState: ServerGameState): Promise<void> {
     try {
+      // Ensure we're updating the in-memory reference
       this.gameStates.set(matchId, gameState);
+      
+      // Also update cache
       await this.cacheGameState(matchId, gameState);
+      
+      logger.debug(`📝 Updated game state for match ${matchId} - Projectiles: ${gameState.projectiles.size}`);
     } catch (error) {
       logger.error('Error updating game state:', error);
     }
@@ -731,7 +927,9 @@ export class GameStateService {
     return {
       ...gameState,
       players: Array.from(gameState.players.entries()),
-      playerInputs: Array.from(gameState.playerInputs.entries())
+      playerInputs: Array.from(gameState.playerInputs.entries()),
+      projectiles: Array.from(gameState.projectiles.entries()),
+      events: gameState.events.slice(-100) // Keep only last 100 events
     };
   }
 
@@ -741,8 +939,9 @@ export class GameStateService {
   private deserializeGameState(serializedState: any): ServerGameState {
     return {
       ...serializedState,
-      players: new Map(serializedState.players),
-      playerInputs: new Map(serializedState.playerInputs)
+      players: new Map(serializedState.players || []),
+      playerInputs: new Map(serializedState.playerInputs || []),
+      projectiles: new Map(serializedState.projectiles || [])
     };
   }
 
@@ -975,6 +1174,432 @@ export class GameStateService {
     } catch (error) {
       logger.error('Error cleaning up game state:', error);
     }
+  }
+
+  /**
+   * Create projectile on server (called from attack processing)
+   */
+  public createProjectile(gameState: ServerGameState, projectileData: {
+    type: string;
+    ownerId: string;
+    position: Vector2;
+    direction: Vector2;
+    classType: ClassType;
+    attackType: 'basic' | 'special';
+  }): ServerProjectile | null {
+    const owner = gameState.players.get(projectileData.ownerId);
+    if (!owner || !owner.isAlive) return null;
+
+    const classConfig = this.getClassConfig(projectileData.classType);
+    const weapon = classConfig.weapon;
+    
+    // Generate unique projectile ID
+    const projectileId = `${projectileData.type}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    // Calculate projectile properties based on class and attack type
+    const isSpecial = projectileData.attackType === 'special';
+    const damageMultiplier = isSpecial ? 1.2 : 1.0; // Special attacks do 20% more damage
+    const speedMultiplier = isSpecial ? 0.9 : 1.0; // Special attacks are slightly slower
+    const rangeMultiplier = isSpecial ? 1.5 : 1.0; // Special attacks have longer range
+    
+    const baseDamage = calculateEffectiveDamage(weapon.damage * damageMultiplier, owner.stats.strength);
+    const projectileSpeed = isSpecial ? 120 : 150; // Slowed down for debugging - match client speeds
+    
+    // Create projectile on server
+    const projectile: ServerProjectile = {
+      id: projectileId,
+      type: projectileData.type as 'arrow' | 'ice_shard' | 'fire_bomb' | 'magic_missile',
+      ownerId: projectileData.ownerId,
+      position: {
+        x: projectileData.position.x + projectileData.direction.x * 20, // Start projectile slightly away from owner
+        y: projectileData.position.y + projectileData.direction.y * 20
+      },
+      velocity: {
+        x: projectileData.direction.x * projectileSpeed,
+        y: projectileData.direction.y * projectileSpeed
+      },
+      rotation: Math.atan2(projectileData.direction.y, projectileData.direction.x),
+      damage: baseDamage,
+      speed: projectileSpeed,
+      range: weapon.range * rangeMultiplier * 32, // Convert tiles to pixels
+      distanceTraveled: 0,
+      size: { width: 24, height: 6 }, // Standard arrow size
+      piercing: projectileData.type === 'arrow', // Arrows pierce
+      homing: isSpecial && projectileData.classType === ClassType.ARCHER,
+      targetId: undefined, // Will be set for homing projectiles
+      armorPenetration: projectileData.classType === ClassType.ARCHER ? 50 : 0,
+      isActive: true,
+      createdAt: Date.now(),
+      lastUpdate: Date.now()
+    };
+    
+    // For homing projectiles, find nearest enemy
+    if (projectile.homing) {
+      const nearestEnemy = this.findNearestPlayer(gameState, projectileData.ownerId, projectileData.position);
+      if (nearestEnemy) {
+        projectile.targetId = nearestEnemy.id;
+      }
+    }
+    
+    // Add projectile to game state
+    gameState.projectiles.set(projectileId, projectile);
+    
+    // Verify it was added
+    const wasAdded = gameState.projectiles.has(projectileId);
+    logger.info(`🎯 Projectile ${projectileId} ${wasAdded ? 'successfully added' : 'FAILED to add'} to game state. Total projectiles: ${gameState.projectiles.size}`);
+    
+    // Create projectile creation event
+    const createEvent: GameEvent = {
+      id: `projectile_created_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      type: 'projectile_created',
+      playerId: projectileData.ownerId,
+      data: {
+        projectileId: projectileId,
+        type: projectileData.type,
+        position: projectile.position,
+        velocity: projectile.velocity,
+        damage: projectile.damage
+      },
+      timestamp: Date.now(),
+      processed: false
+    };
+    gameState.events.push(createEvent);
+    
+    logger.info(`🏹 Created ${projectileData.type} projectile ${projectileId} for ${projectileData.ownerId} at (${projectile.position.x.toFixed(1)}, ${projectile.position.y.toFixed(1)}) with velocity (${projectile.velocity.x.toFixed(1)}, ${projectile.velocity.y.toFixed(1)})`);
+    
+    return projectile;
+  }
+
+  /**
+   * Update all projectiles - physics and collision detection
+   */
+  private updateProjectiles(gameState: ServerGameState, deltaTime: number): void {
+    const deltaSeconds = deltaTime / 1000;
+    const projectilesToRemove: string[] = [];
+    const hits: ProjectileHit[] = [];
+    
+    // Create target map for homing projectiles
+    const targetMap = new Map<string, Vector2>();
+    for (const [playerId, player] of gameState.players) {
+      if (player.isAlive) {
+        targetMap.set(playerId, player.position);
+      }
+    }
+    
+    // Log if we have projectiles to update
+    if (gameState.projectiles.size > 0) {
+      logger.info(`🎯 Updating ${gameState.projectiles.size} projectiles, deltaTime: ${deltaTime}ms`);
+    }
+    
+    for (const [projectileId, projectile] of gameState.projectiles) {
+      if (!projectile.isActive) {
+        projectilesToRemove.push(projectileId);
+        continue;
+      }
+      
+      // Log projectile state before update
+      const beforePos = { x: projectile.position.x, y: projectile.position.y };
+      
+      // Update position based on velocity
+      projectile.position.x += projectile.velocity.x * deltaSeconds;
+      projectile.position.y += projectile.velocity.y * deltaSeconds;
+      projectile.lastUpdate = Date.now();
+      
+      // Update distance traveled
+      const distanceMoved = Math.sqrt(
+        Math.pow(projectile.velocity.x * deltaSeconds, 2) + 
+        Math.pow(projectile.velocity.y * deltaSeconds, 2)
+      );
+      projectile.distanceTraveled += distanceMoved;
+      
+      logger.debug(`📍 Projectile ${projectileId} moved from (${beforePos.x.toFixed(1)}, ${beforePos.y.toFixed(1)}) to (${projectile.position.x.toFixed(1)}, ${projectile.position.y.toFixed(1)}), distance: ${distanceMoved.toFixed(1)}`);
+      
+      // Update homing behavior
+      if (projectile.homing && projectile.targetId) {
+        this.updateProjectileHoming(projectile, targetMap, deltaSeconds);
+      }
+      
+      // Update position
+      const moveDistance = projectile.speed * deltaSeconds;
+      const newPosition = {
+        x: projectile.position.x + projectile.velocity.x * moveDistance,
+        y: projectile.position.y + projectile.velocity.y * moveDistance
+      };
+      
+      // Check arena bounds
+      if (this.isProjectileOutOfBounds(newPosition, gameState.arena)) {
+        projectilesToRemove.push(projectileId);
+        continue;
+      }
+      
+      // Check wall collisions
+      if (this.checkProjectileWallCollision(newPosition, gameState.arena)) {
+        projectilesToRemove.push(projectileId);
+        continue;
+      }
+      
+      // Update projectile state
+      projectile.position = newPosition;
+      projectile.distanceTraveled += moveDistance;
+      projectile.rotation = Math.atan2(projectile.velocity.y, projectile.velocity.x);
+      projectile.lastUpdate = Date.now();
+      
+      // Check range limit
+      if (projectile.distanceTraveled >= projectile.range) {
+        projectilesToRemove.push(projectileId);
+        continue;
+      }
+      
+      // Check player collisions
+      for (const [playerId, player] of gameState.players) {
+        // Skip owner and dead players
+        if (playerId === projectile.ownerId || !player.isAlive) continue;
+        
+        if (this.checkProjectilePlayerCollision(projectile, player)) {
+          // Calculate damage
+          const hit = this.calculateProjectileDamage(projectile, player);
+          hits.push(hit);
+          
+          // Apply damage
+          player.health -= hit.finalDamage;
+          player.isAlive = player.health > 0;
+          
+          // Remove projectile unless it's piercing and target survived
+          if (!projectile.piercing || !player.isAlive) {
+            projectilesToRemove.push(projectileId);
+          }
+          
+          logger.debug(`Projectile ${projectileId} hit player ${playerId} for ${hit.finalDamage} damage`);
+          break; // Only hit one target per update
+        }
+      }
+    }
+    
+    // Remove inactive/expired projectiles
+    for (const projectileId of projectilesToRemove) {
+      const projectile = gameState.projectiles.get(projectileId);
+      if (projectile) {
+        // Create projectile destroyed event
+        const destroyEvent: GameEvent = {
+          id: `projectile_destroyed_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          type: 'projectile_destroyed',
+          playerId: projectile.ownerId,
+          data: {
+            projectileId: projectileId,
+            position: projectile.position
+          },
+          timestamp: Date.now(),
+          processed: false
+        };
+        gameState.events.push(destroyEvent);
+      }
+      gameState.projectiles.delete(projectileId);
+    }
+    
+    // Process hits
+    for (const hit of hits) {
+      const hitEvent: GameEvent = {
+        id: `projectile_hit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        type: 'projectile_hit',
+        playerId: hit.targetId,
+        data: hit,
+        timestamp: Date.now(),
+        processed: false
+      };
+      gameState.events.push(hitEvent);
+      
+      // Check if target died
+      const target = gameState.players.get(hit.targetId);
+      if (target && !target.isAlive) {
+        const deathEvent: GameEvent = {
+          id: `death_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          type: 'player_death',
+          playerId: hit.targetId,
+          data: {
+            killerId: gameState.projectiles.get(hit.projectileId)?.ownerId,
+            position: target.position,
+            cause: 'projectile'
+          },
+          timestamp: Date.now(),
+          processed: false
+        };
+        gameState.events.push(deathEvent);
+      }
+    }
+  }
+
+  /**
+   * Update homing projectile behavior
+   */
+  private updateProjectileHoming(projectile: ServerProjectile, targetMap: Map<string, Vector2>, deltaSeconds: number): void {
+    if (!projectile.targetId) return;
+    
+    const targetPosition = targetMap.get(projectile.targetId);
+    if (!targetPosition) return;
+    
+    // Calculate direction to target
+    const dx = targetPosition.x - projectile.position.x;
+    const dy = targetPosition.y - projectile.position.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    
+    if (distance > 0) {
+      // Calculate new velocity with homing behavior
+      const targetDirection = { x: dx / distance, y: dy / distance };
+      const homingStrength = 2.0; // How strong the homing effect is
+      const currentVel = projectile.velocity;
+      
+      // Blend current velocity with target direction
+      projectile.velocity.x = currentVel.x + (targetDirection.x - currentVel.x) * homingStrength * deltaSeconds;
+      projectile.velocity.y = currentVel.y + (targetDirection.y - currentVel.y) * homingStrength * deltaSeconds;
+      
+      // Normalize velocity
+      const velMagnitude = Math.sqrt(projectile.velocity.x * projectile.velocity.x + projectile.velocity.y * projectile.velocity.y);
+      if (velMagnitude > 0) {
+        projectile.velocity.x /= velMagnitude;
+        projectile.velocity.y /= velMagnitude;
+      }
+    }
+  }
+
+  /**
+   * Check if projectile is out of arena bounds
+   */
+  private isProjectileOutOfBounds(position: Vector2, arena: Arena): boolean {
+    return position.x < 0 || position.x > arena.width || 
+           position.y < 0 || position.y > arena.height;
+  }
+
+  /**
+   * Check projectile collision with walls
+   */
+  private checkProjectileWallCollision(position: Vector2, arena: Arena): boolean {
+    // Simple wall collision - check against arena obstacles
+    for (const obstacle of arena.obstacles) {
+      if (position.x >= obstacle.position.x && 
+          position.x <= obstacle.position.x + obstacle.size.x &&
+          position.y >= obstacle.position.y && 
+          position.y <= obstacle.position.y + obstacle.size.y) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Check projectile collision with player
+   */
+  private checkProjectilePlayerCollision(projectile: ServerProjectile, player: ServerPlayer): boolean {
+    const dx = projectile.position.x - player.position.x;
+    const dy = projectile.position.y - player.position.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    
+    const playerRadius = 16; // Standard player hitbox radius
+    const projectileRadius = Math.max(projectile.size.width, projectile.size.height) / 2;
+    
+    return distance <= (playerRadius + projectileRadius);
+  }
+
+  /**
+   * Calculate projectile damage with armor penetration
+   */
+  private calculateProjectileDamage(projectile: ServerProjectile, target: ServerPlayer): ProjectileHit {
+    const baseDamage = projectile.damage;
+    
+    // Calculate armor after penetration
+    let effectiveArmor = target.armor;
+    if (projectile.armorPenetration > 0) {
+      effectiveArmor = target.armor * (1 - projectile.armorPenetration / 100);
+    }
+    
+    // Apply armor reduction formula
+    const armorReduction = effectiveArmor / (effectiveArmor + 100);
+    const finalDamage = Math.max(1, Math.round(baseDamage * (1 - armorReduction)));
+    
+    const effects: string[] = [];
+    if (projectile.piercing) effects.push('piercing');
+    if (projectile.homing) effects.push('homing');
+    
+    return {
+      projectileId: projectile.id,
+      targetId: target.id,
+      damage: baseDamage,
+      finalDamage: finalDamage,
+      armorReduction: armorReduction,
+      effects: effects,
+      position: { ...projectile.position },
+      isKilled: target.health - finalDamage <= 0
+    };
+  }
+
+  /**
+   * Find nearest target for homing projectiles
+   */
+  private findNearestTarget(gameState: ServerGameState, attacker: ServerPlayer): string | undefined {
+    let nearestDistance = Infinity;
+    let nearestTarget: string | undefined;
+    
+    for (const [playerId, player] of gameState.players) {
+      if (playerId === attacker.id || !player.isAlive) continue;
+      
+      const dx = player.position.x - attacker.position.x;
+      const dy = player.position.y - attacker.position.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestTarget = playerId;
+      }
+    }
+    
+    return nearestTarget;
+  }
+
+  private findNearestPlayer(gameState: ServerGameState, ownerId: string, position: Vector2): ServerPlayer | undefined {
+    let nearestDistance = Infinity;
+    let nearestPlayer: ServerPlayer | undefined;
+
+    for (const [playerId, player] of gameState.players) {
+      if (playerId === ownerId || !player.isAlive) continue;
+
+      const dx = player.position.x - position.x;
+      const dy = player.position.y - position.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestPlayer = player;
+      }
+    }
+
+    return nearestPlayer;
+  }
+
+  /**
+   * Get game state status for debugging
+   */
+  async getGameStateStatus(matchId: string): Promise<any> {
+    const gameState = await this.getGameState(matchId);
+    if (!gameState) {
+      return { error: 'Game state not found' };
+    }
+    
+    const gameLoop = this.gameLoops.get(matchId);
+    
+    return {
+      matchId,
+      status: gameState.status,
+      gameTime: gameState.gameTime,
+      tickRate: gameState.tickRate,
+      players: gameState.players.size,
+      projectiles: gameState.projectiles.size,
+      events: gameState.events.length,
+      gameLoopRunning: !!gameLoop,
+      playerInputs: Array.from(gameState.playerInputs.entries()).map(([playerId, inputs]) => ({
+        playerId,
+        pendingInputs: inputs.filter(i => !i.processed).length,
+        totalInputs: inputs.length
+      }))
+    };
   }
 }
 

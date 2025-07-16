@@ -68,6 +68,7 @@ Each class has six primary stats that determine their capabilities:
 - **Attack Type**: Ice projectiles with inherent frost effect
 - **Stats**: Health 100, Defense 30, Speed 95, Stamina 80, Strength 70, Intelligence 90
 - **Weapon Damage**: 65 base damage, 9 tile range, 1.0 attacks/sec (1.0s cooldown)
+- **Projectile Speed**: 300 pixels/second - moderate speed with tracking capability
 - **Special Ability**: **Ice Age** - Map-wide frost effect slowing all enemies by 20% for 6 seconds (30s base cooldown)
 - **Inherent Abilities**: Ice projectiles slow enemies by 30% for 2 seconds on hit
 
@@ -77,6 +78,7 @@ Each class has six primary stats that determine their capabilities:
 - **Attack Type**: Thrown explosives with AOE damage
 - **Stats**: Health 120, Defense 40, Speed 88, Stamina 70, Strength 85, Intelligence 65
 - **Weapon Damage**: 75 direct damage, 50 AOE damage, 6 tile range, 3-tile explosion radius, 0.83 attacks/sec (1.2s cooldown)
+- **Projectile Speed**: 200 pixels/second - slower arcing grenades with gravity effect
 - **Special Ability**: **Enhanced Explosives** - Next 3 bombs have 30% increased damage and larger radius for 15 seconds (35s base cooldown)
 - **Inherent Abilities**: **Armor Burn** - AOE fire damage bypasses 25% of target armor
 
@@ -86,6 +88,7 @@ Each class has six primary stats that determine their capabilities:
 - **Attack Type**: High-velocity piercing projectiles
 - **Stats**: Health 80, Defense 20, Speed 105, Stamina 95, Strength 80, Intelligence 75
 - **Weapon Damage**: 80 base damage, 13 tile range, 1.25 attacks/sec (0.8s cooldown)
+- **Projectile Speed**: 400 pixels/second - fast but visible projectiles with high precision
 - **Special Ability**: **Dispatcher** - Fire a homing arrow that tracks nearest enemy for 120% normal damage (20s base cooldown)
 - **Inherent Abilities**: **Piercing Shot** - All arrows naturally ignore 50% of target armor
 

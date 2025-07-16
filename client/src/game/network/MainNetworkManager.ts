@@ -12,6 +12,9 @@ export interface NetworkEventHandler {
   onPlayerMoved(playerId: string, position: Vector2, angle: number, classType?: ClassType): void;
   onPlayerRotated?(playerId: string, angle: number, classType?: ClassType): void;
   onMatchEnded?(data: any): void;
+  handleGameUpdate?(data: any): void;
+  onProjectileUpdate?(projectiles: any[]): void;
+  onGameEvents?(events: any[]): void;
 }
 
 export class MainNetworkManager {
@@ -96,12 +99,19 @@ export class MainNetworkManager {
   }
   
   /**
-   * Send attack action
+   * Send attack action with target information
    */
-  public sendAttack(): void {
+  public sendAttack(attackData: {
+    direction?: { x: number; y: number };
+    targetPosition?: { x: number; y: number };
+    attackType?: 'basic' | 'special';
+  }): void {
     if (!this.socket || !this.isConnected) return;
     
     this.socket.emit('player:attack', {
+      direction: attackData.direction,
+      targetPosition: attackData.targetPosition,
+      attackType: attackData.attackType || 'basic',
       timestamp: Date.now()
     });
   }
@@ -128,17 +138,17 @@ export class MainNetworkManager {
     
     // Connection events
     this.socket.on('connect', () => {
-      console.log('Connected to game server');
+      console.log('✅ Connected to game server namespace');
       this.isConnected = true;
     });
     
     this.socket.on('disconnect', () => {
-      console.log('Disconnected from game server');
+      console.log('❌ Disconnected from game server');
       this.isConnected = false;
     });
     
     this.socket.on('connect_error', (error) => {
-      console.error('Connection error:', error);
+      console.error('🚨 Connection error:', error);
     });
     
     // Game events
@@ -201,6 +211,30 @@ export class MainNetworkManager {
     this.socket.on('game:state', (gameState) => {
       // Handle full game state updates
       console.log('Received game state update');
+    });
+
+    this.socket.on('game:update', (data) => {
+      console.log(`🌐 NetworkManager received game:update:`, {
+        hasData: !!data,
+        hasProjectiles: !!data?.projectiles,
+        projectileCount: data?.projectiles?.length || 0,
+        hasEvents: !!data?.events,
+        eventCount: data?.events?.length || 0
+      });
+      
+      if (this.eventHandler.handleGameUpdate) {
+        this.eventHandler.handleGameUpdate(data);
+      }
+      
+      // Handle projectile updates
+      if (data.projectiles && this.eventHandler.onProjectileUpdate) {
+        this.eventHandler.onProjectileUpdate(data.projectiles);
+      }
+      
+      // Handle game events (projectile creation, hits, etc.)
+      if (data.events && this.eventHandler.onGameEvents) {
+        this.eventHandler.onGameEvents(data.events);
+      }
     });
 
     // Match ended event

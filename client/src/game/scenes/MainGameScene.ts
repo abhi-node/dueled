@@ -10,8 +10,11 @@ import { GameMap } from '../world/GameMap.js';
 import { MainNetworkManager } from '../network/MainNetworkManager.js';
 import { SpriteRenderer } from '../renderer/SpriteRenderer.js';
 import { TextureManager } from '../renderer/TextureManager.js';
+import { CombatManager } from '../combat/CombatManager.js';
+import { ArcherCombat } from '../combat/ArcherCombat.js';
+import { Projectile } from '../combat/Projectile.js';
 import type { Vector2, ClassType, ClassConfig } from '@dueled/shared';
-import { getClassConfig, calculateDashCooldown } from '@dueled/shared';
+import { getClassConfig, calculateDashCooldown, ClassType as CT } from '@dueled/shared';
 
 export class MainGameScene {
   private canvas: HTMLCanvasElement;
@@ -20,6 +23,10 @@ export class MainGameScene {
   private networkManager: MainNetworkManager;
   private spriteRenderer: SpriteRenderer;
   private textureManager: TextureManager;
+  
+  // Combat system
+  private combatManager: CombatManager;
+  private archerCombat: ArcherCombat;
   
   // UI elements
   private minimapCanvas!: HTMLCanvasElement;
@@ -56,6 +63,9 @@ export class MainGameScene {
   private lastDashTime: number = 0;
   private specialCooldownTime: number = 25.0;
   private lastSpecialTime: number = 0;
+  
+  // Combat state
+  private debugCombat: boolean = false; // Show hitboxes in debug mode
   
   // Performance tracking
   private fps: number = 0;
@@ -131,6 +141,10 @@ export class MainGameScene {
     this.networkManager = new MainNetworkManager(this, this.socket);
     this.spriteRenderer = new SpriteRenderer();
     this.textureManager = new TextureManager();
+    
+    // Initialize combat systems
+    this.combatManager = new CombatManager();
+    this.archerCombat = new ArcherCombat(this.combatManager);
     
     // Create UI elements
     this.createUI(container);
@@ -228,7 +242,7 @@ export class MainGameScene {
       <strong>${this.classConfig.name} Controls:</strong><br>
       WASD: Move • Mouse: Look & Pitch<br>
       Q: Dash Left • E: Dash Right<br>
-      Space: Attack • F: Special Ability<br>
+      Left Click/Space: Attack • F: Special Ability<br>
       Click: Lock Pointer • ESC: Unlock/Leave
     `;
     container.appendChild(instructions);
@@ -333,7 +347,7 @@ export class MainGameScene {
     window.addEventListener('keyup', (e) => this.handleKeyUp(e));
     
     // Mouse events
-    this.canvas.addEventListener('click', () => this.requestPointerLock());
+    this.canvas.addEventListener('click', (e) => this.handleMouseClick(e));
     window.addEventListener('mousemove', (e) => this.handleMouseMove(e));
     
     // Pointer lock events
@@ -344,7 +358,7 @@ export class MainGameScene {
   }
   
   /**
-   * Enhanced keyboard input handling with Q/E dash support
+   * Enhanced keyboard input handling with Q/E dash support and combat
    */
   private handleKeyDown(event: KeyboardEvent): void {
     this.keys.add(event.key.toLowerCase());
@@ -375,15 +389,74 @@ export class MainGameScene {
       return;
     }
 
+    // Handle combat inputs
+    if (event.key === ' ') { // Spacebar for basic attack
+      this.handleBasicAttack();
+      event.preventDefault();
+      return;
+    }
+    
+    // DEBUG: Add 'L' key for testing arrow firing
+    if (event.key.toLowerCase() === 'l') {
+      console.log('🎯 DEBUG: L key pressed - firing arrow');
+      this.handleBasicAttack();
+      event.preventDefault();
+      return;
+    }
+    
+    // DEBUG: Add 'P' key to test server projectile creation
+    if (event.key.toLowerCase() === 'p') {
+      console.log('🧪 DEBUG: P key pressed - testing server projectile creation');
+      if (this.socket && this.socket.connected) {
+        this.socket.emit('debug:test_projectile');
+      }
+      event.preventDefault();
+      return;
+    }
+    
+    // DEBUG: Add 'O' key to check game status
+    if (event.key.toLowerCase() === 'o') {
+      console.log('🔍 DEBUG: O key pressed - checking game status');
+      if (this.socket && this.socket.connected) {
+        this.socket.emit('debug:game_status');
+        this.socket.once('debug:status', (status: any) => {
+          console.log('📊 Game Status:', status);
+        });
+      }
+      event.preventDefault();
+      return;
+    }
+    
+    // DEBUG: Add 'I' key to force initialize game state
+    if (event.key.toLowerCase() === 'i') {
+      console.log('🔧 DEBUG: I key pressed - force initializing game state');
+      if (this.socket && this.socket.connected && this.matchId) {
+        this.socket.emit('debug:init_game', { matchId: this.matchId });
+        this.socket.once('debug:init_result', (result: any) => {
+          console.log('🎮 Game init result:', result);
+        });
+      }
+      event.preventDefault();
+      return;
+    }
+
     // Handle special ability
     if (event.key.toLowerCase() === 'f') {
       this.handleSpecialAbility();
       event.preventDefault();
       return;
     }
+
+    // Toggle debug mode
+    if (event.key.toLowerCase() === 'g') {
+      this.debugCombat = !this.debugCombat;
+      this.showNotification(`Debug mode: ${this.debugCombat ? 'ON' : 'OFF'}`, 'info');
+      event.preventDefault();
+      return;
+    }
     
     // Prevent default for game keys
-    if (['w', 'a', 's', 'd', ' '].includes(event.key.toLowerCase())) {
+    if (['w', 'a', 's', 'd'].includes(event.key.toLowerCase())) {
       event.preventDefault();
     }
   }
@@ -393,7 +466,7 @@ export class MainGameScene {
   }
   
   /**
-   * Handle mouse movement
+   * Handle mouse movement for aiming and combat
    */
   private handleMouseMove(event: MouseEvent): void {
     if (!this.pointerLocked) return;
@@ -411,6 +484,136 @@ export class MainGameScene {
     if (deltaX !== 0) {
       this.sendRotationUpdate();
     }
+
+    // Update archer facing direction for combat
+    if (this.localPlayerClass === CT.ARCHER && this.localPlayerId) {
+      const playerState = this.raycaster.getPlayerState();
+      this.archerCombat.updateArcherPosition(
+        this.localPlayerId, 
+        { x: playerState.x, y: playerState.y }, 
+        playerState.angle
+      );
+    }
+  }
+
+  /**
+   * Handle mouse clicks for combat
+   */
+  private handleMouseClick(event: MouseEvent): void {
+    if (!this.pointerLocked) {
+      this.requestPointerLock();
+      return;
+    }
+
+    // Left click for basic attack
+    if (event.button === 0) {
+      this.handleBasicAttack();
+    }
+    // Right click for special attack
+    else if (event.button === 2) {
+      this.handleSpecialAbility();
+    }
+  }
+
+  /**
+   * Handle basic attack input
+   */
+  private handleBasicAttack(): void {
+    // First try to get localPlayerId from match data if not set
+    if (!this.localPlayerId && this.matchData?.yourPlayerId) {
+      this.localPlayerId = this.matchData.yourPlayerId;
+      console.log('🔧 Fixed local player ID from match data:', this.localPlayerId);
+    }
+    
+    if (!this.localPlayerId) {
+      console.warn('🚫 Cannot attack: No local player ID');
+      return;
+    }
+
+    if (this.localPlayerClass === CT.ARCHER) {
+      // Check cooldown first
+      const cooldowns = this.archerCombat.getCooldowns(this.localPlayerId);
+      if (cooldowns.basic > 0) {
+        this.showNotification(`Attack cooling down: ${cooldowns.basic.toFixed(1)}s`, 'warning');
+        return;
+      }
+      
+      // Calculate target position (shoot forward)
+      const playerState = this.raycaster.getPlayerState();
+      const range = getClassConfig(CT.ARCHER).weapon.range;
+      const targetPosition = {
+        x: playerState.x + Math.cos(playerState.angle) * range * 32,
+        y: playerState.y + Math.sin(playerState.angle) * range * 32
+      };
+      
+      const direction = {
+        x: Math.cos(playerState.angle),
+        y: Math.sin(playerState.angle)
+      };
+      
+      console.log(`📤 Sending attack to server:`, {
+        playerId: this.localPlayerId,
+        position: { x: playerState.x, y: playerState.y },
+        direction,
+        targetPosition,
+        attackType: 'basic'
+      });
+      
+      // Send attack to server for authoritative processing
+      this.networkManager.sendAttack({
+        direction: direction,
+        targetPosition: targetPosition,
+        attackType: 'basic'
+      });
+      
+      // Still do local attack for immediate feedback (will be overridden by server)
+      const success = this.archerCombat.tryBasicAttack(this.localPlayerId, targetPosition);
+      if (success) {
+        console.log(`🏹 Local basic attack executed, sent to server for authority`);
+      } else {
+        console.log(`❌ Local basic attack failed`);
+      }
+    }
+    // TODO: Add other class basic attacks
+  }
+
+  /**
+   * Handle special ability input
+   */
+  private handleSpecialAbility(): void {
+    if (!this.localPlayerId) return;
+
+    if (this.localPlayerClass === CT.ARCHER) {
+      // Check cooldown first
+      const cooldowns = this.archerCombat.getCooldowns(this.localPlayerId);
+      if (cooldowns.special > 0) {
+        this.showNotification(`${this.classConfig.specialAbility.name} cooling down: ${cooldowns.special.toFixed(1)}s`, 'warning');
+        return;
+      } else if (cooldowns.specialCharges <= 0) {
+        this.showNotification(`No ${this.classConfig.specialAbility.name} charges available`, 'warning');
+        return;
+      }
+      
+      // For homing attack, we don't need a specific target position as server will find nearest enemy
+      const playerState = this.raycaster.getPlayerState();
+      const direction = {
+        x: Math.cos(playerState.angle),
+        y: Math.sin(playerState.angle)
+      };
+      
+      // Send special attack to server
+      this.networkManager.sendAttack({
+        direction: direction,
+        attackType: 'special'
+      });
+      
+      // Still do local attack for immediate feedback
+      const success = this.archerCombat.trySpecialAttack(this.localPlayerId);
+      if (success) {
+        console.log(`⚡ Local special attack (Dispatcher) executed, sent to server for authority`);
+      }
+    }
+    // TODO: Add other class special abilities
   }
   
   /**
@@ -512,6 +715,9 @@ export class MainGameScene {
     if (forward !== 0 || strafe !== 0) {
       this.raycaster.movePlayer(forward, strafe, this.gameMap.getGrid());
       
+      // Update combat positions
+      this.updateCombatPositions();
+      
       // Send position update to server with class information
       this.sendMovementUpdate();
     }
@@ -542,7 +748,7 @@ export class MainGameScene {
   }
   
   /**
-   * Update enhanced stats display
+   * Enhanced update stats display with combat cooldowns
    */
   private updateStats(): void {
     const playerState = this.raycaster.getPlayerState();
@@ -553,12 +759,23 @@ export class MainGameScene {
       FPS: ${this.fps.toFixed(0)}<br>
       Pos: ${playerState.x.toFixed(1)}, ${playerState.y.toFixed(1)}<br>
       Angle: ${(playerState.angle * 180 / Math.PI).toFixed(0)}°<br>
-      Pitch: ${(playerState.pitch * 180 / Math.PI).toFixed(0)}°
+      Pitch: ${(playerState.pitch * 180 / Math.PI).toFixed(0)}°<br>
+      Combat: ${this.debugCombat ? 'DEBUG' : 'OFF'}
     `;
     
     // Calculate cooldown times
     const dashRemainingTime = Math.max(0, this.dashCooldownTime - (currentTime - this.lastDashTime));
     const specialRemainingTime = Math.max(0, this.specialCooldownTime - (currentTime - this.lastSpecialTime));
+    
+    // Get class-specific cooldowns
+    let basicAttackRemaining = 0;
+    let specialAbilityRemaining = specialRemainingTime;
+    
+    if (this.localPlayerClass === CT.ARCHER && this.localPlayerId) {
+      const cooldowns = this.archerCombat.getCooldowns(this.localPlayerId);
+      basicAttackRemaining = cooldowns.basic;
+      specialAbilityRemaining = cooldowns.special;
+    }
     
     // Update enhanced player stats
     this.playerStatsDiv.innerHTML = `
@@ -579,7 +796,8 @@ export class MainGameScene {
       <div style="margin-bottom: 4px;">
         <div style="font-size: 12px; color: #34d399; margin-bottom: 2px;">Abilities</div>
         ${this.createCooldownBar(dashRemainingTime, this.dashCooldownTime, 'Dash (Q/E)', '#10b981')}
-        ${this.createCooldownBar(specialRemainingTime, this.specialCooldownTime, this.classConfig.specialAbility.name.substring(0, 8), '#8b5cf6')}
+        ${this.createCooldownBar(basicAttackRemaining, this.classConfig.weapon.attackSpeed ? 1.0 / this.classConfig.weapon.attackSpeed : 1.0, 'Attack (LMB)', '#f59e0b')}
+        ${this.createCooldownBar(specialAbilityRemaining, this.specialCooldownTime, this.classConfig.specialAbility.name.substring(0, 8), '#8b5cf6')}
       </div>
     `;
   }
@@ -697,7 +915,7 @@ export class MainGameScene {
   }
   
   /**
-   * Game loop
+   * Enhanced game loop with combat system
    */
   private gameLoop(currentTime: number): void {
     if (!this.running) return;
@@ -708,35 +926,39 @@ export class MainGameScene {
       this.fps = 1000 / deltaTime;
       this.lastTime = currentTime;
     
-    // Process input
-    this.processInput();
-    
-    // Send periodic rotation updates
-    if (currentTime - this.lastRotationUpdateTime > this.rotationUpdateInterval) {
-      this.sendRotationUpdate();
-      this.lastRotationUpdateTime = currentTime;
-    }
-    
-    // Update sprite animations
-    this.spriteRenderer.update(currentTime);
-    
-    // Update sprite directions based on current camera position/angle
-    this.updateSpriteDirections();
-    
-    // Ensure all remote players have sprites rendered
-    this.ensureAllSpritesRendered();
-    
-    // Update game state
-    // TODO: Update remote players, projectiles, etc.
-    
-    // Render
-    this.raycaster.render(this.gameMap.getGrid());
-    
-    // Update UI
-    this.updateMinimap();
-    this.updateStats();
-    
-      // Continue loop
+      // Process input
+      this.processInput();
+      
+      // Update combat system
+      if (this.combatManager) {
+        const damageResults = this.combatManager.update(deltaTime, this.gameMap.getGrid());
+        
+        // Handle damage results
+        for (const damage of damageResults) {
+          console.log(`💥 Damage: ${damage.finalDamage} to ${damage.targetId} (${damage.effects.join(', ')})`);
+          
+          // Update local player health if hit
+          if (damage.targetId === this.localPlayerId) {
+            this.playerHealth = Math.max(0, this.playerHealth - damage.finalDamage);
+            this.showNotification(`Hit for ${damage.finalDamage} damage!`, 'warning');
+            
+            if (damage.isKilled) {
+              this.showNotification('You have been defeated!', 'warning');
+            }
+          }
+        }
+      }
+      
+      // Render frame
+      this.render();
+      
+      // Update stats display
+      this.updateStats();
+      
+      // Update minimap
+      this.updateMinimap();
+      
+      // Continue game loop
       requestAnimationFrame((time) => this.gameLoop(time));
     } catch (error) {
       console.error('🚨 Game loop error:', error);
@@ -746,10 +968,111 @@ export class MainGameScene {
       }
     }
   }
-  
+
   /**
-   * Start the game
+   * Enhanced render method with combat visuals
    */
+  private render(): void {
+    // Update projectiles in raycaster for 3D rendering
+    this.updateProjectilesInRaycaster();
+    
+    // Clear canvas and render 3D scene (now includes projectiles)
+    this.raycaster.render(this.gameMap.getGrid());
+    
+    // Update sprite animations
+    this.spriteRenderer.update(Date.now());
+    
+    // Render debug hitboxes on top if needed
+    if (this.debugCombat && this.combatManager) {
+      const ctx = this.canvas.getContext('2d');
+      if (ctx) {
+        const cameraOffset = { x: 0, y: 0 }; // TODO: Calculate proper camera offset
+        this.combatManager.renderHitboxes(ctx, cameraOffset, true);
+      }
+    }
+  }
+
+  /**
+   * Update projectiles in raycaster for 3D rendering
+   */
+  private updateProjectilesInRaycaster(): void {
+    if (!this.combatManager) return;
+    
+    // Clear existing projectiles
+    this.raycaster.clearProjectiles();
+    
+    // Get all active projectiles from combat manager
+    const projectilesMap = this.combatManager.getProjectiles();
+    
+    console.log(`🎯 Updating ${projectilesMap.size} projectiles in raycaster`);
+    
+    // Add each projectile to raycaster for 3D rendering
+    for (const projectile of projectilesMap.values()) {
+      if (projectile.isActive()) {
+        const state = projectile.getState();
+        const config = projectile.getConfig();
+        
+        console.log(`🏹 Adding projectile ${state.id} at (${state.position.x.toFixed(1)}, ${state.position.y.toFixed(1)}) to raycaster`);
+        
+        this.raycaster.updateProjectile(
+          state.id,
+          state.position.x,
+          state.position.y,
+          config.type,
+          state.rotation,
+          0.5 // Size for 3D rendering
+        );
+      }
+    }
+  }
+
+  /**
+   * Initialize combat system when game starts
+   */
+  private initializeCombat(): void {
+    // Ensure we have local player ID
+    if (!this.localPlayerId && this.matchData?.yourPlayerId) {
+      this.localPlayerId = this.matchData.yourPlayerId;
+      console.log('🔧 Setting local player ID from match data in combat init:', this.localPlayerId);
+    }
+    
+    if (!this.localPlayerId) {
+      console.warn('⚠️ Cannot initialize combat: No local player ID');
+      return;
+    }
+    
+    const playerState = this.raycaster.getPlayerState();
+    const position = { x: playerState.x, y: playerState.y };
+    
+    // Register local player for combat
+    this.combatManager.registerPlayer(this.localPlayerId, position, this.localPlayerClass);
+    
+    // Initialize class-specific combat
+    if (this.localPlayerClass === CT.ARCHER) {
+      this.archerCombat.registerArcher(this.localPlayerId, position, playerState.angle);
+      console.log(`🏹 Archer combat initialized for ${this.localPlayerId}`);
+    }
+    
+    console.log(`⚔️ Combat system initialized for ${this.classConfig.name}`);
+  }
+
+  /**
+   * Update combat positions when player moves
+   */
+  private updateCombatPositions(): void {
+    if (!this.localPlayerId) return;
+    
+    const playerState = this.raycaster.getPlayerState();
+    const position = { x: playerState.x, y: playerState.y };
+    
+    // Update combat manager
+    this.combatManager.updatePlayerPosition(this.localPlayerId, position);
+    
+    // Update class-specific combat
+    if (this.localPlayerClass === CT.ARCHER) {
+      this.archerCombat.updateArcherPosition(this.localPlayerId, position, playerState.angle);
+    }
+  }
   public async start(): Promise<void> {
     if (this.running) return;
     
@@ -844,6 +1167,10 @@ export class MainGameScene {
     
     if (hasValidPosition && hasTextureManager && hasSpriteRenderer) {
       console.log('🎮 MainGameScene: All systems ready, starting game loop!');
+      
+      // Initialize combat system
+      this.initializeCombat();
+      
       this.running = true;
       requestAnimationFrame((time) => this.gameLoop(time));
     } else {
@@ -1214,15 +1541,214 @@ export class MainGameScene {
    * Handle game state update from server
    */
   public handleGameUpdate(gameUpdate: any) {
+    console.log(`📨 Received game:update event:`, {
+      matchId: gameUpdate?.matchId,
+      tick: gameUpdate?.tick,
+      playerCount: gameUpdate?.players?.length,
+      projectileCount: gameUpdate?.projectiles?.length,
+      eventCount: gameUpdate?.events?.length
+    });
+    
     if (!gameUpdate || !gameUpdate.players) return;
     
     // Update all player positions
-    for (const [playerId, playerData] of Object.entries(gameUpdate.players)) {
-      if (playerId !== this.localPlayerId) {
-        const data = playerData as any;
-        this.onPlayerMoved(playerId, data.position, data.angle);
+    for (const playerData of gameUpdate.players) {
+      if (playerData.id !== this.localPlayerId) {
+        this.onPlayerMoved(playerData.id, playerData.position, playerData.angle || 0);
       }
     }
+    
+    // Handle projectile updates if present
+    if (gameUpdate.projectiles && this.onProjectileUpdate) {
+      console.log(`🎯 Processing ${gameUpdate.projectiles.length} projectiles from game update`);
+      this.onProjectileUpdate(gameUpdate.projectiles);
+    }
+    
+    // Handle game events if present
+    if (gameUpdate.events && this.onGameEvents) {
+      console.log(`📋 Processing ${gameUpdate.events.length} game events`);
+      this.onGameEvents(gameUpdate.events);
+    }
+  }
+
+  /**
+   * Handle projectile updates from server (authoritative)
+   */
+  public onProjectileUpdate(serverProjectiles: any[]): void {
+    if (!this.combatManager) return;
+    
+    console.log(`📦 Received projectile update with ${serverProjectiles.length} projectiles`);
+    
+    // Get current projectiles map
+    const currentProjectiles = this.combatManager.getProjectiles();
+    const serverProjectileIds = new Set(serverProjectiles.map(p => p.id));
+    
+    // Remove projectiles that no longer exist on server
+    for (const [projectileId, projectile] of currentProjectiles) {
+      if (!serverProjectileIds.has(projectileId)) {
+        currentProjectiles.delete(projectileId);
+        console.log(`🗑️ Removed projectile ${projectileId} (no longer on server)`);
+      }
+    }
+    
+    // Create/update projectiles from server data
+    for (const serverProjectile of serverProjectiles) {
+      // Check if we already have this projectile
+      let existingProjectile = currentProjectiles.get(serverProjectile.id);
+      
+      if (existingProjectile) {
+        // Update existing projectile position from server
+        const state = existingProjectile.getState();
+        state.position = { ...serverProjectile.position };
+        state.velocity = { ...serverProjectile.velocity };
+        state.rotation = serverProjectile.rotation;
+        state.isActive = true;
+        console.log(`📍 Updated projectile ${serverProjectile.id} position`);
+      } else {
+        // Create new projectile from server data
+        const projectileConfig = {
+          id: serverProjectile.id,
+          type: serverProjectile.type,
+          damage: serverProjectile.damage,
+          speed: 200, // Slower speed for debugging visibility
+          range: 13,
+          size: { width: 32, height: 12 }, // Larger size for visibility
+          piercing: serverProjectile.piercing || false,
+          homing: serverProjectile.homing || false,
+          armorPenetration: 50,
+          effects: [],
+          spriteSheet: {
+            path: '/assets/projectiles/arrow_sheet.png',
+            frameWidth: 48,
+            frameHeight: 48,
+            totalFrames: 16
+          }
+        };
+        
+        const projectileState = {
+          id: serverProjectile.id,
+          position: { ...serverProjectile.position },
+          velocity: { ...serverProjectile.velocity },
+          rotation: serverProjectile.rotation,
+          distanceTraveled: 0,
+          isActive: true,
+          ownerId: serverProjectile.ownerId,
+          targetId: serverProjectile.targetId,
+          createdAt: Date.now(),
+          lastUpdate: Date.now()
+        };
+        
+        // Import Projectile class and create instance
+        const projectile = new Projectile(projectileConfig, projectileState);
+        currentProjectiles.set(serverProjectile.id, projectile);
+        
+        console.log(`🆕 Created projectile ${serverProjectile.id} from server (owner: ${serverProjectile.ownerId})`);
+      }
+    }
+  }
+
+  /**
+   * Handle game events from server (projectile creation, hits, deaths)
+   */
+  public onGameEvents(events: any[]): void {
+    for (const event of events) {
+      this.handleGameEvent(event);
+    }
+  }
+
+  /**
+   * Handle individual game event
+   */
+  private handleGameEvent(event: any): void {
+    switch (event.type) {
+      case 'projectile_created':
+        this.handleProjectileCreated(event);
+        break;
+      case 'projectile_hit':
+        this.handleProjectileHit(event);
+        break;
+      case 'projectile_destroyed':
+        this.handleProjectileDestroyed(event);
+        break;
+      case 'player_death':
+        this.handlePlayerDeath(event);
+        break;
+      default:
+        console.log(`Unhandled game event: ${event.type}`);
+    }
+  }
+
+  /**
+   * Handle projectile creation event from server
+   */
+  private handleProjectileCreated(event: any): void {
+    const data = event.data;
+    console.log(`🏹 Server created projectile: ${data.projectileId} by ${event.playerId}`);
+    
+    // Visual feedback for projectile creation
+    if (event.playerId !== this.localPlayerId) {
+      this.showNotification(`${event.playerId.substring(0, 8)} fired ${data.type}!`, 'info');
+    }
+  }
+
+  /**
+   * Handle projectile hit event from server
+   */
+  private handleProjectileHit(event: any): void {
+    const hitData = event.data;
+    console.log(`💥 Server projectile hit: ${hitData.finalDamage} damage to ${hitData.targetId}`);
+    
+    // Apply damage if this is the local player
+    if (hitData.targetId === this.localPlayerId) {
+      this.playerHealth = Math.max(0, this.playerHealth - hitData.finalDamage);
+      this.showNotification(`Hit for ${hitData.finalDamage} damage!`, 'warning');
+      
+      if (hitData.isKilled) {
+        this.showNotification('You have been defeated!', 'warning');
+      }
+    }
+    
+    // Visual effect at hit location
+    this.createHitEffect(hitData.position, hitData.effects);
+  }
+
+  /**
+   * Handle projectile destroyed event from server
+   */
+  private handleProjectileDestroyed(event: any): void {
+    const data = event.data;
+    
+    // Remove projectile from local tracking
+    if (this.combatManager) {
+      this.combatManager.getProjectiles().delete(data.projectileId);
+    }
+    
+    console.log(`🗑️ Server destroyed projectile: ${data.projectileId}`);
+  }
+
+  /**
+   * Handle player death event from server
+   */
+  private handlePlayerDeath(event: any): void {
+    const data = event.data;
+    console.log(`💀 Player death: ${event.playerId} killed by ${data.killerId}`);
+    
+    if (event.playerId === this.localPlayerId) {
+      this.showNotification('You have been defeated!', 'warning');
+      // TODO: Handle local player death (respawn, end game, etc.)
+    } else {
+      this.showNotification(`Player ${event.playerId.substring(0, 8)} was defeated!`, 'info');
+      // Remove dead player from rendering
+      this.remotePlayers.delete(event.playerId);
+    }
+  }
+
+  /**
+   * Create visual hit effect
+   */
+  private createHitEffect(position: Vector2, effects: string[]): void {
+    // TODO: Implement visual hit effects based on position and effects
+    console.log(`✨ Creating hit effect at (${position.x}, ${position.y}) with effects: ${effects.join(', ')}`);
   }
 
   /**
@@ -1277,28 +1803,6 @@ export class MainGameScene {
       this.showNotification(`Can't dash ${direction} - blocked!`, 'warning');
       console.log(`❌ Dash ${direction} blocked by collision`);
     }
-  }
-
-  /**
-   * Handle special ability activation
-   */
-  private handleSpecialAbility(): void {
-    const currentTime = Date.now() / 1000;
-    const specialCooldown = this.specialCooldownTime;
-    
-    // Check if special ability is off cooldown
-    if (currentTime - this.lastSpecialTime < specialCooldown) {
-      const remainingCooldown = specialCooldown - (currentTime - this.lastSpecialTime);
-      this.showNotification(`${this.classConfig.specialAbility.name} cooling down: ${remainingCooldown.toFixed(1)}s`, 'warning');
-      return;
-    }
-    
-    // Activate special ability
-    this.lastSpecialTime = currentTime;
-    this.showNotification(`${this.classConfig.specialAbility.name} activated!`, 'special');
-    
-    // TODO: Implement specific special ability effects
-    console.log(`⚡ Activated special ability: ${this.classConfig.specialAbility.name}`);
   }
 
   /**

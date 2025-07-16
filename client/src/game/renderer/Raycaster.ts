@@ -152,6 +152,9 @@ export class Raycaster {
   // Other players
   private otherPlayers: Map<string, { x: number; y: number; color: string }> = new Map();
   
+  // Projectiles for 3D rendering
+  private projectiles: Map<string, { x: number; y: number; type: string; rotation: number; size: number }> = new Map();
+  
   // Sprite renderer reference
   private spriteRenderer: SpriteRenderer | null = null;
   
@@ -176,6 +179,148 @@ export class Raycaster {
   public updateOtherPlayer(playerId: string, x: number, y: number, color: string = '#ff0000'): void {
     this.otherPlayers.set(playerId, { x, y, color });
     // Removed console.log for performance
+  }
+
+  /**
+   * Add or update a projectile for 3D rendering
+   */
+  public updateProjectile(projectileId: string, x: number, y: number, type: string, rotation: number, size: number = 0.3): void {
+    this.projectiles.set(projectileId, { x, y, type, rotation, size });
+  }
+
+  /**
+   * Remove a projectile from 3D rendering
+   */
+  public removeProjectile(projectileId: string): void {
+    this.projectiles.delete(projectileId);
+  }
+
+  /**
+   * Clear all projectiles
+   */
+  public clearProjectiles(): void {
+    this.projectiles.clear();
+  }
+
+  /**
+   * Render a projectile in 3D space
+   */
+  private renderProjectile(
+    projectile: { x: number; y: number; type: string; rotation: number; size: number },
+    screenX: number,
+    screenY: number,
+    projectedSize: number,
+    fogFactor: number
+  ): void {
+    const size = Math.max(8, projectedSize * 2); // Minimum visible size, doubled for debugging
+    
+    this.ctx.save();
+    this.ctx.translate(screenX, screenY);
+    this.ctx.rotate(projectile.rotation);
+    this.ctx.globalAlpha = Math.max(0.7, fogFactor); // More visible minimum alpha
+    
+    // Render different projectile types
+    switch (projectile.type) {
+      case 'arrow':
+        this.renderArrowProjectile(size);
+        break;
+      case 'ice_shard':
+        this.renderIceShardProjectile(size);
+        break;
+      case 'fire_bomb':
+        this.renderFireBombProjectile(size);
+        break;
+      default:
+        this.renderDefaultProjectile(size);
+        break;
+    }
+    
+    this.ctx.restore();
+  }
+
+  /**
+   * Render an arrow projectile
+   */
+  private renderArrowProjectile(size: number): void {
+    const length = size * 3; // Make arrow longer
+    const width = size * 0.8; // Make arrow thicker
+    
+    // Arrow shaft with bright color for visibility
+    this.ctx.fillStyle = '#ff9500'; // Bright orange for visibility
+    this.ctx.fillRect(-length/2, -width/2, length, width);
+    
+    // Arrow head (triangle) - bright red
+    this.ctx.fillStyle = '#ff0000';
+    this.ctx.beginPath();
+    this.ctx.moveTo(length/2, 0);
+    this.ctx.lineTo(length/2 - width*2, -width*1.5);
+    this.ctx.lineTo(length/2 - width*2, width*1.5);
+    this.ctx.closePath();
+    this.ctx.fill();
+    
+    // Arrow fletching - bright yellow
+    this.ctx.fillStyle = '#ffff00';
+    this.ctx.fillRect(-length/2, -width/2, width, width);
+    
+    // Add glow effect for visibility
+    this.ctx.shadowColor = '#ff9500';
+    this.ctx.shadowBlur = size;
+    this.ctx.fillStyle = '#ff9500';
+    this.ctx.fillRect(-length/2, -width/2, length, width);
+    this.ctx.shadowBlur = 0;
+  }
+
+  /**
+   * Render an ice shard projectile
+   */
+  private renderIceShardProjectile(size: number): void {
+    this.ctx.fillStyle = '#60a5fa';
+    this.ctx.beginPath();
+    this.ctx.moveTo(size, 0);
+    this.ctx.lineTo(0, -size/2);
+    this.ctx.lineTo(-size/2, 0);
+    this.ctx.lineTo(0, size/2);
+    this.ctx.closePath();
+    this.ctx.fill();
+    
+    // Ice glow effect
+    this.ctx.shadowColor = '#60a5fa';
+    this.ctx.shadowBlur = size / 2;
+    this.ctx.fill();
+    this.ctx.shadowBlur = 0;
+  }
+
+  /**
+   * Render a fire bomb projectile
+   */
+  private renderFireBombProjectile(size: number): void {
+    // Bomb body
+    this.ctx.fillStyle = '#4a5568';
+    this.ctx.beginPath();
+    this.ctx.arc(0, 0, size * 0.7, 0, Math.PI * 2);
+    this.ctx.fill();
+    
+    // Fire trail
+    this.ctx.fillStyle = '#ef4444';
+    this.ctx.beginPath();
+    this.ctx.arc(-size * 0.3, 0, size * 0.3, 0, Math.PI * 2);
+    this.ctx.fill();
+    
+    // Orange inner flame
+    this.ctx.fillStyle = '#f97316';
+    this.ctx.beginPath();
+    this.ctx.arc(-size * 0.2, 0, size * 0.2, 0, Math.PI * 2);
+    this.ctx.fill();
+  }
+
+  /**
+   * Render a default projectile
+   */
+  private renderDefaultProjectile(size: number): void {
+    this.ctx.fillStyle = '#ffffff';
+    this.ctx.beginPath();
+    this.ctx.arc(0, 0, size * 0.5, 0, Math.PI * 2);
+    this.ctx.fill();
   }
 
   /**
@@ -417,6 +562,56 @@ export class Raycaster {
             
             this.ctx.globalAlpha = 1;
           }
+        }
+      });
+    }
+
+    // Add projectiles to render list
+    const projectilesArray = Array.from(this.projectiles.entries());
+    for (const [projectileId, projectile] of projectilesArray) {
+      const dx = projectile.x - this.playerX;
+      const dy = projectile.y - this.playerY;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      
+      // Skip if too far
+      if (distance > this.viewDistance) {
+        continue;
+      }
+      
+      // Check line of sight - skip if blocked by walls
+      const hasLOS = this.hasLineOfSight(this.playerX, this.playerY, projectile.x, projectile.y, map);
+      if (!hasLOS) {
+        continue;
+      }
+      
+      // Calculate angle to projectile
+      const angleToProjectile = Math.atan2(dy, dx);
+      let relativeAngle = angleToProjectile - this.playerAngle;
+      
+      // Normalize angle to [-PI, PI]
+      while (relativeAngle > Math.PI) relativeAngle -= 2 * Math.PI;
+      while (relativeAngle < -Math.PI) relativeAngle += 2 * Math.PI;
+      
+      // Check if projectile is in field of view
+      const halfFov = (this.fov / 2) * Math.PI / 180;
+      if (Math.abs(relativeAngle) > halfFov) {
+        continue;
+      }
+      
+      // Calculate screen position
+      const screenX = this.width / 2 + (relativeAngle / halfFov) * (this.width / 2);
+      const projectedSize = (projectile.size / distance) * this.distanceToProjectionPlane;
+      
+      // Apply pitch offset to projectile positioning
+      const projectileCenterY = this.halfHeight + pitchOffset;
+      
+      const fogFactor = Math.max(0, 1 - distance / this.viewDistance);
+      
+      renderObjects.push({
+        distance,
+        render: () => {
+          // Render projectile as a sprite or geometric shape
+          this.renderProjectile(projectile, screenX, projectileCenterY, projectedSize, fogFactor);
         }
       });
     }

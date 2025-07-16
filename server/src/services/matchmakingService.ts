@@ -367,6 +367,8 @@ export class MatchmakingService {
       
       // Initialize game state for the match
       try {
+        logger.info(`🎮 Initializing game state for match ${matchId}...`);
+        
         // Get player details
         const player1Profile = await playerService.getPlayerProfile(player1.playerId);
         const player2Profile = await playerService.getPlayerProfile(player2.playerId);
@@ -386,7 +388,7 @@ export class MatchmakingService {
             isAnonymous: player2Profile.isAnonymous
           };
           
-          await gameStateService.initializeGameState(
+          const initialized = await gameStateService.initializeGameState(
             matchId,
             player1Full,
             player2Full,
@@ -394,8 +396,21 @@ export class MatchmakingService {
             player2.classType
           );
           
-          // Start the game loop
-          await gameStateService.startGameLoop(matchId);
+          if (initialized) {
+            logger.info(`✅ Game state initialized for match ${matchId}`);
+            
+            // Start the game loop immediately
+            const started = await gameStateService.startGameLoop(matchId);
+            if (started) {
+              logger.info(`🎮 Game loop started for match ${matchId}`);
+            } else {
+              logger.error(`❌ Failed to start game loop for match ${matchId}`);
+            }
+          } else {
+            logger.error(`❌ Failed to initialize game state for match ${matchId}`);
+          }
+        } else {
+          logger.error(`❌ Could not get player profiles for match ${matchId}`);
         }
       } catch (error) {
         logger.error('Error initializing game state:', error);
