@@ -1,0 +1,84 @@
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-family: 'Orbitron', monospace;
+  }
+
+  body {
+    @apply bg-arena-900 text-white min-h-screen;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-dueled-600 hover:bg-dueled-700 text-white font-bold py-2 px-4 rounded transition-colors duration-200 inline-block;
+  }
+
+  .btn-secondary {
+    @apply bg-arena-600 hover:bg-arena-700 text-white font-bold py-2 px-4 rounded transition-colors duration-200 inline-block;
+  }
+
+  .btn-danger {
+    @apply bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded transition-colors duration-200;
+  }
+  
+  /* Ensure Link components with button classes display properly */
+  a.btn-primary, a.btn-secondary, a.btn-danger {
+    @apply inline-block no-underline;
+  }
+
+  .card {
+    @apply bg-arena-800 border border-arena-600 rounded-lg shadow-lg;
+  }
+
+  .input-field {
+    @apply bg-arena-700 border border-arena-500 text-white px-3 py-2 rounded focus:outline-none focus:border-dueled-500 transition-colors duration-200;
+  }
+}
+
+@layer utilities {
+  .text-shadow {
+    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+  }
+
+  .glow {
+    box-shadow: 0 0 10px rgba(236, 72, 153, 0.5);
+  }
+
+  .glow-intense {
+    box-shadow: 0 0 20px rgba(236, 72, 153, 0.8);
+  }
+  
+  /* Custom animations for match notifications */
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes slideIn {
+    from {
+      transform: translateY(-20px);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
+
+  .animate-fadeIn {
+    animation: fadeIn 0.3s ease-out;
+  }
+
+  .animate-slideIn {
+    animation: slideIn 0.4s ease-out;
+  }
+}

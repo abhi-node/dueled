@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Generate Test Sprite Sheets</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #fff;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .sprite-sheet {
+            margin: 20px 0;
+            padding: 20px;
+            border: 2px solid #333;
+            border-radius: 8px;
+            background: #222;
+        }
+        canvas {
+            border: 1px solid #555;
+            background: transparent;
+        }
+        .download-link {
+            display: inline-block;
+            margin: 10px 0;
+            padding: 10px 20px;
+            background: #007acc;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+        }
+        .download-link:hover {
+            background: #005a9e;
+        }
+        .info {
+            background: #333;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎮 Dueled Sprite Sheet Generator</h1>
+        
+        <div class="info">
+            <h3>Sprite Sheet Format:</h3>
+            <ul>
+                <li>Size: 768x768 pixels (4x4 grid)</li>
+                <li>Each sprite: 192x192 pixels</li>
+                <li>Row 0: Walking forward (↑)</li>
+                <li>Row 1: Walking right (→)</li>
+                <li>Row 2: Walking backward (↓)</li>
+                <li>Row 3: Walking left (←)</li>
+                <li>Columns 0-3: Animation frames</li>
+            </ul>
+        </div>
+
+        <div id="sprite-sheets"></div>
+        
+        <button onclick="generateAllSprites()" style="padding: 15px 30px; background: #28a745; color: white; border: none; border-radius: 4px; font-size: 16px; cursor: pointer;">
+            Generate All Sprite Sheets
+        </button>
+    </div>
+
+    <script>
+        // Class configurations
+        const classConfigs = {
+            berserker: { color: '#ff4444', name: 'Berserker' },
+            mage: { color: '#4444ff', name: 'Mage' },
+            bomber: { color: '#ff8800', name: 'Bomber' },
+            archer: { color: '#44ff44', name: 'Archer' }
+        };
+
+        // Sprite sheet configuration (updated to match actual files)
+        const SHEET_SIZE = 768;
+        const SPRITE_SIZE = 192;
+        const GRID_SIZE = 4;
+
+        function generateSprite(ctx, color, row, col, x, y) {
+            // Clear sprite area
+            ctx.clearRect(x, y, SPRITE_SIZE, SPRITE_SIZE);
+            
+            // Draw character body
+            const centerX = x + SPRITE_SIZE / 2;
+            const centerY = y + SPRITE_SIZE / 2;
+            const radius = SPRITE_SIZE / 3;
+            
+            // Body (circle)
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Outline
+            ctx.strokeStyle = '#000000';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            
+            // Direction indicator
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '16px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            let dirChar = '';
+            switch(row) {
+                case 0: dirChar = '↑'; break; // Forward
+                case 1: dirChar = '→'; break; // Right
+                case 2: dirChar = '↓'; break; // Backward
+                case 3: dirChar = '←'; break; // Left
+            }
+            
+            ctx.fillText(dirChar, centerX, centerY);
+            
+            // Animation frame indicator
+            ctx.fillStyle = '#000000';
+            ctx.font = '10px Arial';
+            ctx.fillText(col.toString(), centerX, centerY + radius - 8);
+            
+            // Add some animation variation
+            const animOffset = col * 2 - 3; // -3, -1, 1, 3
+            if (row === 1 || row === 3) { // Left/Right movement
+                ctx.fillStyle = color;
+                ctx.fillRect(centerX + animOffset - 2, centerY + radius - 5, 4, 6); // Feet
+            } else { // Forward/Backward movement
+                ctx.fillStyle = color;
+                ctx.fillRect(centerX - 2, centerY + radius - 5 + animOffset/2, 4, 6); // Feet
+            }
+        }
+
+        function generateSpriteSheet(classType, config) {
+            const canvas = document.createElement('canvas');
+            canvas.width = SHEET_SIZE;
+            canvas.height = SHEET_SIZE;
+            const ctx = canvas.getContext('2d');
+            
+            // Clear canvas with transparent background
+            ctx.clearRect(0, 0, SHEET_SIZE, SHEET_SIZE);
+            
+            // Generate each sprite in the 4x4 grid
+            for (let row = 0; row < GRID_SIZE; row++) {
+                for (let col = 0; col < GRID_SIZE; col++) {
+                    const x = col * SPRITE_SIZE;
+                    const y = row * SPRITE_SIZE;
+                    generateSprite(ctx, config.color, row, col, x, y);
+                }
+            }
+            
+            return canvas;
+        }
+
+        function downloadCanvas(canvas, filename) {
+            const link = document.createElement('a');
+            link.download = filename;
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+        }
+
+        function createSpriteSheetDisplay(classType, config) {
+            const container = document.createElement('div');
+            container.className = 'sprite-sheet';
+            
+            const title = document.createElement('h3');
+            title.textContent = `${config.name} (${classType})`;
+            container.appendChild(title);
+            
+            const canvas = generateSpriteSheet(classType, config);
+            canvas.style.imageRendering = 'pixelated';
+            canvas.style.transform = 'scale(2)';
+            canvas.style.transformOrigin = 'top left';
+            canvas.style.margin = '0 0 192px 0';
+            container.appendChild(canvas);
+            
+            const downloadBtn = document.createElement('button');
+            downloadBtn.textContent = `Download ${classType}_walk.png`;
+            downloadBtn.className = 'download-link';
+            downloadBtn.onclick = () => downloadCanvas(canvas, `${classType}_walk.png`);
+            container.appendChild(downloadBtn);
+            
+            const info = document.createElement('p');
+            info.innerHTML = `
+                <strong>Color:</strong> ${config.color}<br>
+                <strong>File:</strong> ${classType}_walk.png<br>
+                <strong>Path:</strong> /assets/sprites/players/${classType}/${classType}_walk.png
+            `;
+            container.appendChild(info);
+            
+            return container;
+        }
+
+        function generateAllSprites() {
+            const container = document.getElementById('sprite-sheets');
+            container.innerHTML = '';
+            
+            for (const [classType, config] of Object.entries(classConfigs)) {
+                const display = createSpriteSheetDisplay(classType, config);
+                container.appendChild(display);
+            }
+            
+            // Add instructions
+            const instructions = document.createElement('div');
+            instructions.className = 'info';
+            instructions.innerHTML = `
+                <h3>📁 Installation Instructions:</h3>
+                <ol>
+                    <li>Download each sprite sheet using the buttons above</li>
+                    <li>Place them in your project structure:</li>
+                    <ul>
+                        <li><code>public/assets/sprites/players/berserker/berserker_walk.png</code></li>
+                        <li><code>public/assets/sprites/players/mage/mage_walk.png</code></li>
+                        <li><code>public/assets/sprites/players/bomber/bomber_walk.png</code></li>
+                        <li><code>public/assets/sprites/players/archer/archer_walk.png</code></li>
+                    </ul>
+                    <li>The sprite system will automatically load and use these sprites</li>
+                    <li>If sprites are not found, the system falls back to colored circles</li>
+                </ol>
+            `;
+            container.appendChild(instructions);
+        }
+
+        // Generate sprites on page load
+        window.onload = generateAllSprites;
+    </script>
+</body>
+</html>

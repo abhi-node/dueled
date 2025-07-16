@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Navigation Test</title>
+</head>
+<body>
+    <h1>Testing Navigation to Auth Page</h1>
+    <p>Open the console and click the link below:</p>
+    <a href="http://localhost:5174/auth" target="_blank">Go to Auth Page</a>
+    
+    <script>
+        console.log('Test page loaded');
+        
+        // Test direct navigation
+        setTimeout(() => {
+            console.log('Testing direct navigation to /auth');
+            window.open('http://localhost:5174/auth', '_blank');
+        }, 2000);
+    </script>
+</body>
+</html>

@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebSocket Debug</title>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+</head>
+<body>
+    <h1>WebSocket Connection Test</h1>
+    <div id="status">Disconnected</div>
+    <div id="logs"></div>
+    
+    <script>
+        const logs = document.getElementById('logs');
+        const status = document.getElementById('status');
+        
+        function log(message) {
+            const div = document.createElement('div');
+            div.textContent = `${new Date().toLocaleTimeString()}: ${message}`;
+            logs.appendChild(div);
+            console.log(message);
+        }
+        
+        // Try to get token from localStorage (simulating what the app would do)
+        const token = prompt('Enter auth token (from browser localStorage):');
+        
+        if (!token) {
+            log('No token provided - cannot test WebSocket connection');
+        } else {
+            log('Attempting to connect with token...');
+            
+            const socket = io('http://localhost:3000/game', {
+                auth: { token },
+                autoConnect: true,
+            });
+            
+            socket.on('connect', () => {
+                log('✅ Connected successfully!');
+                status.textContent = 'Connected';
+                status.style.color = 'green';
+            });
+            
+            socket.on('disconnect', (reason) => {
+                log(`❌ Disconnected: ${reason}`);
+                status.textContent = 'Disconnected';
+                status.style.color = 'red';
+            });
+            
+            socket.on('connect_error', (error) => {
+                log(`❌ Connection error: ${error.message}`);
+                status.textContent = 'Error';
+                status.style.color = 'red';
+            });
+            
+            socket.on('error', (error) => {
+                log(`❌ Socket error: ${error}`);
+            });
+        }
+    </script>
+</body>
+</html>

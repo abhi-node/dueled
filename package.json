@@ -1,0 +1,49 @@
+{
+  "name": "dueled",
+  "version": "1.0.0",
+  "description": "Real-time 1v1 combat simulator with class-based gameplay",
+  "private": true,
+  "workspaces": [
+    "client",
+    "server",
+    "shared"
+  ],
+  "scripts": {
+    "dev": "npm run docker:start && npm run build:shared && concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:no-docker": "npm run build:shared && concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:client": "cd client && npm run dev",
+    "dev:server": "cd server && npm run dev",
+    "build": "npm run build:shared && npm run build:server && npm run build:client",
+    "build:client": "cd client && npm run build",
+    "build:server": "cd server && npm run build",
+    "build:shared": "cd shared && npm run build",
+    "test": "npm run test:server && npm run test:client",
+    "test:client": "cd client && npm run test",
+    "test:server": "cd server && npm run test",
+    "lint": "npm run lint:client && npm run lint:server",
+    "lint:client": "cd client && npm run lint",
+    "lint:server": "cd server && npm run lint",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "type-check": "npm run type-check:client && npm run type-check:server",
+    "type-check:client": "cd client && npm run type-check",
+    "type-check:server": "cd server && npm run type-check",
+    "docker:start": "./scripts/docker-dev.sh start",
+    "docker:stop": "./scripts/docker-dev.sh stop",
+    "docker:restart": "./scripts/docker-dev.sh restart",
+    "docker:status": "./scripts/docker-dev.sh status",
+    "docker:logs": "./scripts/docker-dev.sh logs",
+    "docker:reset": "./scripts/docker-dev.sh reset",
+    "docker:test": "./scripts/docker-dev.sh test",
+    "test:setup": "node scripts/test-setup.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "concurrently": "^8.2.0",
+    "prettier": "^3.0.0",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  }
+}

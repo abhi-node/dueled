@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Sprite Access</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #fff;
+        }
+        .test-item {
+            margin: 10px 0;
+            padding: 10px;
+            border: 1px solid #333;
+            border-radius: 4px;
+        }
+        .success { background: #1a4a1a; }
+        .error { background: #4a1a1a; }
+        img {
+            max-width: 200px;
+            image-rendering: pixelated;
+            border: 1px solid #555;
+        }
+    </style>
+</head>
+<body>
+    <h1>🧪 Sprite Access Test</h1>
+    <p>Testing if sprite sheets are accessible via HTTP...</p>
+    
+    <div id="test-results"></div>
+    
+    <script>
+        const classTypes = ['berserker', 'mage', 'bomber', 'archer'];
+        const resultsDiv = document.getElementById('test-results');
+        
+        async function testSpriteAccess() {
+            for (const classType of classTypes) {
+                const spriteUrl = `/assets/sprites/players/${classType}/${classType}_walk.png`;
+                const testDiv = document.createElement('div');
+                testDiv.className = 'test-item';
+                
+                try {
+                    // Test with fetch
+                    const response = await fetch(spriteUrl);
+                    if (response.ok) {
+                        testDiv.className += ' success';
+                        testDiv.innerHTML = `
+                            <h3>✅ ${classType}_walk.png</h3>
+                            <p><strong>URL:</strong> ${spriteUrl}</p>
+                            <p><strong>Status:</strong> ${response.status} ${response.statusText}</p>
+                            <p><strong>Content-Type:</strong> ${response.headers.get('content-type')}</p>
+                            <p><strong>Size:</strong> ${response.headers.get('content-length')} bytes</p>
+                            <img src="${spriteUrl}" alt="${classType} sprite" loading="lazy">
+                        `;
+                    } else {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                } catch (error) {
+                    testDiv.className += ' error';
+                    testDiv.innerHTML = `
+                        <h3>❌ ${classType}_walk.png</h3>
+                        <p><strong>URL:</strong> ${spriteUrl}</p>
+                        <p><strong>Error:</strong> ${error.message}</p>
+                        <p>Try accessing directly: <a href="${spriteUrl}" target="_blank">${spriteUrl}</a></p>
+                    `;
+                }
+                
+                resultsDiv.appendChild(testDiv);
+            }
+        }
+        
+        testSpriteAccess();
+    </script>
+</body>
+</html>

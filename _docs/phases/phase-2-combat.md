@@ -1,0 +1,2657 @@
+# Phase 2: Combat System Implementation (Weeks 5-8)
+
+## Overview
+Phase 2 builds upon the MVP foundation to implement the complete combat system with all four classes, their unique abilities, weapons, and combat mechanics. This phase transforms the basic game world into a fully functional combat arena with balanced gameplay.
+
+## Core Deliverable
+**Complete combat system with all four classes (Berserker, Mage, Bomber, Archer) implemented with balanced mechanics, visual effects, and responsive gameplay**
+
+## Week 5: Sprite Rendering & Class System Foundation
+
+### 5.0 Sprite Rendering System (Moved from Phase 1)
+- [ ] Implement sprite rendering in ray-cast engine
+  - **Implementation Steps**:
+    - Create sprite rendering system for players and projectiles
+    - Implement billboard sprites that always face the camera
+    - Add sprite sorting by distance for proper overlap
+    - Support different sprite sizes and animations
+    - Integrate sprite rendering with ray-casting pipeline
+  - **Possible Issues**:
+    - Performance impact from sprite sorting
+    - Z-fighting with walls and other sprites
+    - Sprite clipping issues at screen edges
+    - Animation synchronization problems
+  - **Protections**:
+    - Efficient sorting algorithms
+    - Proper depth buffer management
+    - Sprite culling for off-screen objects
+    - Frame-independent animation timing
+
+- [ ] Create player sprite assets
+  - **Implementation Steps**:
+    - Design distinct sprites for each class (Berserker, Mage, Bomber, Archer)
+    - Create directional sprites (4 directions minimum)
+    - Add animation frames for idle and walk
+    - Implement color variations for team identification
+    - Create death animation sequences
+  - **Possible Issues**:
+    - Large sprite sheet memory usage
+    - Inconsistent art style across classes
+    - Performance with many animated sprites
+    - Loading time for sprite assets
+  - **Protections**:
+    - Sprite atlas optimization
+    - Consistent art guidelines
+    - Level-of-detail sprite variants
+    - Progressive loading system
+
+## Week 5: Class System Foundation & Combat Architecture
+
+### 5.1 Class System Architecture
+- [ ] Implement base class system structure
+  - **Implementation Steps**:
+    - Create abstract base class with common properties (health, armor, position, state)
+    - Design class inheritance hierarchy for code reuse
+    - Implement class factory pattern for instantiation
+    - Create class configuration system for easy balancing
+    - Build class selection validation system
+  - **Possible Issues**:
+    - Over-engineering the class hierarchy leading to complexity
+    - Performance overhead from inheritance chains
+    - Difficulty in balancing classes with different architectures
+    - Memory leaks from improper class cleanup
+  - **Protections**:
+    - Keep inheritance shallow (max 2 levels)
+    - Use composition over inheritance where appropriate
+    - Centralized configuration for easy adjustments
+    - Proper cleanup methods in base class
+
+- [ ] Create class-specific attributes and stats
+  - **Implementation Steps**:
+    - Define health, armor, movement speed per class as per PRD specifications
+    - Implement stat scaling system for future growth
+    - Create stat modifiers system for buffs/debuffs
+    - Add stat validation to prevent exploits
+    - Build stat persistence for match continuity
+  - **Possible Issues**:
+    - Stat overflow/underflow from calculations
+    - Inconsistent stat application timing
+    - Network desync of stat values
+    - Stat manipulation through client modifications
+  - **Protections**:
+    - Server-authoritative stat management
+    - Bounds checking on all stat modifications
+    - Regular stat sync validation
+    - Immutable base stats with modifier layers
+
+- [ ] Add weapon system framework
+  - **Implementation Steps**:
+    - Create weapon base class with common behaviors
+    - Implement weapon-specific properties (range, damage, cooldown)
+    - Design ammunition/resource system for future expansion
+    - Build weapon switching mechanism (future feature)
+    - Add weapon state management (ready, firing, cooldown)
+  - **Possible Issues**:
+    - Weapon state desynchronization
+    - Cooldown manipulation exploits
+    - Memory leaks from projectile objects
+    - Animation/state mismatches
+  - **Protections**:
+    - Server-side cooldown validation
+    - Object pooling for projectiles
+    - State machine for weapon states
+    - Animation queuing system
+
+- [ ] Implement special abilities structure
+  - **Implementation Steps**:
+    - Design ability interface for all class specials
+    - Create ability activation conditions (Berserker rage at 50% HP)
+    - Implement ability duration and cooldown systems
+    - Build ability effect application framework
+    - Add visual/audio feedback for ability states
+  - **Possible Issues**:
+    - Ability timing exploits
+    - Effect stacking complications
+    - Performance impact from multiple effects
+    - Ability activation race conditions
+  - **Protections**:
+    - Server validates all ability activations
+    - Effect priority and stacking rules
+    - Performance budgets for effects
+    - Mutex locks for ability state changes
+
+- [ ] Create class selection interface
+  - **Implementation Steps**:
+    - Design intuitive class selection screen
+    - Show class stats and abilities clearly
+    - Implement class preview/demo system
+    - Add class locking during active matches
+    - Create class favorites/preferences system
+  - **Possible Issues**:
+    - UI responsiveness during selection
+    - Class information overload
+    - Selection timeout handling
+    - Multiple selection attempts
+  - **Protections**:
+    - Debounced selection inputs
+    - Progressive disclosure of information
+    - Clear timeout warnings
+    - Server validates final selection
+
+- [ ] Add class validation and restrictions
+  - **Implementation Steps**:
+    - Validate class availability per player
+    - Implement class-based matchmaking rules
+    - Add anti-cheat checks for class modifications
+    - Create class change cooldowns (future)
+    - Build analytics for class popularity
+  - **Possible Issues**:
+    - Class availability exploits
+    - Validation performance overhead
+    - Edge cases in class restrictions
+    - Analytics data volume
+  - **Protections**:
+    - Whitelist-based validation
+    - Cached validation results
+    - Comprehensive test coverage
+    - Sampled analytics collection
+
+### 5.2 Combat System Foundation
+- [ ] Implement damage calculation system
+  - **Implementation Steps**:
+    - Implement PRD formula: finalDamage = baseDamage * (1 - armor / (armor + 100))
+    - Create damage type system (physical, magical, fire)
+    - Add critical hit calculations
+    - Implement damage variance for gameplay variety
+    - Build damage event system for tracking
+  - **Possible Issues**:
+    - Floating point precision in calculations
+    - Damage calculation timing issues
+    - Network lag affecting damage application
+    - Damage stacking exploits
+  - **Protections**:
+    - Integer-based calculations where possible
+    - Damage queuing system
+    - Server-authoritative damage
+    - Rate limiting on damage events
+
+- [ ] Create armor reduction mechanics
+  - **Implementation Steps**:
+    - Implement armor types and effectiveness
+    - Add armor penetration calculations
+    - Create temporary armor effects
+    - Build armor break mechanics (future)
+    - Add visual feedback for armor states
+  - **Possible Issues**:
+    - Armor becoming too powerful/weak
+    - Complex calculations affecting performance
+    - Visual feedback not matching actual armor
+    - Armor bypass exploits
+  - **Protections**:
+    - Careful balance testing
+    - Optimized calculation methods
+    - Regular state synchronization
+    - Server validation of armor values
+
+- [ ] Add health and armor management
+  - **Implementation Steps**:
+    - Create health/armor tracking systems
+    - Implement health regeneration rules
+    - Add armor repair mechanics (future)
+    - Build health/armor UI components
+    - Create low health warning systems
+  - **Possible Issues**:
+    - Health desync between client/server
+    - UI update performance
+    - False death states
+    - Health manipulation attempts
+  - **Protections**:
+    - Authoritative server health
+    - Efficient UI update batching
+    - Death confirmation system
+    - Bounds checking on all health changes
+
+- [ ] Implement death/respawn system
+  - **Implementation Steps**:
+    - Create death detection and confirmation
+    - Implement death animations and effects
+    - Build respawn timer system
+    - Design respawn location selection
+    - Add post-death spectator mode (future)
+  - **Possible Issues**:
+    - Death state exploitation
+    - Respawn location camping
+    - Animation interruption bugs
+    - Spectator information leaking
+  - **Protections**:
+    - Server confirms all deaths
+    - Multiple respawn points
+    - State machine for death/respawn
+    - Limited spectator information
+
+- [ ] Create damage feedback system
+  - **Implementation Steps**:
+    - Implement damage numbers display
+    - Add hit confirmation effects
+    - Create screen effects for taking damage
+    - Build audio feedback for impacts
+    - Add controller vibration (future)
+  - **Possible Issues**:
+    - Performance impact from many effects
+    - Visual clutter in combat
+    - Audio overlap issues
+    - Feedback delay due to latency
+  - **Protections**:
+    - Effect pooling and limits
+    - Smart effect prioritization
+    - Audio channel management
+    - Predictive feedback systems
+
+- [ ] Add collision detection for combat
+  - **Implementation Steps**:
+    - Implement precise hitbox systems
+    - Create weapon-specific collision shapes
+    - Add environment collision for projectiles
+    - Build collision optimization structures
+    - Create debug visualization tools
+  - **Possible Issues**:
+    - Performance with many collision checks
+    - Hitbox exploitation
+    - Collision detection lag
+    - False positive/negative hits
+  - **Protections**:
+    - Spatial partitioning optimization
+    - Server validates all hits
+    - Lag compensation algorithms
+    - Conservative hitbox design
+
+### 5.3 Weapon System Framework
+- [ ] Create weapon base classes
+  - **Implementation Steps**:
+    - Design melee weapon base class
+    - Create projectile weapon base class
+    - Implement area-of-effect weapon base
+    - Build weapon state management
+    - Add weapon inheritance patterns
+  - **Possible Issues**:
+    - Over-abstraction complexity
+    - Performance overhead
+    - Difficult debugging
+    - State synchronization
+  - **Protections**:
+    - Clear documentation
+    - Performance profiling
+    - Comprehensive logging
+    - State validation
+
+- [ ] Implement weapon cooldown system
+  - **Implementation Steps**:
+    - Create cooldown timer management
+    - Add cooldown modification system
+    - Implement cooldown UI feedback
+    - Build server-side cooldown validation
+    - Add cooldown analytics tracking
+  - **Possible Issues**:
+    - Cooldown manipulation
+    - Timer precision issues
+    - UI desync with actual cooldown
+    - Performance with many timers
+  - **Protections**:
+    - Server authoritative timers
+    - High precision timing
+    - Regular sync messages
+    - Timer pooling system
+
+- [ ] Add weapon range and accuracy
+  - **Implementation Steps**:
+    - Define range limits per weapon type
+    - Implement accuracy/spread systems
+    - Create range falloff damage (future)
+    - Build range indicator UI
+    - Add accuracy modifiers system
+  - **Possible Issues**:
+    - Range validation complexity
+    - Accuracy RNG frustration
+    - Visual indicators misleading
+    - Range exploitation
+  - **Protections**:
+    - Clear range boundaries
+    - Pseudo-random accuracy
+    - Accurate visual guides
+    - Server range validation
+
+- [ ] Create weapon animation system
+  - **Implementation Steps**:
+    - Design animation state machines
+    - Implement smooth transitions
+    - Create animation event system
+    - Build animation synchronization
+    - Add animation canceling rules
+  - **Possible Issues**:
+    - Animation desync
+    - Performance impact
+    - Animation exploits
+    - Visual glitches
+  - **Protections**:
+    - Authoritative animation states
+    - LOD animation system
+    - Animation validation
+    - Fallback animations
+
+- [ ] Implement weapon sound effects
+  - **Implementation Steps**:
+    - Create 3D spatial audio system
+    - Implement weapon-specific sounds
+    - Add impact sound variations
+    - Build audio occlusion system
+    - Create audio priority system
+  - **Possible Issues**:
+    - Audio performance impact
+    - Sound overlap chaos
+    - Spatial audio accuracy
+    - Missing audio cues
+  - **Protections**:
+    - Audio channel limits
+    - Smart sound prioritization
+    - Optimized spatial calculations
+    - Fallback audio systems
+
+- [ ] Add weapon visual effects
+  - **Implementation Steps**:
+    - Create muzzle flash effects
+    - Implement projectile trails
+    - Add impact particle effects
+    - Build weapon glow/enchantment effects
+    - Design environmental interactions
+  - **Possible Issues**:
+    - Performance degradation
+    - Visual effect overload
+    - Effect synchronization
+    - Memory leaks
+  - **Protections**:
+    - Effect budgeting
+    - Quality settings
+    - Effect pooling
+    - Regular cleanup
+
+### 5.4 Game Physics Enhancement
+- [ ] Upgrade Phaser 3 physics for combat
+  - **Implementation Steps**:
+    - Configure physics for combat precision
+    - Optimize physics performance settings
+    - Implement custom physics behaviors
+    - Add physics debugging tools
+    - Create physics profiling system
+  - **Possible Issues**:
+    - Physics instability at high speeds
+    - Determinism across clients
+    - Performance bottlenecks
+    - Physics exploits
+  - **Protections**:
+    - Fixed timestep physics
+    - Deterministic algorithms
+    - Performance monitoring
+    - Physics validation
+
+- [ ] Implement precise hitbox detection
+  - **Implementation Steps**:
+    - Create per-frame hitbox definitions
+    - Implement compound hitboxes
+    - Add hitbox visualization tools
+    - Build hitbox validation system
+    - Create hitbox editor tools
+  - **Possible Issues**:
+    - Hitbox complexity performance
+    - Animation/hitbox mismatch
+    - Network hitbox desync
+    - Hitbox manipulation
+  - **Protections**:
+    - Optimized hitbox shapes
+    - Automated testing
+    - Authoritative hitboxes
+    - Validation checksums
+
+- [ ] Add projectile physics system
+  - **Implementation Steps**:
+    - Create projectile movement physics
+    - Implement gravity effects (arrows)
+    - Add projectile collision detection
+    - Build projectile penetration rules
+    - Create projectile pooling system
+  - **Possible Issues**:
+    - Many projectiles performance
+    - Projectile prediction difficulty
+    - Collision detection accuracy
+    - Memory management
+  - **Protections**:
+    - Object pooling
+    - Predictive rendering
+    - Broad phase optimization
+    - Automatic cleanup
+
+- [ ] Create AOE damage zones
+  - **Implementation Steps**:
+    - Design AOE shape system
+    - Implement damage falloff
+    - Create AOE visualization
+    - Build AOE timing system
+    - Add AOE stacking rules
+  - **Possible Issues**:
+    - Overlapping AOE complexity
+    - Performance with many zones
+    - Visual clarity problems
+    - Timing exploitation
+  - **Protections**:
+    - Clear stacking rules
+    - Zone count limits
+    - Distinct visual design
+    - Server timing authority
+
+- [ ] Implement environmental collision
+  - **Implementation Steps**:
+    - Create destructible objects system
+    - Add projectile-environment interaction
+    - Build cover mechanics
+    - Implement line-of-sight system
+    - Add environmental hazards
+  - **Possible Issues**:
+    - Destruction state sync
+    - Performance impact
+    - Exploit potential
+    - Visual occlusion bugs
+  - **Protections**:
+    - Authoritative destruction
+    - LOD destruction effects
+    - Regular state validation
+    - Conservative occlusion
+
+- [ ] Add physics optimization
+  - **Implementation Steps**:
+    - Implement spatial partitioning
+    - Create physics LOD system
+    - Add physics culling
+    - Build physics profiler
+    - Optimize collision pairs
+  - **Possible Issues**:
+    - Optimization bugs
+    - Edge case failures
+    - Debugging difficulty
+    - Performance regression
+  - **Protections**:
+    - Extensive testing
+    - Gradual rollout
+    - Performance monitoring
+    - Fallback systems
+
+**Week 5 Milestone**: Combat system foundation with class architecture and weapon framework
+
+## Week 6: Class Implementation - Berserker & Mage
+
+### 6.1 Berserker Class Implementation
+- [ ] **Primary Weapon**: Two-handed sword mechanics
+  - **Implementation Steps**:
+    - Create sword swing animation with 120° arc
+    - Implement melee hit detection within arc
+    - Add sword trail visual effect
+    - Create combo system for chained attacks
+    - Implement sword collision with environment
+  - **Possible Issues**:
+    - Arc calculation performance
+    - Hit detection accuracy at arc edges
+    - Animation blending problems
+    - Combo timing exploits
+  - **Protections**:
+    - Precalculated arc positions
+    - Conservative hit detection
+    - Animation state machine
+    - Server validates combo timing
+
+- [ ] **Attack Pattern**: Melee AOE slash (120° arc)
+  - **Implementation Steps**:
+    - Define precise arc geometry
+    - Create sweep animation timing
+    - Implement multi-hit detection prevention
+    - Add directional attack system
+    - Build attack queuing for combos
+  - **Possible Issues**:
+    - Multiple hit registration
+    - Arc direction manipulation
+    - Animation canceling exploits
+    - Client prediction mismatch
+  - **Protections**:
+    - Hit registration cooldown
+    - Fixed arc directions
+    - Limited animation canceling
+    - Conservative prediction
+
+- [ ] **Damage System**: High damage (80-100 base)
+  - **Implementation Steps**:
+    - Implement damage variance within range
+    - Add sweet spot mechanics for max damage
+    - Create damage scaling with rage
+    - Build critical hit system
+    - Add damage type as physical
+  - **Possible Issues**:
+    - Damage calculation inconsistency
+    - RNG frustration from variance
+    - Rage damage stacking issues
+    - Critical hit exploitation
+  - **Protections**:
+    - Pseudo-random distribution
+    - Clear damage feedback
+    - Capped damage scaling
+    - Server-side critical validation
+
+- [ ] **Range**: Short range (2-3 tiles)
+  - **Implementation Steps**:
+    - Define tile-based measurement system
+    - Create range indicator visuals
+    - Implement range validation
+    - Add lunge mechanics for gap closing
+    - Build range-based damage falloff
+  - **Possible Issues**:
+    - Range measurement ambiguity
+    - Visual indicator accuracy
+    - Lunge distance exploitation
+    - Edge case tile calculations
+  - **Protections**:
+    - Clear tile grid system
+    - Conservative range display
+    - Fixed lunge distances
+    - Robust edge case handling
+
+- [ ] **Attack Speed**: Slow rate (1.5s cooldown)
+  - **Implementation Steps**:
+    - Implement attack timer system
+    - Create attack speed modifiers framework
+    - Add animation speed matching
+    - Build attack queuing system
+    - Create cooldown UI indicator
+  - **Possible Issues**:
+    - Cooldown bypass attempts
+    - Animation speed mismatch
+    - Queue input frustration
+    - Network lag affecting timing
+  - **Protections**:
+    - Server enforced cooldowns
+    - Animation time validation
+    - Limited queue depth
+    - Lag compensation system
+
+- [ ] **Stats**: 150 HP, 50 armor points
+  - **Implementation Steps**:
+    - Set base health higher than other classes
+    - Implement armor damage reduction
+    - Create health bar UI scaling
+    - Add armor visual indicators
+    - Build stat modifier system
+  - **Possible Issues**:
+    - Balance issues with high stats
+    - UI scaling problems
+    - Stat overflow possibilities
+    - Visual feedback clarity
+  - **Protections**:
+    - Careful balance testing
+    - Responsive UI design
+    - Hard stat caps
+    - Clear visual language
+
+- [ ] **Special Ability**: Rage mode (10% damage boost when below 50% HP)
+  - **Implementation Steps**:
+    - Create health threshold detection
+    - Implement damage multiplier system
+    - Add rage visual effects (red aura)
+    - Create rage audio feedback
+    - Build rage state management
+  - **Possible Issues**:
+    - Threshold manipulation attempts
+    - Visual effect performance
+    - Rage activation timing
+    - Damage calculation complexity
+  - **Protections**:
+    - Server health validation
+    - Effect LOD system
+    - Clear activation rules
+    - Optimized calculations
+
+- [ ] **Visual Effects**: Sword trail, impact effects
+  - **Implementation Steps**:
+    - Create sword trail particle system
+    - Implement impact spark effects
+    - Add blood/damage effects
+    - Build screen shake on hits
+    - Create environmental scarring
+  - **Possible Issues**:
+    - Performance with many effects
+    - Visual clutter in combat
+    - Effect synchronization
+    - Memory leaks from particles
+  - **Protections**:
+    - Particle pooling
+    - Effect priority system
+    - Quality settings options
+    - Automatic cleanup
+
+- [ ] **Audio**: Sword swing and impact sounds
+  - **Implementation Steps**:
+    - Record/source sword swoosh sounds
+    - Create impact sound variations
+    - Implement 3D spatial audio
+    - Add effort/grunt sounds
+    - Build audio ducking system
+  - **Possible Issues**:
+    - Audio overlap cacophony
+    - Spatial audio inaccuracy
+    - Missing audio cues
+    - Performance impact
+  - **Protections**:
+    - Audio channel management
+    - Accurate 3D positioning
+    - Fallback audio systems
+    - Audio LOD system
+
+### 6.2 Mage Class Implementation
+- [ ] **Primary Weapon**: Ice projectile system
+  - **Implementation Steps**:
+    - Create ice shard projectile model
+    - Implement projectile spawn system
+    - Add projectile physics (slight arc)
+    - Build projectile tracking mechanics
+    - Create projectile pool management
+  - **Possible Issues**:
+    - Projectile spawn position exploits
+    - Physics calculation performance
+    - Tracking too strong/weak
+    - Memory leaks from projectiles
+  - **Protections**:
+    - Fixed spawn positions
+    - Optimized physics
+    - Limited tracking angle
+    - Aggressive pooling
+
+- [ ] **Attack Pattern**: Ranged projectile with tracking
+  - **Implementation Steps**:
+    - Design homing behavior with limits
+    - Create predictive targeting system
+    - Implement projectile speed curves
+    - Add multi-projectile patterns (future)
+    - Build charge-up mechanics (future)
+  - **Possible Issues**:
+    - Tracking feeling unfair
+    - Prediction exploitation
+    - Pattern recognition bots
+    - Charge timing issues
+  - **Protections**:
+    - Maximum turn rate
+    - Server-side prediction
+    - Pattern randomization
+    - Fixed charge times
+
+- [ ] **Damage System**: Medium damage (60-80 base)
+  - **Implementation Steps**:
+    - Set base magical damage type
+    - Implement damage variance
+    - Add headshot bonus (future)
+    - Create damage over time from frost
+    - Build combo damage scaling
+  - **Possible Issues**:
+    - Magic damage imbalance
+    - DOT stacking problems
+    - Combo exploitation
+    - Damage type confusion
+  - **Protections**:
+    - Careful balance iteration
+    - DOT stacking limits
+    - Combo cooldowns
+    - Clear damage typing
+
+- [ ] **Range**: Long range (8-10 tiles)
+  - **Implementation Steps**:
+    - Define long-range mechanics
+    - Create range drop-off system
+    - Add scope/zoom feature (future)
+    - Build range indicator UI
+    - Implement fog of war limits
+  - **Possible Issues**:
+    - Screen camping strategies
+    - Range advantage too strong
+    - Visual clarity at range
+    - Map design constraints
+  - **Protections**:
+    - Map design consideration
+    - Damage falloff at max range
+    - Clear projectile visuals
+    - Strategic map obstacles
+
+- [ ] **Attack Speed**: Medium rate (1.0s cooldown)
+  - **Implementation Steps**:
+    - Balance fire rate with damage
+    - Create smooth casting animations
+    - Add cast time mechanics
+    - Build animation canceling rules
+    - Implement quickcast options
+  - **Possible Issues**:
+    - DPS balance concerns
+    - Animation lock frustration
+    - Cast time vulnerability
+    - Input delay feelings
+  - **Protections**:
+    - Extensive DPS testing
+    - Partial animation canceling
+    - Defensive options while casting
+    - Responsive input system
+
+- [ ] **Stats**: 100 HP, 30 armor points
+  - **Implementation Steps**:
+    - Set lower health for glass cannon design
+    - Implement magical resistance (future)
+    - Create shield mechanics (future)
+    - Build health regeneration
+    - Add mana system (future)
+  - **Possible Issues**:
+    - Too fragile in practice
+    - One-shot frustration
+    - Sustain imbalance
+    - Resource management complexity
+  - **Protections**:
+    - Escape abilities planned
+    - Damage mitigation options
+    - Balanced regeneration
+    - Simple resource system
+
+- [ ] **Special Ability**: Frost effect (30% movement speed reduction for 2s)
+  - **Implementation Steps**:
+    - Create slow debuff system
+    - Implement visual frost effect
+    - Add movement calculation modifications
+    - Build effect duration timer
+    - Create cleanse mechanics (future)
+  - **Possible Issues**:
+    - Slow stacking problems
+    - Duration feeling too long
+    - Visual effect performance
+    - Movement prediction issues
+  - **Protections**:
+    - No slow stacking
+    - Careful duration tuning
+    - Optimized frost shader
+    - Smooth movement interpolation
+
+- [ ] **Projectile Physics**: Ice shard behavior
+  - **Implementation Steps**:
+    - Create realistic projectile arc
+    - Add air resistance simulation
+    - Implement shattering on impact
+    - Build penetration mechanics (future)
+    - Create ricochet system (future)
+  - **Possible Issues**:
+    - Physics complexity performance
+    - Unpredictable trajectories
+    - Collision detection accuracy
+    - Network synchronization
+  - **Protections**:
+    - Simplified physics model
+    - Predictable base trajectory
+    - Conservative collision
+    - Deterministic physics
+
+- [ ] **Visual Effects**: Ice trail, freeze effects
+  - **Implementation Steps**:
+    - Create ice crystal particle trail
+    - Implement frost spread on impact
+    - Add frozen status visuals
+    - Build ice shatter effects
+    - Create environmental frosting
+  - **Possible Issues**:
+    - Particle system overload
+    - Visual clarity problems
+    - Performance degradation
+    - Effect desynchronization
+  - **Protections**:
+    - Particle LOD system
+    - Distinct visual language
+    - Performance budgets
+    - Effect prioritization
+
+- [ ] **Audio**: Ice casting and impact sounds
+  - **Implementation Steps**:
+    - Design crystalline casting sounds
+    - Create ice impact variations
+    - Add freeze status audio
+    - Build ambient frost sounds
+    - Implement shatter sound effects
+  - **Possible Issues**:
+    - Audio fatigue from repetition
+    - Frequency overlap issues
+    - Spatial audio accuracy
+    - Missing audio feedback
+  - **Protections**:
+    - Sound variation pool
+    - Frequency separation
+    - Accurate 3D audio
+    - Complete audio coverage
+
+### 6.3 Status Effects System
+- [ ] Create status effect framework
+  - **Implementation Steps**:
+    - Design effect base class architecture
+    - Create effect application system
+    - Implement effect removal mechanics
+    - Build effect UI system
+    - Add effect networking protocol
+  - **Possible Issues**:
+    - Effect system complexity
+    - Network synchronization
+    - UI clutter with many effects
+    - Performance scaling
+  - **Protections**:
+    - Simple, extensible design
+    - Authoritative effect state
+    - Smart UI grouping
+    - Effect count limits
+
+- [ ] Implement slow effect (frost)
+  - **Implementation Steps**:
+    - Create movement speed modifier
+    - Add cumulative slow resistance
+    - Implement visual slow feedback
+    - Build slow cleanse mechanics
+    - Add slow immunity windows
+  - **Possible Issues**:
+    - Slow feeling unfun
+    - Resistance calculation complexity
+    - Visual feedback clarity
+    - Immunity timing exploitation
+  - **Protections**:
+    - Diminishing returns
+    - Clear calculations
+    - Obvious visual states
+    - Fixed immunity durations
+
+- [ ] Add rage boost system
+  - **Implementation Steps**:
+    - Create damage amplification effect
+    - Add rage visual indicators
+    - Implement rage duration tracking
+    - Build rage interaction rules
+    - Create rage audio feedback
+  - **Possible Issues**:
+    - Damage scaling problems
+    - Visual effect overlap
+    - Duration manipulation
+    - Audio cacophony
+  - **Protections**:
+    - Capped amplification
+    - Effect priority system
+    - Server-tracked duration
+    - Audio ducking
+
+- [ ] Create effect stacking logic
+  - **Implementation Steps**:
+    - Define stacking rules per effect
+    - Implement intensity stacking
+    - Create duration refresh logic
+    - Build unique effect system
+    - Add stack limit configurations
+  - **Possible Issues**:
+    - Complex stacking interactions
+    - Balance problems with stacks
+    - Confusing stack behavior
+    - Performance with many stacks
+  - **Protections**:
+    - Simple stacking rules
+    - Hard stack limits
+    - Clear UI indication
+    - Optimized stack tracking
+
+- [ ] Implement effect duration tracking
+  - **Implementation Steps**:
+    - Create precise timer system
+    - Add duration modification mechanics
+    - Implement partial duration cleanse
+    - Build duration UI indicators
+    - Create effect expiration events
+  - **Possible Issues**:
+    - Timer precision problems
+    - Duration exploit attempts
+    - UI update performance
+    - Event timing issues
+  - **Protections**:
+    - High-precision timers
+    - Server authoritative durations
+    - Batched UI updates
+    - Queued event system
+
+- [ ] Add visual indicators for effects
+  - **Implementation Steps**:
+    - Design effect icon system
+    - Create effect particle systems
+    - Add character model modifications
+    - Build effect color coding
+    - Implement effect intensity visuals
+  - **Possible Issues**:
+    - Visual clutter overload
+    - Performance impact
+    - Colorblind accessibility
+    - Effect recognition difficulty
+  - **Protections**:
+    - Minimalist icon design
+    - LOD particle systems
+    - Colorblind modes
+    - Distinct effect shapes
+
+- [ ] Create effect cleanup system
+  - **Implementation Steps**:
+    - Implement automatic expiration
+    - Add force cleanup mechanics
+    - Create effect pooling system
+    - Build memory leak prevention
+    - Add effect history tracking
+  - **Possible Issues**:
+    - Cleanup timing bugs
+    - Memory leak potential
+    - Pool exhaustion
+    - History data growth
+  - **Protections**:
+    - Defensive cleanup code
+    - Regular leak detection
+    - Dynamic pool sizing
+    - Capped history storage
+
+### 6.4 Combat UI Components
+- [ ] Health bar implementation
+  - **Implementation Steps**:
+    - Create segmented health bar design
+    - Add smooth health transitions
+    - Implement damage preview
+    - Build low health warnings
+    - Create health number display
+  - **Possible Issues**:
+    - Update performance impact
+    - Visual feedback delay
+    - Damage preview accuracy
+    - Warning alert fatigue
+  - **Protections**:
+    - Efficient update batching
+    - Predictive animations
+    - Conservative previews
+    - Smart alert thresholds
+
+- [ ] Armor display system
+  - **Implementation Steps**:
+    - Design armor pip system
+    - Create armor break animations
+    - Add armor type indicators
+    - Build armor regeneration display
+    - Implement damage reduction preview
+  - **Possible Issues**:
+    - Complex armor visualization
+    - Animation performance
+    - Type indication clarity
+    - Preview calculation accuracy
+  - **Protections**:
+    - Simple pip design
+    - Pooled animations
+    - Clear type colors
+    - Server-verified previews
+
+- [ ] Cooldown indicators
+  - **Implementation Steps**:
+    - Create radial cooldown timers
+    - Add numeric countdown option
+    - Implement ability ready effects
+    - Build cooldown reduction display
+    - Create global cooldown indicator
+  - **Possible Issues**:
+    - Timer synchronization
+    - Visual clutter with many cooldowns
+    - Ready effect spam
+    - Reduction calculation complexity
+  - **Protections**:
+    - Server sync points
+    - Grouped cooldown display
+    - Ready effect cooldowns
+    - Pre-calculated reductions
+
+- [ ] Status effect display
+  - **Implementation Steps**:
+    - Design effect icon bar
+    - Create effect duration timers
+    - Add effect stack counters
+    - Build effect tooltip system
+    - Implement priority ordering
+  - **Possible Issues**:
+    - Icon bar overflow
+    - Timer precision display
+    - Tooltip performance
+    - Ordering confusion
+  - **Protections**:
+    - Scrollable effect bar
+    - Rounded timer display
+    - Lazy tooltip loading
+    - Consistent ordering rules
+
+- [ ] Damage number display
+  - **Implementation Steps**:
+    - Create floating damage text
+    - Add damage type coloring
+    - Implement critical hit emphasis
+    - Build damage aggregation
+    - Create customization options
+  - **Possible Issues**:
+    - Screen clutter in combat
+    - Performance with many numbers
+    - Readability at distance
+    - Aggregation timing
+  - **Protections**:
+    - Smart positioning algorithm
+    - Number pooling system
+    - Scaling with distance
+    - Time-window aggregation
+
+- [ ] Class ability UI elements
+  - **Implementation Steps**:
+    - Design class-specific UI themes
+    - Create ability charge indicators
+    - Add combo counters
+    - Build resource bars (future)
+    - Implement ability preview
+  - **Possible Issues**:
+    - Theme differentiation difficulty
+    - Charge indication accuracy
+    - Combo timing display
+    - Preview misleading
+  - **Protections**:
+    - Distinct class colors
+    - Server-verified charges
+    - Clear timing windows
+    - Conservative previews
+
+**Week 6 Milestone**: Berserker and Mage classes fully functional with combat mechanics
+
+## Week 7: Class Implementation - Bomber & Archer
+
+### 7.1 Bomber Class Implementation
+- [ ] **Primary Weapon**: Fire bomb mechanics
+  - **Implementation Steps**:
+    - Create bomb throwing physics system
+    - Implement arc trajectory preview
+    - Add bomb cooking mechanics (hold to delay)
+    - Build bomb rolling physics
+    - Create bomb inventory system
+  - **Possible Issues**:
+    - Trajectory calculation performance
+    - Physics prediction accuracy
+    - Cooking timer exploitation
+    - Inventory desynchronization
+  - **Protections**:
+    - Cached trajectory calculations
+    - Server validates final position
+    - Fixed cooking time limits
+    - Authoritative inventory
+
+- [ ] **Attack Pattern**: Thrown explosives with AOE
+  - **Implementation Steps**:
+    - Design explosion radius visualization
+    - Create damage falloff from center
+    - Implement multi-bomb combinations
+    - Add environmental destruction
+    - Build chain explosion mechanics
+  - **Possible Issues**:
+    - AOE overlap calculations
+    - Performance with multiple explosions
+    - Destruction state synchronization
+    - Chain explosion exploits
+  - **Protections**:
+    - Optimized overlap detection
+    - Explosion count limits
+    - Authoritative destruction
+    - Chain explosion caps
+
+- [ ] **Damage System**: High AOE damage (70-90 base, 3-tile radius)
+  - **Implementation Steps**:
+    - Implement radial damage calculation
+    - Create damage through walls reduction
+    - Add friendly fire prevention
+    - Build direct hit bonus damage
+    - Create explosion type variations
+  - **Possible Issues**:
+    - Wall detection complexity
+    - Damage calculation performance
+    - Direct hit detection accuracy
+    - Type system complexity
+  - **Protections**:
+    - Simplified wall checks
+    - Cached damage values
+    - Conservative hit detection
+    - Limited explosion types
+
+- [ ] **Range**: Medium range (5-7 tiles)
+  - **Implementation Steps**:
+    - Create throwing power system
+    - Add minimum throw distance
+    - Implement max range indicators
+    - Build bounce prediction
+    - Create range enhancement items (future)
+  - **Possible Issues**:
+    - Power input complexity
+    - Minimum range frustration
+    - Prediction accuracy
+    - Range upgrade balance
+  - **Protections**:
+    - Simple power input
+    - Clear minimum indicators
+    - Conservative predictions
+    - Capped range upgrades
+
+- [ ] **Attack Speed**: Medium rate (1.2s cooldown)
+  - **Implementation Steps**:
+    - Balance reload animations
+    - Create quick-throw options
+    - Add animation canceling windows
+    - Build combo throw mechanics
+    - Implement cooldown modifiers
+  - **Possible Issues**:
+    - Animation lock frustration
+    - Combo timing difficulty
+    - Cooldown bypass attempts
+    - Modifier stacking issues
+  - **Protections**:
+    - Partial animation canceling
+    - Generous combo windows
+    - Server cooldown validation
+    - Multiplicative modifiers
+
+- [ ] **Stats**: 120 HP, 40 armor points
+  - **Implementation Steps**:
+    - Set balanced health pool
+    - Create explosion resistance passive
+    - Add armor type as medium
+    - Build self-damage reduction
+    - Implement blast suit visual
+  - **Possible Issues**:
+    - Self-damage frustration
+    - Resistance stacking
+    - Visual clarity
+    - Balance with tankiness
+  - **Protections**:
+    - High self-damage reduction
+    - Capped resistance
+    - Clear visual design
+    - Regular balance testing
+
+- [ ] **Special Ability**: Armor burn (fire damage bypasses 25% armor)
+  - **Implementation Steps**:
+    - Create fire damage type
+    - Implement armor penetration calculation
+    - Add burning visual effect
+    - Build burn duration system
+    - Create fire spread mechanics (future)
+  - **Possible Issues**:
+    - Penetration too powerful
+    - Visual effect performance
+    - Duration balance issues
+    - Spread complexity
+  - **Protections**:
+    - Careful percentage tuning
+    - Optimized fire effects
+    - Short burn durations
+    - Limited spread range
+
+- [ ] **Explosion Physics**: AOE calculation and effects
+  - **Implementation Steps**:
+    - Create explosion force physics
+    - Implement knockback system
+    - Add explosion shaping by environment
+    - Build shrapnel system (future)
+    - Create explosion combining
+  - **Possible Issues**:
+    - Knockback exploitation
+    - Physics performance
+    - Shaping calculation complexity
+    - Combination balance
+  - **Protections**:
+    - Capped knockback distance
+    - Simplified physics
+    - Pre-calculated shapes
+    - Limited combinations
+
+- [ ] **Visual Effects**: Fire trail, explosion animations
+  - **Implementation Steps**:
+    - Create bomb fuse sparks
+    - Implement explosion particle burst
+    - Add fire ground effects
+    - Build smoke aftermath
+    - Create screen distortion effects
+  - **Possible Issues**:
+    - Particle overload
+    - Fire effect performance
+    - Smoke visibility issues
+    - Distortion motion sickness
+  - **Protections**:
+    - Aggressive particle culling
+    - LOD fire effects
+    - Transparent smoke
+    - Optional distortion
+
+- [ ] **Audio**: Bomb throw and explosion sounds
+  - **Implementation Steps**:
+    - Design fuse sizzle sounds
+    - Create explosion bass impact
+    - Add debris sounds
+    - Build distant explosion echoes
+    - Implement dynamic range compression
+  - **Possible Issues**:
+    - Audio clipping from bass
+    - Echo calculation performance
+    - Debris sound spam
+    - Hearing damage potential
+  - **Protections**:
+    - Audio limiter system
+    - Simple echo model
+    - Debris sound pooling
+    - Volume safety limits
+
+### 7.2 Archer Class Implementation
+- [ ] **Primary Weapon**: Longbow with arrows
+  - **Implementation Steps**:
+    - Create bow draw mechanics
+    - Implement arrow physics with gravity
+    - Add arrow drop compensation
+    - Build quiver system
+    - Create arrow recovery mechanics
+  - **Possible Issues**:
+    - Draw time frustration
+    - Complex arrow physics
+    - Compensation difficulty
+    - Quiver management complexity
+  - **Protections**:
+    - Balanced draw times
+    - Predictable physics
+    - Optional aim assist
+    - Simple quiver system
+
+- [ ] **Attack Pattern**: High-velocity piercing projectile
+  - **Implementation Steps**:
+    - Design arrow flight physics
+    - Create pierce-through mechanics
+    - Add headshot detection
+    - Build power shot charging
+    - Implement trick shot system (future)
+  - **Possible Issues**:
+    - Pierce balance issues
+    - Headshot frustration
+    - Charge vulnerability
+    - Trick shot complexity
+  - **Protections**:
+    - Limited pierce targets
+    - Balanced headshot bonus
+    - Charge mobility options
+    - Simple trick shots
+
+- [ ] **Damage System**: Medium-high damage (75-95 base)
+  - **Implementation Steps**:
+    - Create distance-based damage
+    - Add velocity damage scaling
+    - Implement weak point system
+    - Build combo shot bonuses
+    - Create arrow type system (future)
+  - **Possible Issues**:
+    - Damage calculation complexity
+    - Weak point exploitation
+    - Combo timing difficulty
+    - Type system balance
+  - **Protections**:
+    - Simple damage curves
+    - Fixed weak points
+    - Generous combo windows
+    - Limited arrow types
+
+- [ ] **Range**: Very long range (12-15 tiles)
+  - **Implementation Steps**:
+    - Implement zoom mechanics
+    - Create range finder UI
+    - Add wind effects (future)
+    - Build elevation bonus
+    - Design scope system (future)
+  - **Possible Issues**:
+    - Zoom motion sickness
+    - UI clutter
+    - Wind randomness frustration
+    - Elevation exploitation
+  - **Protections**:
+    - Smooth zoom transitions
+    - Minimal UI design
+    - Predictable wind patterns
+    - Capped elevation bonus
+
+- [ ] **Attack Speed**: Fast rate (0.8s cooldown)
+  - **Implementation Steps**:
+    - Create quick shot option
+    - Balance with draw time
+    - Add rapid fire mode (future)
+    - Build animation blending
+    - Implement reload mechanics
+  - **Possible Issues**:
+    - DPS balance concerns
+    - Animation glitches
+    - Rapid fire imbalance
+    - Reload frustration
+  - **Protections**:
+    - Total DPS balancing
+    - Robust animation system
+    - Limited rapid fire
+    - Quick reload options
+
+- [ ] **Stats**: 80 HP, 20 armor points
+  - **Implementation Steps**:
+    - Set glass cannon health
+    - Create evasion mechanics (future)
+    - Add light armor type
+    - Build mobility bonuses
+    - Implement camouflage (future)
+  - **Possible Issues**:
+    - Too fragile for fun
+    - Evasion RNG frustration
+    - Mobility exploitation
+    - Camouflage visibility
+  - **Protections**:
+    - Escape ability options
+    - Predictable evasion
+    - Capped mobility
+    - Partial camouflage
+
+- [ ] **Special Ability**: Piercing shot (ignores 50% armor)
+  - **Implementation Steps**:
+    - Create armor penetration system
+    - Add visual penetration indicator
+    - Build penetration falloff
+    - Create over-penetration
+    - Implement material penetration
+  - **Possible Issues**:
+    - Penetration too strong
+    - Visual clarity problems
+    - Falloff calculations
+    - Material detection complexity
+  - **Protections**:
+    - Balanced percentage
+    - Clear visual feedback
+    - Simple falloff curve
+    - Limited materials
+
+- [ ] **Projectile Physics**: Arrow trajectory and physics
+  - **Implementation Steps**:
+    - Implement realistic arrow drop
+    - Create wind deflection
+    - Add arrow spin physics
+    - Build ricochet mechanics
+    - Design arrow fragmentation
+  - **Possible Issues**:
+    - Physics complexity overhead
+    - Unpredictable trajectories
+    - Ricochet exploitation
+    - Fragment performance
+  - **Protections**:
+    - Optimized physics model
+    - Capped deflection
+    - Limited ricochets
+    - Fragment pooling
+
+- [ ] **Visual Effects**: Arrow trail, impact effects
+  - **Implementation Steps**:
+    - Create arrow motion blur
+    - Add air distortion trail
+    - Implement impact particles
+    - Build arrow stuck visuals
+    - Create penetration effects
+  - **Possible Issues**:
+    - Motion blur performance
+    - Trail overlap clutter
+    - Stuck arrow accumulation
+    - Effect synchronization
+  - **Protections**:
+    - Optional motion blur
+    - Trail fade system
+    - Arrow cleanup timer
+    - Priority-based sync
+
+- [ ] **Audio**: Bow draw and arrow flight sounds
+  - **Implementation Steps**:
+    - Design bow tension creaking
+    - Create arrow whistle sound
+    - Add impact thud variations
+    - Build quiver rattle sounds
+    - Implement draw strength audio
+  - **Possible Issues**:
+    - Draw sound repetition
+    - Whistle frequency overlap
+    - Impact sound spam
+    - Audio detail overload
+  - **Protections**:
+    - Sound variation pools
+    - Frequency management
+    - Impact sound limiting
+    - LOD audio detail
+
+### 7.3 Advanced Status Effects
+- [ ] Implement armor burn effect (fire)
+  - **Implementation Steps**:
+    - Create damage over time system
+    - Add burning spread mechanics
+    - Implement fire extinguish options
+    - Build fire resistance system
+    - Create environmental fire
+  - **Possible Issues**:
+    - DOT balance difficulty
+    - Spread calculation performance
+    - Extinguish exploit potential
+    - Resistance stacking issues
+  - **Protections**:
+    - Capped DOT damage
+    - Limited spread distance
+    - Cooldown on extinguish
+    - Diminishing resistance
+
+- [ ] Add piercing damage calculation
+  - **Implementation Steps**:
+    - Create armor bypass formulas
+    - Implement penetration falloff
+    - Add material resistance
+    - Build over-penetration damage
+    - Create pierce effect visuals
+  - **Possible Issues**:
+    - Formula complexity
+    - Balance difficulties
+    - Visual clarity
+    - Performance overhead
+  - **Protections**:
+    - Simple formulas
+    - Extensive testing
+    - Clear visual feedback
+    - Cached calculations
+
+- [ ] Create damage over time system
+  - **Implementation Steps**:
+    - Design tick rate system
+    - Implement damage aggregation
+    - Create DOT stacking rules
+    - Build cleanse mechanics
+    - Add DOT visual feedback
+  - **Possible Issues**:
+    - Tick rate performance
+    - Stacking complexity
+    - Cleanse timing issues
+    - Visual spam
+  - **Protections**:
+    - Optimized tick rates
+    - Simple stacking rules
+    - Clear cleanse windows
+    - Aggregated visuals
+
+- [ ] Implement armor penetration mechanics
+  - **Implementation Steps**:
+    - Create penetration types
+    - Build penetration calculations
+    - Add penetration caps
+    - Implement resistance interplay
+    - Create penetration UI feedback
+  - **Possible Issues**:
+    - Type system complexity
+    - Calculation performance
+    - Cap balance issues
+    - UI information overload
+  - **Protections**:
+    - Limited penetration types
+    - Pre-calculated values
+    - Careful cap tuning
+    - Simplified UI display
+
+- [ ] Add effect interaction rules
+  - **Implementation Steps**:
+    - Define effect priorities
+    - Create interaction matrix
+    - Implement combo effects
+    - Build immunity rules
+    - Add interaction visuals
+  - **Possible Issues**:
+    - Interaction complexity explosion
+    - Balance nightmare
+    - Player understanding
+    - Visual chaos
+  - **Protections**:
+    - Limited interactions
+    - Explicit combo list
+    - Tutorial coverage
+    - Clean visual design
+
+- [ ] Create effect resistance system
+  - **Implementation Steps**:
+    - Design resistance types
+    - Implement resistance stacking
+    - Create resistance caps
+    - Build resistance decay
+    - Add resistance UI display
+  - **Possible Issues**:
+    - Resistance meta dominance
+    - Stacking calculations
+    - Cap frustrations
+    - UI complexity
+  - **Protections**:
+    - Balanced resistance values
+    - Diminishing returns
+    - Reasonable caps
+    - Simple UI indicators
+
+### 7.4 Combat Balance System
+- [ ] Implement damage scaling formulas
+  - **Implementation Steps**:
+    - Create base damage tables
+    - Design scaling curves
+    - Implement level scaling (future)
+    - Build damage type modifiers
+    - Add situational bonuses
+  - **Possible Issues**:
+    - Formula complexity
+    - Scaling imbalances
+    - Modifier stacking
+    - Situation detection
+  - **Protections**:
+    - Simple base formulas
+    - Extensive testing
+    - Multiplicative stacking
+    - Clear situations
+
+- [ ] Create class balance metrics
+  - **Implementation Steps**:
+    - Track win rates per class
+    - Monitor average damage dealt
+    - Measure survival times
+    - Analyze ability usage
+    - Create balance reports
+  - **Possible Issues**:
+    - Data collection overhead
+    - Statistical significance
+    - Privacy concerns
+    - Report complexity
+  - **Protections**:
+    - Sampled data collection
+    - Confidence intervals
+    - Anonymous aggregation
+    - Automated reports
+
+- [ ] Add combat statistics tracking
+  - **Implementation Steps**:
+    - Record damage events
+    - Track ability usage
+    - Monitor movement patterns
+    - Log combat duration
+    - Create replay data
+  - **Possible Issues**:
+    - Storage requirements
+    - Performance impact
+    - Data processing load
+    - Privacy implications
+  - **Protections**:
+    - Compressed storage
+    - Async logging
+    - Batch processing
+    - Data retention limits
+
+- [ ] Implement win rate monitoring
+  - **Implementation Steps**:
+    - Track match outcomes
+    - Segment by skill level
+    - Monitor matchup matrix
+    - Identify problem patterns
+    - Create alert system
+  - **Possible Issues**:
+    - Sample size requirements
+    - Skill measurement accuracy
+    - Alert noise
+    - Reaction time
+  - **Protections**:
+    - Statistical thresholds
+    - Multiple skill metrics
+    - Smart alert filters
+    - Gradual adjustments
+
+- [ ] Create balance adjustment tools
+  - **Implementation Steps**:
+    - Build configuration system
+    - Create hot-reload capability
+    - Implement A/B testing
+    - Add rollback mechanisms
+    - Create change tracking
+  - **Possible Issues**:
+    - Configuration errors
+    - Hot-reload stability
+    - Test group fairness
+    - Rollback data loss
+  - **Protections**:
+    - Configuration validation
+    - Staged hot-reload
+    - Careful test design
+    - Backup systems
+
+- [ ] Add playtesting feedback system
+  - **Implementation Steps**:
+    - Create feedback UI
+    - Build survey system
+    - Implement heat mapping
+    - Add session recording
+    - Create feedback analytics
+  - **Possible Issues**:
+    - Feedback spam
+    - Survey fatigue
+    - Performance overhead
+    - Storage costs
+  - **Protections**:
+    - Rate limiting
+    - Short surveys
+    - Opt-in recording
+    - Data sampling
+
+**Week 7 Milestone**: All four classes implemented with unique mechanics and balanced gameplay
+
+## Week 8: Advanced Combat Features & Polish
+
+### 8.1 Advanced Combat Mechanics
+- [ ] Implement critical hit system
+  - **Implementation Steps**:
+    - Design critical chance calculations
+    - Create critical damage multipliers
+    - Add critical hit visual effects
+    - Build critical hit audio feedback
+    - Implement critical hit tracking
+  - **Possible Issues**:
+    - RNG frustration
+    - Critical chance stacking
+    - Visual effect overload
+    - Audio spam
+  - **Protections**:
+    - Pseudo-random distribution
+    - Capped critical chance
+    - Effect throttling
+    - Audio cooldowns
+
+- [ ] Add damage type system (physical, magical, fire)
+  - **Implementation Steps**:
+    - Define damage type properties
+    - Create resistance calculations
+    - Implement type effectiveness
+    - Build type indicator UI
+    - Add type-specific effects
+  - **Possible Issues**:
+    - Type complexity confusion
+    - Balance difficulties
+    - UI information overload
+    - Effect performance
+  - **Protections**:
+    - Limited type count
+    - Clear effectiveness rules
+    - Streamlined UI
+    - Effect budgeting
+
+- [ ] Create combo system for attacks
+  - **Implementation Steps**:
+    - Design combo detection
+    - Implement combo counters
+    - Create combo rewards
+    - Build combo breakers
+    - Add combo tutorials
+  - **Possible Issues**:
+    - Input complexity
+    - Network latency impact
+    - Balance concerns
+    - Learning curve
+  - **Protections**:
+    - Simple combo inputs
+    - Latency compensation
+    - Careful reward scaling
+    - Progressive tutorials
+
+- [ ] Implement environmental damage
+  - **Implementation Steps**:
+    - Create hazard zones
+    - Add fall damage
+    - Implement crush mechanics
+    - Build elemental areas
+    - Create hazard warnings
+  - **Possible Issues**:
+    - Unfair hazard placement
+    - Damage unpredictability
+    - Warning visibility
+    - Map balance impact
+  - **Protections**:
+    - Fair hazard design
+    - Consistent damage rules
+    - Clear warning systems
+    - Map testing process
+
+- [ ] Add weapon durability system
+  - **Implementation Steps**:
+    - Create durability tracking
+    - Implement degradation rules
+    - Add repair mechanics
+    - Build durability UI
+    - Create broken weapon state
+  - **Possible Issues**:
+    - Frustration factor
+    - Micromanagement burden
+    - Balance complications
+    - UI clutter
+  - **Protections**:
+    - Generous durability
+    - Simple repair options
+    - Optional system
+    - Minimal UI impact
+
+- [ ] Create tactical positioning mechanics
+  - **Implementation Steps**:
+    - Implement high ground bonus
+    - Add backstab damage
+    - Create cover system
+    - Build flanking mechanics
+    - Add position indicators
+  - **Possible Issues**:
+    - Camping encouragement
+    - Detection accuracy
+    - Complexity overload
+    - Balance difficulties
+  - **Protections**:
+    - Anti-camping design
+    - Clear detection rules
+    - Optional complexity
+    - Careful bonus tuning
+
+### 8.2 Arena Enhancement
+- [ ] Add destructible environment elements
+  - **Implementation Steps**:
+    - Create destructible objects
+    - Implement destruction physics
+    - Add debris mechanics
+    - Build reconstruction timer
+    - Create strategic destruction
+  - **Possible Issues**:
+    - Performance impact
+    - Synchronization complexity
+    - Gameplay flow disruption
+    - Memory management
+  - **Protections**:
+    - Limited destructibles
+    - Simplified physics
+    - Strategic placement
+    - Object pooling
+
+- [ ] Implement interactive map features
+  - **Implementation Steps**:
+    - Create interactive switches
+    - Add moving platforms
+    - Implement trap systems
+    - Build teleporters
+    - Create power-up spawners
+  - **Possible Issues**:
+    - Timing synchronization
+    - Trap frustration
+    - Teleporter disorientation
+    - Power-up balance
+  - **Protections**:
+    - Deterministic timing
+    - Fair trap design
+    - Clear teleporter effects
+    - Balanced power-ups
+
+- [ ] Create dynamic obstacles
+  - **Implementation Steps**:
+    - Design moving obstacles
+    - Implement obstacle patterns
+    - Add obstacle damage
+    - Build obstacle prediction
+    - Create obstacle types
+  - **Possible Issues**:
+    - Pattern complexity
+    - Unfair damage
+    - Prediction difficulty
+    - Performance overhead
+  - **Protections**:
+    - Simple patterns
+    - Avoidable damage
+    - Visual predictors
+    - Optimized movement
+
+- [ ] Add environmental hazards
+  - **Implementation Steps**:
+    - Create hazard types
+    - Implement hazard cycles
+    - Add hazard warnings
+    - Build hazard damage
+    - Create safe zones
+  - **Possible Issues**:
+    - Hazard spam
+    - Warning clarity
+    - Damage balance
+    - Safe zone camping
+  - **Protections**:
+    - Limited hazards
+    - Clear warnings
+    - Balanced damage
+    - Dynamic safe zones
+
+- [ ] Implement line of sight mechanics
+  - **Implementation Steps**:
+    - Create vision system
+    - Add fog of war
+    - Implement sight blockers
+    - Build reveal mechanics
+    - Create vision UI
+  - **Possible Issues**:
+    - Calculation performance
+    - Visual clarity
+    - Information advantage
+    - UI complexity
+  - **Protections**:
+    - Optimized algorithms
+    - Clear visual design
+    - Balanced vision
+    - Simple UI
+
+- [ ] Create tactical cover systems
+  - **Implementation Steps**:
+    - Define cover positions
+    - Implement cover mechanics
+    - Add cover damage reduction
+    - Build cover indicators
+    - Create cover destruction
+  - **Possible Issues**:
+    - Cover camping
+    - Detection issues
+    - Balance problems
+    - Visual clutter
+  - **Protections**:
+    - Anti-camping design
+    - Clear detection
+    - Balanced reduction
+    - Clean indicators
+
+### 8.3 Advanced Visual Effects
+- [ ] Create particle systems for all abilities
+  - **Implementation Steps**:
+    - Design particle emitters
+    - Implement particle physics
+    - Add particle collisions
+    - Build particle pooling
+    - Create quality settings
+  - **Possible Issues**:
+    - Performance degradation
+    - Visual overload
+    - Memory usage
+    - Mobile compatibility
+  - **Protections**:
+    - Particle budgets
+    - LOD systems
+    - Aggressive pooling
+    - Quality options
+
+- [ ] Add weapon trail effects
+  - **Implementation Steps**:
+    - Create trail rendering
+    - Implement trail physics
+    - Add trail colors
+    - Build trail fading
+    - Create trail styles
+  - **Possible Issues**:
+    - Rendering performance
+    - Visual clutter
+    - Memory accumulation
+    - Style consistency
+  - **Protections**:
+    - Efficient rendering
+    - Trail limits
+    - Automatic cleanup
+    - Style guidelines
+
+- [ ] Implement impact animations
+  - **Implementation Steps**:
+    - Create impact sprites
+    - Add impact scaling
+    - Implement directional impacts
+    - Build impact variations
+    - Create material impacts
+  - **Possible Issues**:
+    - Animation overload
+    - Scaling performance
+    - Direction detection
+    - Variation repetition
+  - **Protections**:
+    - Animation pooling
+    - LOD scaling
+    - Simple detection
+    - Large variation pool
+
+- [ ] Create status effect visuals
+  - **Implementation Steps**:
+    - Design effect shaders
+    - Implement effect layers
+    - Add effect animations
+    - Build effect transitions
+    - Create effect combinations
+  - **Possible Issues**:
+    - Shader performance
+    - Layer complexity
+    - Animation sync
+    - Combination conflicts
+  - **Protections**:
+    - Optimized shaders
+    - Layer limits
+    - Synchronized timing
+    - Priority system
+
+- [ ] Add screen shake and camera effects
+  - **Implementation Steps**:
+    - Implement shake system
+    - Add directional shake
+    - Create shake profiles
+    - Build shake accumulation
+    - Add accessibility options
+  - **Possible Issues**:
+    - Motion sickness
+    - Shake spam
+    - Profile balance
+    - Accumulation excess
+  - **Protections**:
+    - Shake limits
+    - Smooth decay
+    - Balanced profiles
+    - Capped accumulation
+
+- [ ] Implement lighting effects
+  - **Implementation Steps**:
+    - Create dynamic lighting
+    - Add ability glows
+    - Implement shadows
+    - Build light flashes
+    - Create ambient lighting
+  - **Possible Issues**:
+    - Performance impact
+    - Visual distraction
+    - Shadow complexity
+    - Flash sensitivity
+  - **Protections**:
+    - Optional lighting
+    - Subtle glows
+    - Simple shadows
+    - Flash warnings
+
+### 8.4 Audio System Implementation
+- [ ] Create audio manager system
+  - **Implementation Steps**:
+    - Design audio architecture
+    - Implement channel management
+    - Add priority system
+    - Build audio pooling
+    - Create settings storage
+  - **Possible Issues**:
+    - Channel exhaustion
+    - Priority conflicts
+    - Memory usage
+    - Settings complexity
+  - **Protections**:
+    - Dynamic channels
+    - Clear priorities
+    - Audio recycling
+    - Simple settings
+
+- [ ] Add spatial audio for combat
+  - **Implementation Steps**:
+    - Implement 3D positioning
+    - Add distance attenuation
+    - Create occlusion system
+    - Build doppler effects
+    - Add reverb zones
+  - **Possible Issues**:
+    - Calculation overhead
+    - Positioning accuracy
+    - Occlusion complexity
+    - Effect performance
+  - **Protections**:
+    - Optimized calculations
+    - Update throttling
+    - Simple occlusion
+    - Optional effects
+
+- [ ] Implement dynamic music system
+  - **Implementation Steps**:
+    - Create music layers
+    - Implement intensity tracking
+    - Add transition system
+    - Build combat themes
+    - Create victory stingers
+  - **Possible Issues**:
+    - Layer synchronization
+    - Intensity detection
+    - Transition jarring
+    - Memory usage
+  - **Protections**:
+    - Precise sync
+    - Smooth detection
+    - Crossfade transitions
+    - Streaming audio
+
+- [ ] Create class-specific audio themes
+  - **Implementation Steps**:
+    - Design class motifs
+    - Implement theme variations
+    - Add ability sounds
+    - Build class ambience
+    - Create class victories
+  - **Possible Issues**:
+    - Theme differentiation
+    - Variation repetition
+    - Sound overlap
+    - Memory overhead
+  - **Protections**:
+    - Distinct motifs
+    - Multiple variations
+    - Sound prioritization
+    - Shared assets
+
+- [ ] Add environmental audio effects
+  - **Implementation Steps**:
+    - Create ambient loops
+    - Add positional sounds
+    - Implement weather audio
+    - Build echo zones
+    - Create material sounds
+  - **Possible Issues**:
+    - Loop fatigue
+    - Positional accuracy
+    - Weather complexity
+    - Echo performance
+  - **Protections**:
+    - Varied loops
+    - LOD positioning
+    - Simple weather
+    - Pre-calculated echoes
+
+- [ ] Implement audio settings and controls
+  - **Implementation Steps**:
+    - Create volume sliders
+    - Add audio categories
+    - Implement mute options
+    - Build preset system
+    - Create audio test
+  - **Possible Issues**:
+    - Category overlap
+    - Setting persistence
+    - Preset balance
+    - Test accuracy
+  - **Protections**:
+    - Clear categories
+    - Reliable storage
+    - Tested presets
+    - Comprehensive test
+
+### 8.5 Combat Networking & Anti-Cheat
+- [ ] Implement server-side combat validation
+  - **Implementation Steps**:
+    - Validate all damage events
+    - Check ability cooldowns
+    - Verify position updates
+    - Confirm resource usage
+    - Log suspicious events
+  - **Possible Issues**:
+    - Validation overhead
+    - False positives
+    - Latency impact
+    - Log volume
+  - **Protections**:
+    - Efficient validation
+    - Tuned thresholds
+    - Async validation
+    - Log rotation
+
+- [ ] Add action rate limiting
+  - **Implementation Steps**:
+    - Define action limits
+    - Implement rate counters
+    - Add burst allowance
+    - Create penalty system
+    - Build monitoring dashboard
+  - **Possible Issues**:
+    - Legitimate burst actions
+    - Counter memory usage
+    - Penalty harshness
+    - Dashboard complexity
+  - **Protections**:
+    - Generous bursts
+    - Efficient counters
+    - Progressive penalties
+    - Simple dashboard
+
+- [ ] Create movement validation
+  - **Implementation Steps**:
+    - Track position history
+    - Validate movement speed
+    - Check collision bypasses
+    - Detect teleportation
+    - Add rubber-banding
+  - **Possible Issues**:
+    - History storage
+    - Speed calculation accuracy
+    - Lag compensation
+    - Rubber-band frustration
+  - **Protections**:
+    - Rolling history
+    - Tolerance margins
+    - Smart compensation
+    - Smooth corrections
+
+- [ ] Implement damage verification
+  - **Implementation Steps**:
+    - Calculate expected damage
+    - Verify damage sources
+    - Check damage timing
+    - Validate damage types
+    - Track damage patterns
+  - **Possible Issues**:
+    - Calculation complexity
+    - Source tracking overhead
+    - Timing precision
+    - Pattern storage
+  - **Protections**:
+    - Cached calculations
+    - Efficient tracking
+    - Reasonable precision
+    - Pattern sampling
+
+- [ ] Add suspicious activity detection
+  - **Implementation Steps**:
+    - Define suspicion metrics
+    - Implement pattern detection
+    - Create alert system
+    - Build review tools
+    - Add auto-actions
+  - **Possible Issues**:
+    - Metric tuning
+    - Pattern complexity
+    - Alert fatigue
+    - False bans
+  - **Protections**:
+    - Conservative metrics
+    - Simple patterns
+    - Smart alerting
+    - Manual review
+
+- [ ] Create lag compensation for combat
+  - **Implementation Steps**:
+    - Implement rewind system
+    - Add interpolation
+    - Create extrapolation
+    - Build favor shooter
+    - Add fairness limits
+  - **Possible Issues**:
+    - Rewind complexity
+    - Interpolation artifacts
+    - Shooter advantage
+    - Fairness perception
+  - **Protections**:
+    - Limited rewind
+    - Smooth interpolation
+    - Balanced favor
+    - Clear limits
+
+### 8.6 Match Management System
+- [ ] Implement match start/end conditions
+  - **Implementation Steps**:
+    - Create ready check system
+    - Add countdown timer
+    - Implement win conditions
+    - Build draw detection
+    - Create rematch option
+  - **Possible Issues**:
+    - Ready check timeout
+    - Timer synchronization
+    - Condition edge cases
+    - Draw frequency
+  - **Protections**:
+    - Reasonable timeouts
+    - Server timer
+    - Comprehensive conditions
+    - Draw limits
+
+- [ ] Add match duration tracking
+  - **Implementation Steps**:
+    - Implement match timer
+    - Add overtime system
+    - Create sudden death
+    - Build time warnings
+    - Track time statistics
+  - **Possible Issues**:
+    - Timer precision
+    - Overtime balance
+    - Sudden death fairness
+    - Warning spam
+  - **Protections**:
+    - Server timer
+    - Balanced overtime
+    - Fair sudden death
+    - Smart warnings
+
+- [ ] Create surrender functionality
+  - **Implementation Steps**:
+    - Add surrender option
+    - Implement vote system
+    - Create cooldowns
+    - Build confirmations
+    - Add forfeit penalties
+  - **Possible Issues**:
+    - Premature surrenders
+    - Vote exploitation
+    - Cooldown frustration
+    - Penalty harshness
+  - **Protections**:
+    - Time restrictions
+    - Fair voting
+    - Reasonable cooldowns
+    - Balanced penalties
+
+- [ ] Implement match result calculation
+  - **Implementation Steps**:
+    - Calculate winner
+    - Determine MVP
+    - Award experience
+    - Update ratings
+    - Generate statistics
+  - **Possible Issues**:
+    - MVP criteria
+    - Experience exploits
+    - Rating manipulation
+    - Stat accuracy
+  - **Protections**:
+    - Clear criteria
+    - Anti-exploit measures
+    - Protected ratings
+    - Verified stats
+
+- [ ] Add match statistics recording
+  - **Implementation Steps**:
+    - Track combat events
+    - Record player actions
+    - Calculate aggregates
+    - Store match data
+    - Create replay data
+  - **Possible Issues**:
+    - Event volume
+    - Storage requirements
+    - Calculation overhead
+    - Privacy concerns
+  - **Protections**:
+    - Event sampling
+    - Compressed storage
+    - Async processing
+    - Privacy options
+
+- [ ] Create post-match summary screen
+  - **Implementation Steps**:
+    - Design summary layout
+    - Display key statistics
+    - Show performance graphs
+    - Add social features
+    - Create progression display
+  - **Possible Issues**:
+    - Information overload
+    - Graph complexity
+    - Social toxicity
+    - Load times
+  - **Protections**:
+    - Clean layout
+    - Simple graphs
+    - Moderation tools
+    - Async loading
+
+**Week 8 Milestone**: Complete combat system with advanced features and anti-cheat measures
+
+## API Endpoints - Combat
+
+### Game Actions
+All combat endpoints require authentication and active match validation.
+
+- **POST /api/game/action** - Submit combat action
+  - Validates action type and parameters
+  - Checks cooldowns and resources
+  - Applies server-side validation
+  - Returns action result and state update
+
+- **POST /api/game/move** - Player movement
+  - Validates position and speed
+  - Checks collision and boundaries
+  - Updates authoritative position
+  - Broadcasts to other players
+
+- **POST /api/game/attack** - Weapon attack
+  - Validates weapon state and cooldown
+  - Calculates hit detection server-side
+  - Applies damage and effects
+  - Returns attack results
+
+- **POST /api/game/ability** - Special ability use
+  - Checks ability availability
+  - Validates activation conditions
+  - Applies ability effects
+  - Updates ability cooldown
+
+- **POST /api/game/surrender** - Forfeit match
+  - Validates surrender eligibility
+  - Confirms surrender action
+  - Ends match with forfeit
+  - Updates player statistics
+
+- **GET /api/game/combat-stats** - Combat statistics
+  - Returns current match statistics
+  - Includes damage dealt/taken
+  - Shows ability usage
+  - Provides performance metrics
+
+### Class Management
+- **GET /api/classes/list** - Available classes
+  - Returns all class information
+  - Includes abilities and stats
+  - Shows unlock status
+  - Provides balance version
+
+- **GET /api/classes/:id** - Class details
+  - Detailed class information
+  - Ability descriptions
+  - Stat breakdowns
+  - Strategy tips
+
+- **POST /api/player/class** - Set player class
+  - Validates class availability
+  - Checks match restrictions
+  - Updates player selection
+  - Confirms class choice
+
+- **GET /api/player/class/stats** - Class statistics
+  - Personal performance per class
+  - Win rates and averages
+  - Favorite abilities
+  - Improvement suggestions
+
+## Real-time Events (Socket.IO) - Combat
+
+### Combat Events
+All events include timestamp and sequence number for ordering.
+
+- **player_attack** - Weapon attack action
+  - Attack type and direction
+  - Predicted hit information
+  - Animation state
+  - Damage preview
+
+- **player_ability** - Special ability use
+  - Ability type and target
+  - Effect parameters
+  - Duration information
+  - Visual effect data
+
+- **player_damage** - Damage dealt/received
+  - Damage amount and type
+  - Source information
+  - Armor mitigation
+  - Health updates
+
+- **player_death** - Player elimination
+  - Killer information
+  - Death location
+  - Respawn timer
+  - Death recap
+
+- **player_respawn** - Player respawn
+  - Spawn location
+  - Immunity duration
+  - Health/armor reset
+  - Class confirmation
+
+- **status_effect** - Status effect applied/removed
+  - Effect type and source
+  - Duration and intensity
+  - Stack information
+  - Visual updates
+
+- **combat_state** - Combat state updates
+  - Position updates
+  - Health/armor changes
+  - Cooldown information
+  - Resource updates
+
+### Game State Events
+- **match_start** - Combat phase begins
+  - Initial positions
+  - Match parameters
+  - Time limits
+  - Win conditions
+
+- **match_end** - Combat concluded
+  - Winner declaration
+  - Final statistics
+  - Rating changes
+  - Reward information
+
+- **player_stats** - Real-time statistics
+  - Damage tracking
+  - Performance metrics
+  - Combo information
+  - Achievement progress
+
+- **game_tick** - High-frequency updates
+  - Batched position updates
+  - Projectile positions
+  - Effect timers
+  - Environment changes
+
+## Technical Requirements - Combat
+
+### Performance Targets
+- **Combat Response**: <50ms for action validation
+  - Prioritize combat packets
+  - Cache validation results
+  - Optimize hit detection
+- **Frame Rate**: 60 FPS during intense combat
+  - Dynamic quality adjustment
+  - Effect culling system
+  - LOD for distant objects
+- **Physics Calculations**: <16ms per frame
+  - Fixed timestep physics
+  - Spatial partitioning
+  - Simplified collision shapes
+- **Network Sync**: <100ms for critical actions
+  - Predictive animations
+  - Lag compensation
+  - State reconciliation
+- **Memory Usage**: <500MB total client memory
+  - Aggressive pooling
+  - Texture compression
+  - Audio streaming
+
+### Combat Balance Requirements
+- **Class Win Rates**: 45-55% for each class
+  - Regular balance patches
+  - Data-driven adjustments
+  - Community feedback integration
+- **Match Duration**: 2-5 minutes average
+  - Sudden death at 5 minutes
+  - Increasing pressure mechanics
+  - Clear time warnings
+- **Damage Scaling**: Linear progression
+  - No exponential scaling
+  - Clear damage formulas
+  - Predictable outcomes
+- **Effect Duration**: 1-5 seconds range
+  - Short, impactful effects
+  - Clear visual indicators
+  - Counter-play options
+- **Cooldown Times**: 0.5-2.0 seconds range
+  - Fast-paced combat
+  - Ability rotation depth
+  - Punishment windows
+
+### Security Requirements
+- All combat actions server-validated
+- Damage calculations server-authoritative
+- Movement bounds checking
+- Action rate limiting per player
+- Replay system for match verification
+
+## Testing Requirements - Combat
+
+### Unit Tests
+- [ ] Damage calculation formulas
+  - Test all damage types
+  - Verify armor calculations
+  - Check critical hits
+  - Validate multipliers
+
+- [ ] Status effect mechanics
+  - Effect application
+  - Duration tracking
+  - Stacking behavior
+  - Removal conditions
+
+- [ ] Class balance algorithms
+  - Win rate calculations
+  - Matchup analysis
+  - Performance metrics
+  - Balance suggestions
+
+- [ ] Weapon cooldown systems
+  - Timer accuracy
+  - Modification effects
+  - Reset conditions
+  - Edge cases
+
+- [ ] Combat state management
+  - State transitions
+  - Event ordering
+  - Cleanup procedures
+  - Error recovery
+
+### Integration Tests
+- [ ] Client-server combat sync
+  - Action validation
+  - State reconciliation
+  - Lag compensation
+  - Prediction accuracy
+
+- [ ] Multi-class combat scenarios
+  - All matchup combinations
+  - Ability interactions
+  - Balance verification
+  - Edge case handling
+
+- [ ] Status effect interactions
+  - Effect combinations
+  - Priority resolution
+  - Visual updates
+  - Performance impact
+
+- [ ] Match conclusion flows
+  - Win conditions
+  - Statistics calculation
+  - Rating updates
+  - Reward distribution
+
+- [ ] Anti-cheat validation
+  - Detection accuracy
+  - False positive rate
+  - Performance overhead
+  - Recovery procedures
+
+### Balance Tests
+- [ ] Class vs class matchup testing
+  - Win rate tracking
+  - Skill curve analysis
+  - Counter-play options
+  - Fun factor assessment
+
+- [ ] Damage scaling verification
+  - Formula accuracy
+  - Balance across levels
+  - Time-to-kill metrics
+  - Feedback collection
+
+- [ ] Effect duration testing
+  - Impact assessment
+  - Counter-play timing
+  - Visual clarity
+  - Fun factor
+
+- [ ] Cooldown balance validation
+  - Ability rotation
+  - Combo potential
+  - Downtime analysis
+  - Skill expression
+
+- [ ] Win rate analysis
+  - Statistical significance
+  - Skill bracket breakdown
+  - Trend identification
+  - Adjustment recommendations
+
+## Success Criteria - Combat
+
+### Technical Metrics
+- All four classes implemented and functional
+- Combat feels responsive (<50ms action feedback)
+- No combat-related crashes or bugs
+- Smooth 60 FPS during combat
+- Server-side validation working
+
+### Gameplay Metrics
+- **Class Balance**: <10% win rate variance between classes
+- **Match Completion**: >90% matches finish without technical issues
+- **Player Satisfaction**: Combat feels fair and engaging
+- **Performance**: No lag during intense combat sequences
+
+### Combat Features
+1. **Four Unique Classes**: Each with distinct playstyles and abilities
+2. **Balanced Combat**: Fair matchups regardless of class selection
+3. **Visual Feedback**: Clear indicators for all combat actions
+4. **Audio Design**: Immersive sound effects for all combat elements
+5. **Anti-Cheat**: Server-validated combat prevents cheating
+
+## Dependencies & Risks
+
+### Critical Dependencies
+- Phase 1 MVP foundation must be stable
+- Phaser 3 physics engine performance
+- Socket.IO real-time performance
+- Server-side validation system
+
+### Key Risks
+- **Combat Balance**: Classes may be overpowered/underpowered
+  - Mitigation: Continuous balance monitoring and quick patches
+- **Network Latency**: Affecting real-time combat feel
+  - Mitigation: Lag compensation and client prediction
+- **Performance**: Complex combat calculations causing lag
+  - Mitigation: Performance budgets and optimization
+- **Complexity**: Too many mechanics overwhelming players
+  - Mitigation: Progressive complexity introduction
+
+### Mitigation Strategies
+- Extensive playtesting with different class combinations
+- Performance profiling during combat scenarios
+- Gradual feature rollout with testing at each step
+- Player feedback integration throughout development
+- Combat analytics for balance monitoring
+
+## Phase 2 Exit Criteria
+
+✅ **Complete when**:
+- All four classes are implemented with unique mechanics
+- Combat system is balanced and responsive
+- Visual and audio effects enhance gameplay
+- Server-side validation prevents cheating
+- Match system handles combat scenarios properly
+- Players can engage in fair, balanced combat
+
+**Ready for Phase 3**: Polish and deployment with fully functional combat system 
