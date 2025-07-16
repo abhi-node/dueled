@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
-import type { Vector2, ClassType } from '@dueled/shared';
+import type { Vector2, ClassType, ClassConfig, ClassStats } from '@dueled/shared';
+import { getClassConfig, calculateEffectiveDamage, calculateDashCooldown, calculateEffectiveCooldown } from '@dueled/shared';
 
 export class Player {
   public sprite!: Phaser.Physics.Arcade.Sprite;
@@ -7,11 +8,28 @@ export class Player {
   private playerId: string = '';
   private playerName: string = '';
   private classType: ClassType = 'berserker' as ClassType;
+  private classConfig!: ClassConfig;
   private isLocal: boolean = false;
+  
+  // Core stats from class configuration
+  private baseStats!: ClassStats;
   private maxHealth: number = 100;
   private currentHealth: number = 100;
   private armor: number = 0;
   private speed: number = 200;
+  
+  // New stat system
+  private stamina: number = 50;
+  private strength: number = 50;
+  private intelligence: number = 50;
+  
+  // Cooldown and ability tracking
+  private dashCooldownTime: number = 3.0;
+  private lastDashTime: number = 0;
+  private specialAbilityCooldown: number = 0;
+  private lastSpecialAbilityTime: number = 0;
+  
+  // Movement and combat
   private lastPosition: Vector2 = { x: 0, y: 0 };
   private _targetPosition: Vector2 = { x: 0, y: 0 };
   private velocity: Vector2 = { x: 0, y: 0 };
@@ -32,11 +50,22 @@ export class Player {
     this.classType = classType;
     this.isLocal = isLocal;
     
+    this.loadClassConfiguration();
     this.createSprite(x, y);
     this.setupPhysics();
     this.setupAnimations();
     this.createUI();
     this.setupClassStats();
+  }
+
+  /**
+   * Load class configuration and apply base stats
+   */
+  private loadClassConfiguration(): void {
+    this.classConfig = getClassConfig(this.classType);
+    this.baseStats = this.classConfig.stats;
+    
+    console.log(`🎯 Player: Loaded ${this.classType} configuration:`, this.classConfig);
   }
 
   private createSprite(x: number, y: number): void {
@@ -143,22 +172,37 @@ export class Player {
   }
 
   private setupClassStats(): void {
-    // Set stats based on class type
-    const classStats = {
-      berserker: { health: 150, armor: 50, speed: 180 },
-      mage: { health: 100, armor: 30, speed: 160 },
-      bomber: { health: 120, armor: 40, speed: 170 },
-      archer: { health: 80, armor: 20, speed: 220 },
-    };
+    // Apply stats from class configuration
+    this.maxHealth = this.baseStats.health;
+    this.currentHealth = this.baseStats.health;
+    this.armor = this.baseStats.defense;
+    this.speed = this.baseStats.speed;
+    this.stamina = this.baseStats.stamina;
+    this.strength = this.baseStats.strength;
+    this.intelligence = this.baseStats.intelligence;
     
-    const stats = classStats[this.classType];
-    this.maxHealth = stats.health;
-    this.currentHealth = stats.health;
-    this.armor = stats.armor;
-    this.speed = stats.speed;
+    // Calculate derived stats
+    this.dashCooldownTime = calculateDashCooldown(this.stamina);
+    this.specialAbilityCooldown = calculateEffectiveCooldown(
+      this.classConfig.specialAbility.baseCooldown, 
+      this.intelligence
+    );
     
     // Update physics body max velocity
-    this.sprite.body!.setMaxVelocity(this.speed, this.speed);
+    if (this.sprite.body && 'setMaxVelocity' in this.sprite.body) {
+      (this.sprite.body as Phaser.Physics.Arcade.Body).setMaxVelocity(this.speed, this.speed);
+    }
+    
+    console.log(`🎯 Player: ${this.classType} stats applied:`, {
+      health: this.maxHealth,
+      armor: this.armor,
+      speed: this.speed,
+      stamina: this.stamina,
+      strength: this.strength,
+      intelligence: this.intelligence,
+      dashCooldown: this.dashCooldownTime,
+      specialCooldown: this.specialAbilityCooldown
+    });
   }
 
   public update(time: number, delta: number): void {
@@ -256,10 +300,10 @@ export class Player {
 
   private updateFacing(): void {
     if (this.velocity.x > 0) {
-      this.facing = 'right';
+      this._facing = 'right';
       this.sprite.setFlipX(false);
     } else if (this.velocity.x < 0) {
-      this.facing = 'left';
+      this._facing = 'left';
       this.sprite.setFlipX(true);
     }
   }
@@ -311,96 +355,82 @@ export class Player {
   }
 
   // Combat methods
-  public attack(): boolean {
-    if (this.attackCooldown > 0) return false;
-    
-    // Set cooldown based on class
-    const attackCooldowns = {
-      berserker: 800,
-      mage: 1200,
-      bomber: 1500,
-      archer: 600,
-    };
-    
-    this.attackCooldown = attackCooldowns[this.classType];
-    
-    // Play attack animation
-    this.playAttackEffect();
-    
-    return true;
+  /**
+   * Dash mechanics for Q/E keys
+   */
+  public canDash(): boolean {
+    const currentTime = Date.now();
+    return (currentTime - this.lastDashTime) >= (this.dashCooldownTime * 1000);
   }
 
-  public useAbility(): boolean {
-    if (this.abilityCooldown > 0) return false;
-    
-    // Set cooldown based on class
-    const abilityCooldowns = {
-      berserker: 5000,
-      mage: 8000,
-      bomber: 10000,
-      archer: 6000,
-    };
-    
-    this.abilityCooldown = abilityCooldowns[this.classType];
-    
-    // Play ability effect
-    this.playAbilityEffect();
-    
-    return true;
-  }
-
-  private playAttackEffect(): void {
-    // Create attack effect
-    const attackEffect = this.scene.add.circle(this.sprite.x, this.sprite.y, 30, 0xfbbf24, 0.5);
-    attackEffect.setDepth(5);
-    
-    // Animate attack effect
-    this.scene.tweens.add({
-      targets: attackEffect,
-      alpha: 0,
-      scale: 2,
-      duration: 300,
-      ease: 'Power2',
-      onComplete: () => {
-        attackEffect.destroy();
-      },
-    });
-    
-    // Screen shake for local player
-    if (this.isLocal) {
-      this.scene.cameras.main.shake(100, 0.01);
+  public performDash(direction: 'left' | 'right'): boolean {
+    if (!this.canDash()) {
+      return false;
     }
+
+    const dashDistance = 2.0; // tiles
+    const dashDirection = direction === 'left' ? -1 : 1;
+    
+    // Calculate new position
+    const currentPos = this.getPosition();
+    const newX = currentPos.x + (dashDirection * dashDistance);
+    
+    // TODO: Add collision detection for dash target position
+    
+    // Apply dash movement
+    this.setPosition({ x: newX, y: currentPos.y });
+    this.lastDashTime = Date.now();
+    
+    console.log(`🏃 Player: Performed ${direction} dash, cooldown: ${this.dashCooldownTime}s`);
+    return true;
   }
 
-  private playAbilityEffect(): void {
-    // Create ability effect based on class
-    const effectColors = {
-      berserker: 0xff4444,
-      mage: 0x4444ff,
-      bomber: 0xff8800,
-      archer: 0x44ff44,
-    };
+  /**
+   * Special ability activation
+   */
+  public canUseSpecialAbility(): boolean {
+    const currentTime = Date.now();
+    return (currentTime - this.lastSpecialAbilityTime) >= (this.specialAbilityCooldown * 1000);
+  }
+
+  public useSpecialAbility(): boolean {
+    if (!this.canUseSpecialAbility()) {
+      return false;
+    }
+
+    const ability = this.classConfig.specialAbility;
+    this.lastSpecialAbilityTime = Date.now();
     
-    const abilityEffect = this.scene.add.circle(this.sprite.x, this.sprite.y, 50, effectColors[this.classType], 0.7);
-    abilityEffect.setDepth(5);
+    console.log(`⚡ Player: Used special ability ${ability.name} (${this.classType})`);
     
-    // Animate ability effect
-    this.scene.tweens.add({
-      targets: abilityEffect,
-      alpha: 0,
-      scale: 3,
-      duration: 1000,
-      ease: 'Power2',
-      onComplete: () => {
-        abilityEffect.destroy();
-      },
-    });
+    // TODO: Implement specific ability effects based on ability.effects
+    return true;
+  }
+
+  /**
+   * Attack with class-specific weapon
+   */
+  public attack(): boolean {
+    if (this.attackCooldown > 0) {
+      return false;
+    }
+
+    const weapon = this.classConfig.weapon;
+    const effectiveDamage = calculateEffectiveDamage(weapon.damage, this.strength);
+    
+    // Set cooldown based on weapon attack speed
+    this.attackCooldown = 1.0 / weapon.attackSpeed;
+    
+    console.log(`⚔️ Player: ${this.classType} attacks with ${weapon.name} for ${effectiveDamage} damage`);
+    
+    // TODO: Implement attack logic based on weapon type and effects
+    return true;
   }
 
   // Network methods
   public updatePosition(position: Vector2, velocity?: Vector2): void {
     if (!this.isLocal) {
-      this.targetPosition = position;
+      this._targetPosition = position;
       this.moveBuffer.push(position);
       
       // Limit buffer size
@@ -414,22 +444,34 @@ export class Player {
     }
   }
 
-  public takeDamage(damage: number, damageType: string = 'physical'): void {
-    // Calculate damage reduction based on armor
-    let finalDamage = damage;
-    if (damageType === 'physical') {
-      finalDamage = Math.max(1, damage - this.armor * 0.1);
+  /**
+   * Take damage with armor calculation
+   */
+  public takeDamage(damage: number, damageType: string = 'physical'): number {
+    // Apply armor reduction using the PRD formula
+    const armorReduction = this.armor / (this.armor + 100);
+    let effectiveDamage = damage * (1 - armorReduction);
+    
+    // Apply weapon-specific modifiers
+    if (damageType === 'armor_burn') {
+      // Fire damage bypasses 25% armor (Bomber ability)
+      const bypassedArmor = this.armor * 0.25;
+      const reducedArmor = this.armor - bypassedArmor;
+      const bypassReduction = reducedArmor / (reducedArmor + 100);
+      effectiveDamage = damage * (1 - bypassReduction);
+    } else if (damageType === 'piercing') {
+      // Piercing ignores 50% armor (Archer ability)
+      const reducedArmor = this.armor * 0.5;
+      const piercingReduction = reducedArmor / (reducedArmor + 100);
+      effectiveDamage = damage * (1 - piercingReduction);
     }
     
-    this.currentHealth = Math.max(0, this.currentHealth - finalDamage);
+    this.currentHealth -= effectiveDamage;
+    this.currentHealth = Math.max(0, this.currentHealth);
     
-    // Play damage effect
-    this.playDamageEffect(finalDamage);
+    console.log(`💥 Player: Took ${effectiveDamage} damage (${damageType}), health: ${this.currentHealth}/${this.maxHealth}`);
     
-    // Check if dead
-    if (this.currentHealth <= 0) {
-      this.handleDeath();
-    }
+    return effectiveDamage;
   }
 
   private playDamageEffect(damage: number): void {
@@ -486,6 +528,11 @@ export class Player {
     return { x: this.sprite.x, y: this.sprite.y };
   }
 
+  public setPosition(position: Vector2): void {
+    this.sprite.setPosition(position.x, position.y);
+    this.lastPosition = position;
+  }
+
   public getVelocity(): Vector2 {
     return this.velocity;
   }
@@ -529,6 +576,29 @@ export class Player {
 
   public getAbilityCooldown(): number {
     return this.abilityCooldown;
+  }
+
+  /**
+   * Get current stats for UI display
+   */
+  public getStats(): ClassStats & { currentHealth: number; maxHealth: number } {
+    return {
+      health: this.maxHealth,
+      defense: this.armor,
+      speed: this.speed,
+      stamina: this.stamina,
+      strength: this.strength,
+      intelligence: this.intelligence,
+      currentHealth: this.currentHealth,
+      maxHealth: this.maxHealth
+    };
+  }
+
+  /**
+   * Get class configuration for external access
+   */
+  public getClassConfig(): ClassConfig {
+    return this.classConfig;
   }
 
   public destroy(): void {

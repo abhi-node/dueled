@@ -3,13 +3,15 @@
  * Handles the game loop, player input, and rendering
  */
 
-import { Raycaster } from '../renderer/Raycaster';
-import { GameMap } from '../world/GameMap';
-import { MainNetworkManager } from '../network/MainNetworkManager';
-import { SpriteRenderer } from '../renderer/SpriteRenderer';
-import { TextureManager } from '../renderer/TextureManager';
-import type { Vector2, ClassType } from '@dueled/shared';
-import type { Socket } from 'socket.io-client';
+import Phaser from 'phaser';
+import { Socket } from 'socket.io-client';
+import { Raycaster } from '../renderer/Raycaster.js';
+import { GameMap } from '../world/GameMap.js';
+import { MainNetworkManager } from '../network/MainNetworkManager.js';
+import { SpriteRenderer } from '../renderer/SpriteRenderer.js';
+import { TextureManager } from '../renderer/TextureManager.js';
+import type { Vector2, ClassType, ClassConfig } from '@dueled/shared';
+import { getClassConfig, calculateDashCooldown } from '@dueled/shared';
 
 export class MainGameScene {
   private canvas: HTMLCanvasElement;
@@ -19,41 +21,62 @@ export class MainGameScene {
   private spriteRenderer: SpriteRenderer;
   private textureManager: TextureManager;
   
-  // Player state
-  private localPlayerId: string = '';
-  private remotePlayers: Map<string, { position: Vector2; angle: number; classType: ClassType }> = new Map();
-  
-  // Input state
-  private keys: Set<string> = new Set();
-  private mouseX: number = 0;
-  private mouseY: number = 0;
-  private mouseSensitivity: number = 0.002;
-  private pitchSensitivity: number = 0.0008; // Reduced for smoother pitch control
-  private pointerLocked: boolean = false;
-  
-  // Game state
-  private isRunning: boolean = false;
-  private lastFrameTime: number = 0;
-  private fps: number = 0;
-  private lastRotationUpdateTime: number = 0;
-  private rotationUpdateInterval: number = 100; // Send rotation updates every 100ms
-  
   // UI elements
   private minimapCanvas!: HTMLCanvasElement;
   private minimapCtx!: CanvasRenderingContext2D;
   private statsDiv!: HTMLDivElement;
   private notificationDiv!: HTMLDivElement;
+  private playerStatsDiv!: HTMLDivElement; // New enhanced player stats
   
+  // Game state
   private matchId?: string;
-  private matchData?: any;
-  private socket?: Socket | null;
-  private initialPosition?: Vector2;
+  private matchData: any;
+  private socket: Socket | null = null;
+  private localPlayerId: string = '';
   private localPlayerClass: ClassType;
+  private classConfig!: ClassConfig;
+  private remotePlayers: Map<string, any> = new Map();
+  
+  // Input handling
+  private keys: Set<string> = new Set();
+  private pointerLocked: boolean = false;
+  private mouseSensitivity: number = 0.002;
+  private pitchSensitivity: number = 0.001;
+  
+  // Rotation update tracking
+  private lastRotationUpdateTime: number = 0;
+  private rotationUpdateInterval: number = 100;
+  
+  // Player stats tracking
+  private playerHealth: number = 100;
+  private playerMaxHealth: number = 100;
+  private playerArmor: number = 50;
+  private playerMaxArmor: number = 50;
+  private dashCooldownTime: number = 3.0;
+  private lastDashTime: number = 0;
+  private specialCooldownTime: number = 25.0;
+  private lastSpecialTime: number = 0;
+  
+  // Performance tracking
+  private fps: number = 0;
+  private frameCount: number = 0;
+  private lastFpsUpdate: number = 0;
+  
+  // Game loop
+  private running: boolean = false;
+  private lastTime: number = 0;
+  
+  // Input state
+  private mouseX: number = 0;
+  private mouseY: number = 0;
+  
+  // Initial position
+  private initialPosition?: Vector2;
   
   constructor(containerId: string, matchId?: string, matchData?: any, socket?: Socket | null, selectedClass?: ClassType) {
     this.matchId = matchId;
     this.matchData = matchData;
-    this.socket = socket;
+    this.socket = socket || null;
     
     if (!selectedClass) {
       console.error('⚠️ MainGameScene: No class selected! This should not happen.');
@@ -61,12 +84,22 @@ export class MainGameScene {
     }
     
     this.localPlayerClass = selectedClass;
+    this.classConfig = getClassConfig(selectedClass);
+    
+    // Initialize player stats from class configuration
+    this.playerMaxHealth = this.classConfig.stats.health;
+    this.playerHealth = this.playerMaxHealth;
+    this.playerMaxArmor = this.classConfig.stats.defense;
+    this.playerArmor = this.playerMaxArmor;
+    this.dashCooldownTime = calculateDashCooldown(this.classConfig.stats.stamina);
+    this.specialCooldownTime = this.classConfig.specialAbility.baseCooldown;
     
     console.log(`🎮 MainGameScene: Constructor called with:`, {
       matchId,
       socket: !!socket,
       selectedClass,
-      localPlayerClass: this.localPlayerClass
+      localPlayerClass: this.localPlayerClass,
+      classConfig: this.classConfig
     });
     
     // Set local player ID from match data
@@ -114,7 +147,7 @@ export class MainGameScene {
   }
   
   /**
-   * Create UI elements
+   * Create enhanced UI elements
    */
   private createUI(container: HTMLElement): void {
     // Create minimap
@@ -134,16 +167,34 @@ export class MainGameScene {
     }
     this.minimapCtx = ctx;
     
-    // Create stats display
+    // Create performance stats display
     this.statsDiv = document.createElement('div');
     this.statsDiv.style.position = 'absolute';
     this.statsDiv.style.top = '10px';
     this.statsDiv.style.left = '10px';
     this.statsDiv.style.color = '#10b981';
     this.statsDiv.style.fontFamily = 'monospace';
-    this.statsDiv.style.fontSize = '14px';
+    this.statsDiv.style.fontSize = '12px';
     this.statsDiv.style.textShadow = '2px 2px 4px rgba(0,0,0,0.8)';
+    this.statsDiv.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+    this.statsDiv.style.padding = '8px';
+    this.statsDiv.style.borderRadius = '4px';
     container.appendChild(this.statsDiv);
+    
+    // Create enhanced player stats UI
+    this.playerStatsDiv = document.createElement('div');
+    this.playerStatsDiv.style.position = 'absolute';
+    this.playerStatsDiv.style.bottom = '20px';
+    this.playerStatsDiv.style.left = '20px';
+    this.playerStatsDiv.style.color = '#ffffff';
+    this.playerStatsDiv.style.fontFamily = 'Arial, sans-serif';
+    this.playerStatsDiv.style.fontSize = '14px';
+    this.playerStatsDiv.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
+    this.playerStatsDiv.style.padding = '12px';
+    this.playerStatsDiv.style.borderRadius = '8px';
+    this.playerStatsDiv.style.border = '2px solid #4f46e5';
+    this.playerStatsDiv.style.minWidth = '250px';
+    container.appendChild(this.playerStatsDiv);
     
     // Create notifications area
     this.notificationDiv = document.createElement('div');
@@ -167,19 +218,114 @@ export class MainGameScene {
     const instructions = document.createElement('div');
     instructions.style.position = 'absolute';
     instructions.style.bottom = '10px';
-    instructions.style.left = '50%';
-    instructions.style.transform = 'translateX(-50%)';
+    instructions.style.right = '20px';
     instructions.style.color = '#94a3b8';
     instructions.style.fontFamily = 'Arial, sans-serif';
     instructions.style.fontSize = '12px';
-    instructions.style.textAlign = 'center';
+    instructions.style.textAlign = 'right';
     instructions.style.textShadow = '1px 1px 2px rgba(0,0,0,0.8)';
-    instructions.innerHTML = 'WASD: Move • Mouse: Look & Pitch • Arrow Keys/PgUp/PgDn: Pitch • Click: Lock Pointer • ESC: Unlock/Leave Game';
+    instructions.innerHTML = `
+      <strong>${this.classConfig.name} Controls:</strong><br>
+      WASD: Move • Mouse: Look & Pitch<br>
+      Q: Dash Left • E: Dash Right<br>
+      Space: Attack • F: Special Ability<br>
+      Click: Lock Pointer • ESC: Unlock/Leave
+    `;
     container.appendChild(instructions);
   }
-  
+
   /**
-   * Setup event listeners
+   * Create enhanced stat bar
+   */
+  private createStatBar(current: number, max: number, color: string, bgColor: string = '#4a5568'): string {
+    const percentage = Math.max(0, Math.min(100, (current / max) * 100));
+    const barWidth = 150;
+    const fillWidth = (barWidth * percentage) / 100;
+    
+    return `
+      <div style="
+        width: ${barWidth}px;
+        height: 16px;
+        background-color: ${bgColor};
+        border: 1px solid #64748b;
+        border-radius: 8px;
+        overflow: hidden;
+        position: relative;
+        margin: 2px 0;
+      ">
+        <div style="
+          width: ${fillWidth}px;
+          height: 100%;
+          background-color: ${color};
+          transition: width 0.3s ease;
+          border-radius: 7px;
+        "></div>
+        <div style="
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: white;
+          font-size: 11px;
+          font-weight: bold;
+          text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
+        ">${current}/${max}</div>
+      </div>
+    `;
+  }
+
+  /**
+   * Create cooldown bar
+   */
+  private createCooldownBar(remainingTime: number, totalTime: number, label: string, color: string): string {
+    const percentage = Math.max(0, Math.min(100, ((totalTime - remainingTime) / totalTime) * 100));
+    const barWidth = 150;
+    const fillWidth = (barWidth * percentage) / 100;
+    const isReady = remainingTime <= 0;
+    
+    return `
+      <div style="
+        width: ${barWidth}px;
+        height: 14px;
+        background-color: #4a5568;
+        border: 1px solid #64748b;
+        border-radius: 6px;
+        overflow: hidden;
+        position: relative;
+        margin: 2px 0;
+        opacity: ${isReady ? '1' : '0.7'};
+      ">
+        <div style="
+          width: ${fillWidth}px;
+          height: 100%;
+          background-color: ${isReady ? color : '#6b7280'};
+          transition: width 0.1s ease;
+          border-radius: 5px;
+        "></div>
+        <div style="
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: white;
+          font-size: 10px;
+          font-weight: bold;
+          text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
+        ">${label} ${isReady ? 'READY' : remainingTime.toFixed(1)}s</div>
+      </div>
+    `;
+  }
+
+  /**
+   * Setup event listeners including Q/E dash handling
    */
   private setupEventListeners(): void {
     // Keyboard events
@@ -198,7 +344,7 @@ export class MainGameScene {
   }
   
   /**
-   * Handle keyboard input
+   * Enhanced keyboard input handling with Q/E dash support
    */
   private handleKeyDown(event: KeyboardEvent): void {
     this.keys.add(event.key.toLowerCase());
@@ -215,9 +361,29 @@ export class MainGameScene {
       event.preventDefault();
       return;
     }
+
+    // Handle dash inputs
+    if (event.key.toLowerCase() === 'q') {
+      this.handleDash('left');
+      event.preventDefault();
+      return;
+    }
+    
+    if (event.key.toLowerCase() === 'e') {
+      this.handleDash('right');
+      event.preventDefault();
+      return;
+    }
+
+    // Handle special ability
+    if (event.key.toLowerCase() === 'f') {
+      this.handleSpecialAbility();
+      event.preventDefault();
+      return;
+    }
     
     // Prevent default for game keys
-    if (['w', 'a', 's', 'd'].includes(event.key.toLowerCase())) {
+    if (['w', 'a', 's', 'd', ' '].includes(event.key.toLowerCase())) {
       event.preventDefault();
     }
   }
@@ -285,7 +451,7 @@ export class MainGameScene {
     }
     
     // Stop the game
-    this.isRunning = false;
+    this.running = false;
   }
   
   /**
@@ -376,15 +542,45 @@ export class MainGameScene {
   }
   
   /**
-   * Update stats display
+   * Update enhanced stats display
    */
   private updateStats(): void {
     const playerState = this.raycaster.getPlayerState();
+    const currentTime = Date.now() / 1000;
+    
+    // Update performance stats
     this.statsDiv.innerHTML = `
       FPS: ${this.fps.toFixed(0)}<br>
       Pos: ${playerState.x.toFixed(1)}, ${playerState.y.toFixed(1)}<br>
       Angle: ${(playerState.angle * 180 / Math.PI).toFixed(0)}°<br>
       Pitch: ${(playerState.pitch * 180 / Math.PI).toFixed(0)}°
+    `;
+    
+    // Calculate cooldown times
+    const dashRemainingTime = Math.max(0, this.dashCooldownTime - (currentTime - this.lastDashTime));
+    const specialRemainingTime = Math.max(0, this.specialCooldownTime - (currentTime - this.lastSpecialTime));
+    
+    // Update enhanced player stats
+    this.playerStatsDiv.innerHTML = `
+      <div style="margin-bottom: 8px;">
+        <strong style="color: #4f46e5;">${this.classConfig.name}</strong>
+      </div>
+      
+      <div style="margin-bottom: 4px;">
+        <div style="font-size: 12px; color: #f87171; margin-bottom: 2px;">Health</div>
+        ${this.createStatBar(this.playerHealth, this.playerMaxHealth, '#ef4444')}
+      </div>
+      
+      <div style="margin-bottom: 4px;">
+        <div style="font-size: 12px; color: #60a5fa; margin-bottom: 2px;">Armor</div>
+        ${this.createStatBar(this.playerArmor, this.playerMaxArmor, '#3b82f6')}
+      </div>
+      
+      <div style="margin-bottom: 4px;">
+        <div style="font-size: 12px; color: #34d399; margin-bottom: 2px;">Abilities</div>
+        ${this.createCooldownBar(dashRemainingTime, this.dashCooldownTime, 'Dash (Q/E)', '#10b981')}
+        ${this.createCooldownBar(specialRemainingTime, this.specialCooldownTime, this.classConfig.specialAbility.name.substring(0, 8), '#8b5cf6')}
+      </div>
     `;
   }
   
@@ -478,27 +674,39 @@ export class MainGameScene {
   /**
    * Show notification message
    */
-  private showNotification(message: string, duration: number = 3000): void {
-    this.notificationDiv.innerHTML = message;
-    this.notificationDiv.style.display = 'block';
+  private showNotification(message: string, type: 'success' | 'warning' | 'special' | 'info' = 'info'): void {
+    if (!this.notificationDiv) return;
     
-    // Auto-hide after duration
+    const colors = {
+      success: '#10b981',
+      warning: '#f59e0b',
+      special: '#8b5cf6',
+      info: '#3b82f6'
+    };
+    
+    this.notificationDiv.style.color = colors[type];
+    this.notificationDiv.style.display = 'block';
+    this.notificationDiv.textContent = message;
+    
+    // Auto-hide after 3 seconds
     setTimeout(() => {
-      this.notificationDiv.style.display = 'none';
-    }, duration);
+      if (this.notificationDiv) {
+        this.notificationDiv.style.display = 'none';
+      }
+    }, 3000);
   }
   
   /**
    * Game loop
    */
   private gameLoop(currentTime: number): void {
-    if (!this.isRunning) return;
+    if (!this.running) return;
     
     try {
       // Calculate delta time and FPS
-      const deltaTime = currentTime - this.lastFrameTime;
+      const deltaTime = currentTime - this.lastTime;
       this.fps = 1000 / deltaTime;
-      this.lastFrameTime = currentTime;
+      this.lastTime = currentTime;
     
     // Process input
     this.processInput();
@@ -533,7 +741,7 @@ export class MainGameScene {
     } catch (error) {
       console.error('🚨 Game loop error:', error);
       // Try to continue anyway
-      if (this.isRunning) {
+      if (this.running) {
         requestAnimationFrame((time) => this.gameLoop(time));
       }
     }
@@ -543,12 +751,12 @@ export class MainGameScene {
    * Start the game
    */
   public async start(): Promise<void> {
-    if (this.isRunning) return;
+    if (this.running) return;
     
     console.log('🎮 MainGameScene: Starting game initialization...');
     
     // Don't start the game loop yet, wait for proper initialization
-    this.lastFrameTime = performance.now();
+    this.lastTime = performance.now();
     
     // Initialize texture manager
     try {
@@ -627,7 +835,7 @@ export class MainGameScene {
    * Check if everything is ready and start the game loop
    */
   private checkReadinessAndStart(): void {
-    if (this.isRunning) return; // Already started
+    if (this.running) return; // Already started
     
     // Check if we have necessary initialization
     const hasValidPosition = this.initialPosition || this.gameMap.getSpawnPoints().length > 0;
@@ -636,7 +844,7 @@ export class MainGameScene {
     
     if (hasValidPosition && hasTextureManager && hasSpriteRenderer) {
       console.log('🎮 MainGameScene: All systems ready, starting game loop!');
-      this.isRunning = true;
+      this.running = true;
       requestAnimationFrame((time) => this.gameLoop(time));
     } else {
       console.log('🎮 MainGameScene: Still waiting for initialization... retrying in 500ms');
@@ -648,7 +856,7 @@ export class MainGameScene {
    * Stop the game
    */
   public stop(): void {
-    this.isRunning = false;
+    this.running = false;
     this.networkManager.disconnect();
     
     // Cleanup sprite renderer
@@ -712,7 +920,7 @@ export class MainGameScene {
     
     // Show notification
     const username = data.username || `Player ${playerId.substring(0, 8)}`;
-    this.showNotification(`${username} has joined the game`, 3000);
+    this.showNotification(`${username} has joined the game`, 'info');
     
     console.log(`Player ${username} joined at position (${playerData.position.x}, ${playerData.position.y})`);
   }
@@ -726,7 +934,7 @@ export class MainGameScene {
     this.spriteRenderer.removePlayerSprite(playerId);
     
     // Show notification
-    this.showNotification(`${username} has disconnected`, 3000);
+    this.showNotification(`${username} has disconnected`, 'info');
     
     console.log(`Player ${username} left the game`);
   }
@@ -738,7 +946,7 @@ export class MainGameScene {
     console.log('🚨 Match ended:', data);
     
     // Stop the game immediately
-    this.isRunning = false;
+    this.running = false;
     
     // Show notification with the reason
     let message = 'Match ended';
@@ -798,7 +1006,7 @@ export class MainGameScene {
     this.showMatchEndedNotification('You left the game. Match ended.');
     
     // Stop the game immediately
-    this.isRunning = false;
+    this.running = false;
     
     // Disconnect from the network (this will trigger server cleanup)
     this.networkManager.disconnect();
@@ -944,7 +1152,7 @@ export class MainGameScene {
       console.log(`🎯 MainGameScene: Initial position set to (${data.initialPosition.x}, ${data.initialPosition.y})`);
       
       // If game is already running, update position immediately
-      if (this.isRunning) {
+      if (this.running) {
         this.raycaster.setPlayerPosition(data.initialPosition.x, data.initialPosition.y);
         console.log(`🎯 MainGameScene: Updated raycaster position immediately`);
       }
@@ -1015,5 +1223,101 @@ export class MainGameScene {
         this.onPlayerMoved(playerId, data.position, data.angle);
       }
     }
+  }
+
+  /**
+   * Handle dash input (Q for left, E for right)
+   */
+  private handleDash(direction: 'left' | 'right'): void {
+    const currentTime = Date.now() / 1000; // Convert to seconds
+    const dashCooldown = this.dashCooldownTime;
+    
+    // Check if dash is off cooldown
+    if (currentTime - this.lastDashTime < dashCooldown) {
+      const remainingCooldown = dashCooldown - (currentTime - this.lastDashTime);
+      this.showNotification(`Dash cooling down: ${remainingCooldown.toFixed(1)}s`, 'warning');
+      return;
+    }
+    
+    // Perform dash
+    const dashDistance = 2.0; // tiles
+    const playerState = this.raycaster.getPlayerState();
+    
+    // Calculate dash direction (perpendicular to current facing direction)
+    const dashAngle = playerState.angle + (direction === 'left' ? -Math.PI / 2 : Math.PI / 2);
+    const deltaX = Math.cos(dashAngle) * dashDistance;
+    const deltaY = Math.sin(dashAngle) * dashDistance;
+    
+    const newX = playerState.x + deltaX;
+    const newY = playerState.y + deltaY;
+    
+    // Check collision before dashing
+    const mapGrid = this.gameMap.getGrid();
+    const targetMapX = Math.floor(newX);
+    const targetMapY = Math.floor(newY);
+    
+    // Simple collision check - ensure target is within bounds and not a wall
+    if (targetMapX >= 0 && targetMapX < mapGrid[0].length && 
+        targetMapY >= 0 && targetMapY < mapGrid.length && 
+        mapGrid[targetMapY][targetMapX] === 0) {
+      
+      // Perform the dash
+      this.raycaster.setPlayerPosition(newX, newY);
+      this.lastDashTime = currentTime;
+      
+      // Send dash action to server
+      this.sendDashUpdate(direction, { x: newX, y: newY });
+      
+      // Show feedback
+      this.showNotification(`Dashed ${direction}!`, 'success');
+      
+      console.log(`🏃 Performed ${direction} dash to ${newX.toFixed(1)}, ${newY.toFixed(1)}`);
+    } else {
+      // Collision detected
+      this.showNotification(`Can't dash ${direction} - blocked!`, 'warning');
+      console.log(`❌ Dash ${direction} blocked by collision`);
+    }
+  }
+
+  /**
+   * Handle special ability activation
+   */
+  private handleSpecialAbility(): void {
+    const currentTime = Date.now() / 1000;
+    const specialCooldown = this.specialCooldownTime;
+    
+    // Check if special ability is off cooldown
+    if (currentTime - this.lastSpecialTime < specialCooldown) {
+      const remainingCooldown = specialCooldown - (currentTime - this.lastSpecialTime);
+      this.showNotification(`${this.classConfig.specialAbility.name} cooling down: ${remainingCooldown.toFixed(1)}s`, 'warning');
+      return;
+    }
+    
+    // Activate special ability
+    this.lastSpecialTime = currentTime;
+    this.showNotification(`${this.classConfig.specialAbility.name} activated!`, 'special');
+    
+    // TODO: Implement specific special ability effects
+    console.log(`⚡ Activated special ability: ${this.classConfig.specialAbility.name}`);
+  }
+
+  /**
+   * Send dash action to server
+   */
+  private sendDashUpdate(direction: 'left' | 'right', newPosition: Vector2): void {
+    if (!this.socket || !this.localPlayerId) return;
+    
+    const playerState = this.raycaster.getPlayerState();
+    
+    this.socket.emit('player:dash', {
+      playerId: this.localPlayerId,
+      direction: direction,
+      position: newPosition,
+      angle: playerState.angle,
+      classType: this.localPlayerClass,
+      timestamp: Date.now()
+    });
+    
+    console.log(`📡 Sent dash update: ${direction} to ${newPosition.x.toFixed(1)}, ${newPosition.y.toFixed(1)}`);
   }
 } 

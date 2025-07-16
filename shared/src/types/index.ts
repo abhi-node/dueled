@@ -23,6 +23,78 @@ export enum ClassType {
   ARCHER = 'archer'
 }
 
+/**
+ * Core stat system for all classes
+ * Each stat has specific gameplay implications
+ */
+export interface ClassStats {
+  // Core survivability
+  health: number;        // Maximum health points
+  defense: number;       // Damage reduction (armor)
+  
+  // Movement and agility
+  speed: number;         // Base movement speed
+  stamina: number;       // Dash cooldown reduction (higher = faster dash reset)
+  
+  // Combat effectiveness
+  strength: number;      // Base damage multiplier
+  intelligence: number;  // Special ability cooldown reduction (higher = faster recharge)
+}
+
+/**
+ * Special ability configuration
+ */
+export interface SpecialAbility {
+  id: string;
+  name: string;
+  description: string;
+  baseCooldown: number;    // Base cooldown in seconds
+  duration?: number;       // Effect duration in seconds (if applicable)
+  manaCost?: number;       // Future mana system
+  effects: AbilityEffect[];
+}
+
+export interface AbilityEffect {
+  type: 'damage_boost' | 'movement_slow' | 'armor_bypass' | 'homing_projectile' | 'map_wide';
+  value: number;           // Percentage or absolute value
+  target: 'self' | 'enemy' | 'all_enemies' | 'target_area';
+  radius?: number;         // For area effects
+}
+
+/**
+ * Complete class configuration
+ */
+export interface ClassConfig {
+  id: ClassType;
+  name: string;
+  description: string;
+  stats: ClassStats;
+  weapon: WeaponConfig;
+  specialAbility: SpecialAbility;
+  inherentAbilities: string[]; // Passive abilities
+}
+
+/**
+ * Weapon configuration
+ */
+export interface WeaponConfig {
+  id: string;
+  name: string;
+  type: 'melee' | 'ranged' | 'projectile' | 'explosive';
+  damage: number;          // Base damage
+  range: number;           // Attack range in tiles
+  attackSpeed: number;     // Attacks per second
+  areaOfEffect?: number;   // AOE radius for applicable weapons
+  projectileSpeed?: number; // For ranged weapons
+  effects: WeaponEffect[];
+}
+
+export interface WeaponEffect {
+  type: 'piercing' | 'explosive' | 'frost' | 'armor_burn';
+  value: number;
+  description: string;
+}
+
 export enum DamageType {
   PHYSICAL = 'physical',
   FIRE = 'fire',

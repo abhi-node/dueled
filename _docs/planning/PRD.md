@@ -35,54 +35,76 @@ Dueled is a web-based, real-time 1v1 combat simulator featuring class-based game
 - **Profile management** - Player statistics and match history
 - **Rating system** - Glicko-2 ELO implementation
 
-#### 2. Class System
+#### 2. Class System & Stat System
+
+##### Core Stat System
+Each class has six primary stats that determine their capabilities:
+
+- **Health**: Maximum health points - survivability measure
+- **Defense**: Damage reduction (armor) - uses formula: `finalDamage = baseDamage * (1 - defense / (defense + 100))`
+- **Speed**: Base movement speed for general movement
+- **Stamina**: Determines dash cooldown reduction (Q/E dash abilities)
+- **Strength**: Base damage multiplier for all attacks
+- **Intelligence**: Special ability cooldown reduction
+
+##### Movement & Control System
+- **WASD Movement**: Standard four-directional movement
+- **Q Key - Left Dash**: Quick dash to the left with distance based on stamina
+- **E Key - Right Dash**: Quick dash to the right with distance based on stamina
+- **Dash Mechanics**: Base 3-second cooldown, reduced by stamina stat (1% per stamina point, max 70% reduction)
 
 ##### Berserker Class
-- **Primary Weapon**: Two-handed sword
+- **Role**: Tank/Melee DPS - High survivability with devastating close-range attacks
+- **Primary Weapon**: Two-Handed Greatsword
 - **Attack Type**: Melee AOE slash (120° arc)
-- **Damage**: High (80-100 base damage)
-- **Range**: Short (2-3 tiles)
-- **Speed**: Slow attack rate (1.5s cooldown)
-- **Health**: 150 HP
-- **Armor**: 50 armor points
-- **Special**: Rage mode (10% damage boost when below 50% HP)
+- **Stats**: Health 150, Defense 50, Speed 85, Stamina 60, Strength 90, Intelligence 40
+- **Weapon Damage**: 85 base damage, 2.5 tile range, 0.67 attacks/sec (1.5s cooldown)
+- **Special Ability**: **Rage Mode** - Rechargeable ability providing 20% damage boost for 10 seconds (25s base cooldown)
+- **Inherent Abilities**: None
 
 ##### Mage Class
-- **Primary Weapon**: Ice projectiles
-- **Attack Type**: Ranged projectile with slow effect
-- **Damage**: Medium (60-80 base damage)
-- **Range**: Long (8-10 tiles)
-- **Speed**: Medium attack rate (1.0s cooldown)
-- **Health**: 100 HP
-- **Armor**: 30 armor points
-- **Special**: Frost effect (30% movement speed reduction for 2s)
+- **Role**: Ranged Support/Control - Medium survivability with crowd control and area denial
+- **Primary Weapon**: Frost Staff
+- **Attack Type**: Ice projectiles with inherent frost effect
+- **Stats**: Health 100, Defense 30, Speed 95, Stamina 80, Strength 70, Intelligence 90
+- **Weapon Damage**: 65 base damage, 9 tile range, 1.0 attacks/sec (1.0s cooldown)
+- **Special Ability**: **Ice Age** - Map-wide frost effect slowing all enemies by 20% for 6 seconds (30s base cooldown)
+- **Inherent Abilities**: Ice projectiles slow enemies by 30% for 2 seconds on hit
 
 ##### Bomber Class
-- **Primary Weapon**: Fire bombs
-- **Attack Type**: Thrown explosives with AOE
-- **Damage**: High AOE (70-90 base damage, 3-tile radius)
-- **Range**: Medium (5-7 tiles)
-- **Speed**: Medium attack rate (1.2s cooldown)
-- **Health**: 120 HP
-- **Armor**: 40 armor points
-- **Special**: Armor burn (fire damage bypasses 25% armor)
+- **Role**: Area Denial/Burst DPS - Explosive specialist with armor-piercing capabilities
+- **Primary Weapon**: Incendiary Grenades
+- **Attack Type**: Thrown explosives with AOE damage
+- **Stats**: Health 120, Defense 40, Speed 88, Stamina 70, Strength 85, Intelligence 65
+- **Weapon Damage**: 75 direct damage, 50 AOE damage, 6 tile range, 3-tile explosion radius, 0.83 attacks/sec (1.2s cooldown)
+- **Special Ability**: **Enhanced Explosives** - Next 3 bombs have 30% increased damage and larger radius for 15 seconds (35s base cooldown)
+- **Inherent Abilities**: **Armor Burn** - AOE fire damage bypasses 25% of target armor
 
 ##### Archer Class
-- **Primary Weapon**: Longbow with arrows
-- **Attack Type**: High-velocity piercing projectile
-- **Damage**: Medium-High (75-95 base damage)
-- **Range**: Very Long (12-15 tiles)
-- **Speed**: Fast attack rate (0.8s cooldown)
-- **Health**: 80 HP
-- **Armor**: 20 armor points
-- **Special**: Piercing shot (ignores 50% armor)
+- **Role**: Precision DPS/Sniper - High mobility with long-range precision attacks
+- **Primary Weapon**: Elven Longbow
+- **Attack Type**: High-velocity piercing projectiles
+- **Stats**: Health 80, Defense 20, Speed 105, Stamina 95, Strength 80, Intelligence 75
+- **Weapon Damage**: 80 base damage, 13 tile range, 1.25 attacks/sec (0.8s cooldown)
+- **Special Ability**: **Dispatcher** - Fire a homing arrow that tracks nearest enemy for 120% normal damage (20s base cooldown)
+- **Inherent Abilities**: **Piercing Shot** - All arrows naturally ignore 50% of target armor
 
 #### 3. Combat System
 - **Real-time physics** - Phaser 3 physics engine
 - **Collision detection** - Precise hitboxes for weapons and projectiles
-- **Damage calculation** - Armor reduction formula: `finalDamage = baseDamage * (1 - armor / (armor + 100))`
-- **Status effects** - Slow, burn, rage, etc.
+- **Damage calculation** - Enhanced armor reduction with strength scaling:
+  - Base formula: `finalDamage = baseDamage * (1 - defense / (defense + 100))`
+  - Strength modifier: `effectiveDamage = baseDamage * (1 + strength * 0.008)`
+  - Special damage types bypass armor differently (piercing 50%, armor burn 25%)
+- **Status effects** - Frost slow, rage boost, armor burn, etc.
 - **Environmental interactions** - Destructible/interactive map elements
+
+##### Advanced Stat Calculations
+- **Dash Cooldown**: `3.0 * (1 - stamina * 0.01)` seconds (max 70% reduction)
+- **Special Ability Cooldown**: `baseCooldown * (1 - intelligence * 0.005)` seconds (max 50% reduction)
+- **Effective Damage**: `weaponDamage * (1 + strength * 0.008)`
+- **Movement Speed**: Base speed from class configuration
+- **Armor Reduction**: `damage * (1 - defense / (defense + 100))`
 
 #### 4. Matchmaking System
 - **Quick match** - Automatic pairing based on rating

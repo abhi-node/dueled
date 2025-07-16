@@ -1,18 +1,26 @@
 import { redis } from './redis.js';
 import { logger } from '../utils/logger.js';
 import { 
-  ObstacleType,
-  ActionType, 
-  ClassType, 
-  MatchStatus
-} from '@dueled/shared';
-import type { 
+  GameState, 
+  Match, 
   Player, 
   Vector2, 
-  GameState, 
-  GameAction, 
-  Arena, 
+  ClassType, 
+  DamageType, 
+  ObstacleType,
+  ClassConfig,
+  ClassStats,
+  Arena,
+  MatchStatus,
+  GameAction,
+  ActionType,
   Obstacle
+} from '@dueled/shared';
+import { 
+  getClassConfig, 
+  calculateEffectiveDamage, 
+  calculateDashCooldown, 
+  calculateEffectiveCooldown 
 } from '@dueled/shared';
 
 export interface ServerGameState {
@@ -51,6 +59,10 @@ export interface PlayerStats {
   armorPenetration: number;
   cooldownReduction: number;
   range: number;
+  // New stat system
+  stamina: number;
+  strength: number;
+  intelligence: number;
 }
 
 export interface AbilityState {
@@ -155,41 +167,10 @@ export class GameStateService {
     ]
   };
   
-  // Class configurations
-  private readonly CLASS_CONFIGS = {
-    [ClassType.BERSERKER]: {
-      health: 150,
-      armor: 50,
-      damage: 45,
-      speed: 100,
-      range: 120,
-      abilities: ['rage', 'whirlwind']
-    },
-    [ClassType.MAGE]: {
-      health: 100,
-      armor: 30,
-      damage: 35,
-      speed: 90,
-      range: 300,
-      abilities: ['ice_shard', 'frost_nova']
-    },
-    [ClassType.BOMBER]: {
-      health: 120,
-      armor: 40,
-      damage: 50,
-      speed: 85,
-      range: 200,
-      abilities: ['fire_bomb', 'armor_burn']
-    },
-    [ClassType.ARCHER]: {
-      health: 80,
-      armor: 20,
-      damage: 40,
-      speed: 110,
-      range: 400,
-      abilities: ['piercing_shot', 'rapid_fire']
-    }
-  };
+  // Class configurations - now using shared configurations
+  private getClassConfig(classType: ClassType): ClassConfig {
+    return getClassConfig(classType);
+  }
 
   /**
    * Initialize game state for a new match
@@ -769,7 +750,8 @@ export class GameStateService {
    * Helper methods
    */
   private createServerPlayer(player: Player, classType: ClassType, spawnIndex: number): ServerPlayer {
-    const config = this.CLASS_CONFIGS[classType];
+    const classConfig = this.getClassConfig(classType);
+    const stats = classConfig.stats;
     const spawnPoint = this.ARENA_CONFIG.spawnPoints[spawnIndex];
     
     return {
@@ -779,26 +761,30 @@ export class GameStateService {
       position: { ...spawnPoint },
       velocity: { x: 0, y: 0 },
       rotation: 0,
-      health: config.health,
-      maxHealth: config.health,
-      armor: config.armor,
-      maxArmor: config.armor,
+      health: stats.health,
+      maxHealth: stats.health,
+      armor: stats.defense,
+      maxArmor: stats.defense,
       isAlive: true,
       lastInputTime: 0,
-      abilities: new Map(config.abilities.map(abilityId => [abilityId, {
-        id: abilityId,
-        cooldown: this.getAbilityCooldown(abilityId),
+      abilities: new Map(classConfig.specialAbility ? [classConfig.specialAbility].map(ability => [ability.id, {
+        id: ability.id,
+        cooldown: calculateEffectiveCooldown(ability.baseCooldown, stats.intelligence),
         lastUsed: 0,
-        charges: this.getAbilityMaxCharges(abilityId),
-        maxCharges: this.getAbilityMaxCharges(abilityId)
-      }])),
+        charges: 1,
+        maxCharges: 1
+      }]) : []),
       buffs: [],
       stats: {
-        damage: config.damage,
-        speed: config.speed,
+        damage: classConfig.weapon.damage,
+        speed: stats.speed,
         armorPenetration: 0,
         cooldownReduction: 0,
-        range: config.range
+        range: classConfig.weapon.range,
+        // New stats
+        stamina: stats.stamina,
+        strength: stats.strength,
+        intelligence: stats.intelligence
       }
     };
   }
@@ -917,13 +903,17 @@ export class GameStateService {
 
   private recalculatePlayerStats(player: ServerPlayer): void {
     // Reset to base stats
-    const config = this.CLASS_CONFIGS[player.classType];
+    const classConfig = this.getClassConfig(player.classType);
     player.stats = {
-      damage: config.damage,
-      speed: config.speed,
+      damage: classConfig.weapon.damage,
+      speed: classConfig.stats.speed,
       armorPenetration: 0,
       cooldownReduction: 0,
-      range: config.range
+      range: classConfig.weapon.range,
+      // New stats
+      stamina: classConfig.stats.stamina,
+      strength: classConfig.stats.strength,
+      intelligence: classConfig.stats.intelligence
     };
     
     // Apply buff effects
