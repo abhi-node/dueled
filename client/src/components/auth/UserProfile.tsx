@@ -46,7 +46,6 @@ export function UserProfile() {
       ],
       confirmPassword: [
         validationRules.required(),
-        validationRules.confirmPassword(passwordForm.values.newPassword),
       ],
     },
   });

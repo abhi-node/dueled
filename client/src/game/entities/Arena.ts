@@ -3,10 +3,10 @@ import type { Vector2, Obstacle, ObstacleType } from '@dueled/shared';
 
 export class Arena {
   private scene: Phaser.Scene;
-  private walls: Phaser.Physics.Arcade.StaticGroup;
-  private obstacles: Phaser.Physics.Arcade.StaticGroup;
-  private floor: Phaser.GameObjects.Graphics;
-  private boundaries: Phaser.GameObjects.Graphics;
+  private walls!: Phaser.Physics.Arcade.StaticGroup;
+  private obstacles!: Phaser.Physics.Arcade.StaticGroup;
+  private floor!: Phaser.GameObjects.Graphics;
+  private boundaries!: Phaser.GameObjects.Graphics;
   private arenaWidth: number = 800;
   private arenaHeight: number = 600;
   private wallThickness: number = 20;
@@ -133,7 +133,7 @@ export class Arena {
     });
   }
 
-  private createObstacle(id: string, data: { x: number; y: number; width: number; height: number; type: ObstacleType }): Phaser.Physics.Arcade.Sprite {
+  private createObstacle(_id: string, data: { x: number; y: number; width: number; height: number; type: ObstacleType }): Phaser.Physics.Arcade.Sprite {
     const obstacle = this.scene.physics.add.sprite(data.x, data.y, 'obstacle');
     obstacle.setDisplaySize(data.width, data.height);
     obstacle.body!.setSize(data.width, data.height);
@@ -396,7 +396,7 @@ export class Arena {
       id: `temp-${Date.now()}`,
       position,
       size,
-      type: 'wall',
+      type: 'wall' as ObstacleType,
     };
     this.obstacleData.push(tempObstacleData);
     

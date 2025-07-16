@@ -63,6 +63,7 @@ export class SpriteSheet {
     
     this.loadPromise = new Promise((resolve, reject) => {
       this.image = new Image();
+      this.image.crossOrigin = 'anonymous'; // Allow CORS for image loading
       
       // Add timeout to catch hanging requests
       const timeout = setTimeout(() => {
@@ -114,12 +115,9 @@ export class SpriteSheet {
         reject(new Error(`Failed to load sprite sheet: ${imageUrl}`));
       };
       
-      // Set the image source with cache-busting to force fresh load
-      // This prevents browser from using cached 404 responses
-      const cacheBuster = `?t=${Date.now()}`;
-      const finalUrl = imageUrl + cacheBuster;
-      console.log(`🌐 SpriteSheet: Setting image src to: ${finalUrl}`);
-      this.image.src = finalUrl;
+      // Set the image source - removed cache-busting as it may interfere with dev server
+      console.log(`🌐 SpriteSheet: Setting image src to: ${imageUrl}`);
+      this.image.src = imageUrl;
     });
     
     return this.loadPromise;

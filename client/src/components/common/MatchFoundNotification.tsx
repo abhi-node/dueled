@@ -21,7 +21,7 @@ export function MatchFoundNotification({
   const requestNotificationPermission = async () => {
     try {
       // Only request if we're in a user gesture context
-      if (document.hasStorageAccess) {
+      if (document.hasStorageAccess && typeof document.hasStorageAccess === 'function') {
         const permission = await Notification.requestPermission();
         setNotificationPermission(permission);
       }

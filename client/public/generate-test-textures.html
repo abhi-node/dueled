@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Generate Test Textures</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #fff;
+        }
+        canvas {
+            border: 2px solid #444;
+            margin: 10px;
+            image-rendering: pixelated;
+            zoom: 2;
+        }
+        .texture-preview {
+            display: inline-block;
+            margin: 20px;
+            text-align: center;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #45a049;
+        }
+    </style>
+</head>
+<body>
+    <h1>Texture Generator</h1>
+    <p>This generates placeholder textures for testing. Click buttons to download.</p>
+    
+    <div id="textures"></div>
+    
+    <script>
+        const textureSize = 64;
+        
+        // Texture definitions
+        const textures = [
+            // Walls
+            { name: 'wall_stone', type: 'wall', color: '#808080', pattern: 'stone' },
+            { name: 'wall_brick', type: 'wall', color: '#8B4513', pattern: 'brick' },
+            { name: 'wall_metal', type: 'wall', color: '#708090', pattern: 'metal' },
+            { name: 'wall_wood', type: 'wall', color: '#654321', pattern: 'wood' },
+            // Floors
+            { name: 'floor_stone', type: 'floor', color: '#696969', pattern: 'checker' },
+            { name: 'floor_wood', type: 'floor', color: '#8B4513', pattern: 'planks' },
+            { name: 'floor_tile', type: 'floor', color: '#F5DEB3', pattern: 'tile' },
+            { name: 'floor_dirt', type: 'floor', color: '#8B7355', pattern: 'noise' },
+            // Ceilings
+            { name: 'ceiling_stone', type: 'ceiling', color: '#505050', pattern: 'stone' },
+            { name: 'ceiling_wood', type: 'ceiling', color: '#654321', pattern: 'planks' }
+        ];
+        
+        function generateTexture(canvas, config) {
+            const ctx = canvas.getContext('2d');
+            const { color, pattern } = config;
+            
+            // Base color
+            ctx.fillStyle = color;
+            ctx.fillRect(0, 0, textureSize, textureSize);
+            
+            // Add pattern
+            switch (pattern) {
+                case 'stone':
+                    // Add stone-like lines
+                    ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+                    ctx.lineWidth = 1;
+                    for (let i = 0; i < 5; i++) {
+                        ctx.beginPath();
+                        ctx.moveTo(Math.random() * textureSize, 0);
+                        ctx.lineTo(Math.random() * textureSize, textureSize);
+                        ctx.stroke();
+                        ctx.beginPath();
+                        ctx.moveTo(0, Math.random() * textureSize);
+                        ctx.lineTo(textureSize, Math.random() * textureSize);
+                        ctx.stroke();
+                    }
+                    break;
+                    
+                case 'brick':
+                    // Add brick pattern
+                    ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+                    ctx.lineWidth = 2;
+                    const brickHeight = 8;
+                    for (let y = 0; y < textureSize; y += brickHeight) {
+                        ctx.beginPath();
+                        ctx.moveTo(0, y);
+                        ctx.lineTo(textureSize, y);
+                        ctx.stroke();
+                        
+                        // Offset every other row
+                        const offset = (y / brickHeight) % 2 === 0 ? 0 : textureSize / 4;
+                        for (let x = offset; x < textureSize; x += textureSize / 2) {
+                            ctx.beginPath();
+                            ctx.moveTo(x, y);
+                            ctx.lineTo(x, y + brickHeight);
+                            ctx.stroke();
+                        }
+                    }
+                    break;
+                    
+                case 'metal':
+                    // Add metallic gradient
+                    const gradient = ctx.createLinearGradient(0, 0, textureSize, textureSize);
+                    gradient.addColorStop(0, 'rgba(255,255,255,0.1)');
+                    gradient.addColorStop(0.5, 'rgba(255,255,255,0.2)');
+                    gradient.addColorStop(1, 'rgba(255,255,255,0.1)');
+                    ctx.fillStyle = gradient;
+                    ctx.fillRect(0, 0, textureSize, textureSize);
+                    break;
+                    
+                case 'wood':
+                    // Add wood grain
+                    ctx.strokeStyle = 'rgba(0,0,0,0.2)';
+                    for (let y = 0; y < textureSize; y += 4) {
+                        ctx.beginPath();
+                        ctx.moveTo(0, y + Math.sin(y * 0.1) * 2);
+                        ctx.lineTo(textureSize, y + Math.sin(y * 0.1) * 2);
+                        ctx.stroke();
+                    }
+                    break;
+                    
+                case 'planks':
+                    // Add plank lines
+                    ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+                    ctx.lineWidth = 2;
+                    for (let x = 16; x < textureSize; x += 16) {
+                        ctx.beginPath();
+                        ctx.moveTo(x, 0);
+                        ctx.lineTo(x, textureSize);
+                        ctx.stroke();
+                    }
+                    break;
+                    
+                case 'tile':
+                    // Add tile grid
+                    ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+                    ctx.lineWidth = 1;
+                    const tileSize = 16;
+                    for (let i = 0; i < textureSize; i += tileSize) {
+                        ctx.beginPath();
+                        ctx.moveTo(i, 0);
+                        ctx.lineTo(i, textureSize);
+                        ctx.stroke();
+                        ctx.beginPath();
+                        ctx.moveTo(0, i);
+                        ctx.lineTo(textureSize, i);
+                        ctx.stroke();
+                    }
+                    break;
+                    
+                case 'checker':
+                    // Add checker pattern
+                    ctx.fillStyle = 'rgba(0,0,0,0.2)';
+                    const checkSize = 8;
+                    for (let y = 0; y < textureSize; y += checkSize) {
+                        for (let x = 0; x < textureSize; x += checkSize) {
+                            if ((x / checkSize + y / checkSize) % 2 === 0) {
+                                ctx.fillRect(x, y, checkSize, checkSize);
+                            }
+                        }
+                    }
+                    break;
+                    
+                case 'noise':
+                    // Add noise
+                    const imageData = ctx.getImageData(0, 0, textureSize, textureSize);
+                    for (let i = 0; i < imageData.data.length; i += 4) {
+                        const noise = (Math.random() - 0.5) * 30;
+                        imageData.data[i] += noise;
+                        imageData.data[i + 1] += noise;
+                        imageData.data[i + 2] += noise;
+                    }
+                    ctx.putImageData(imageData, 0, 0);
+                    break;
+            }
+        }
+        
+        // Create and display textures
+        const container = document.getElementById('textures');
+        
+        textures.forEach(textureConfig => {
+            const div = document.createElement('div');
+            div.className = 'texture-preview';
+            
+            const canvas = document.createElement('canvas');
+            canvas.width = textureSize;
+            canvas.height = textureSize;
+            generateTexture(canvas, textureConfig);
+            
+            const label = document.createElement('p');
+            label.textContent = textureConfig.name;
+            
+            const downloadBtn = document.createElement('button');
+            downloadBtn.textContent = 'Download';
+            downloadBtn.onclick = () => {
+                canvas.toBlob(blob => {
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = textureConfig.name + '.png';
+                    a.click();
+                    URL.revokeObjectURL(url);
+                });
+            };
+            
+            div.appendChild(canvas);
+            div.appendChild(label);
+            div.appendChild(downloadBtn);
+            container.appendChild(div);
+        });
+        
+        // Add download all button
+        const downloadAllBtn = document.createElement('button');
+        downloadAllBtn.textContent = 'Download All Textures';
+        downloadAllBtn.style.display = 'block';
+        downloadAllBtn.style.margin = '20px auto';
+        downloadAllBtn.onclick = () => {
+            textures.forEach((textureConfig, index) => {
+                setTimeout(() => {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = textureSize;
+                    canvas.height = textureSize;
+                    generateTexture(canvas, textureConfig);
+                    
+                    canvas.toBlob(blob => {
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = textureConfig.name + '.png';
+                        a.click();
+                        URL.revokeObjectURL(url);
+                    });
+                }, index * 100); // Delay to avoid browser blocking
+            });
+        };
+        document.body.appendChild(downloadAllBtn);
+    </script>
+</body>
+</html>

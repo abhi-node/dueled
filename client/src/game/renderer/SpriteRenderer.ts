@@ -93,7 +93,8 @@ export class SpriteRenderer {
       // Create new player sprite
       const spriteSheet = this.spriteSheets.get(classType);
       if (!spriteSheet || !spriteSheet.isReady()) {
-        console.warn(`Sprite sheet for ${classType} not available`);
+        console.warn(`🚨 SpriteRenderer: Sprite sheet for class '${classType}' not available for player ${playerId}`);
+        console.warn(`📊 Available sprite sheets: ${Array.from(this.spriteSheets.keys()).join(', ')}`);
         return;
       }
       
@@ -119,6 +120,48 @@ export class SpriteRenderer {
       this.playerSprites.set(playerId, playerSprite);
     } else {
       // Update existing sprite
+      // -----------------------------------------------------------------------------------
+      // 🔄  Ensure sprite reflects the correct class type
+      // If we previously created this sprite with a different class (e.g. defaulted to
+      // berserker before receiving the real class from the server) we need to swap the
+      // sprite sheet and regenerate animations so the correct graphics are shown.
+      // -----------------------------------------------------------------------------------
+      if (playerSprite.classType !== classType) {
+        const newSpriteSheet = this.spriteSheets.get(classType);
+        if (!newSpriteSheet || !newSpriteSheet.isReady()) {
+          console.warn(
+            `🚨 SpriteRenderer: Requested to switch ${playerId} sprite to class '${classType}' but the sprite sheet is not ready.`
+          );
+        } else {
+          console.log(
+            `🔄 SpriteRenderer: Updating sprite for ${playerId} from '${playerSprite.classType}' → '${classType}'`
+          );
+          // Swap sprite sheet
+          playerSprite.spriteSheet = newSpriteSheet;
+          playerSprite.classType = classType;
+
+          // Re-create animations for the new sprite sheet
+          const newAnimations = new Map<WalkDirection, SpriteAnimation>();
+          newAnimations.set(
+            WalkDirection.FORWARD,
+            newSpriteSheet.createAnimation(WalkDirection.FORWARD, SpriteRenderer.WALK_FRAME_TIME)
+          );
+          newAnimations.set(
+            WalkDirection.RIGHT,
+            newSpriteSheet.createAnimation(WalkDirection.RIGHT, SpriteRenderer.WALK_FRAME_TIME)
+          );
+          newAnimations.set(
+            WalkDirection.BACKWARD,
+            newSpriteSheet.createAnimation(WalkDirection.BACKWARD, SpriteRenderer.WALK_FRAME_TIME)
+          );
+          newAnimations.set(
+            WalkDirection.LEFT,
+            newSpriteSheet.createAnimation(WalkDirection.LEFT, SpriteRenderer.WALK_FRAME_TIME)
+          );
+          playerSprite.animations = newAnimations;
+        }
+      }
+      
       const wasMoving = playerSprite.isMoving;
       const previousPosition = { ...playerSprite.position };
       
@@ -158,7 +201,8 @@ export class SpriteRenderer {
         if (playerSprite.currentDirection !== newDirection) {
           const now = Date.now();
           if (!this.lastDirectionLogTime || now - this.lastDirectionLogTime > 500) { // Log max once per 500ms
-            console.log(`🧭 Player ${playerId} direction changed: ${WalkDirection[playerSprite.currentDirection]} → ${WalkDirection[newDirection]}`);
+            const directionNames = ['FORWARD', 'RIGHT', 'BACKWARD', 'LEFT'];
+            console.log(`🧭 Player ${playerId} direction changed: ${directionNames[playerSprite.currentDirection]} → ${directionNames[newDirection]}`);
             console.log(`📐 Player facing: ${(angle * 180 / Math.PI).toFixed(1)}°, viewer→player: ${(angleFromViewer * 180 / Math.PI).toFixed(1)}°, relative: ${(relativeAngle * 180 / Math.PI).toFixed(1)}°`);
             this.lastDirectionLogTime = now;
           }

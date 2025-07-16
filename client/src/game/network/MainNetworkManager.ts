@@ -10,6 +10,8 @@ export interface NetworkEventHandler {
   onPlayerJoined(playerId: string, data: any): void;
   onPlayerLeft(playerId: string, data?: any): void;
   onPlayerMoved(playerId: string, position: Vector2, angle: number, classType?: ClassType): void;
+  onPlayerRotated?(playerId: string, angle: number, classType?: ClassType): void;
+  onMatchEnded?(data: any): void;
 }
 
 export class MainNetworkManager {
@@ -67,12 +69,28 @@ export class MainNetworkManager {
   /**
    * Send player movement update
    */
-  public sendMovement(data: { x: number; y: number; angle: number }): void {
+  public sendMovement(data: { x: number; y: number; angle: number; classType?: ClassType }): void {
     if (!this.socket || !this.isConnected) return;
     
+    console.log(`📤 Sending movement with class: ${data.classType}`);
     this.socket.emit('player:move', {
       position: { x: data.x, y: data.y },
       angle: data.angle,
+      classType: data.classType,
+      timestamp: Date.now()
+    });
+  }
+  
+  /**
+   * Send player rotation update (without movement)
+   */
+  public sendRotation(data: { angle: number; classType?: ClassType }): void {
+    if (!this.socket || !this.isConnected) return;
+    
+    console.log(`📤 Sending rotation with class: ${data.classType}`);
+    this.socket.emit('player:rotate', {
+      angle: data.angle,
+      classType: data.classType,
       timestamp: Date.now()
     });
   }
@@ -91,15 +109,15 @@ export class MainNetworkManager {
   /**
    * Join a match
    */
-  public joinMatch(matchId: string): void {
+  public joinMatch(matchId: string, classType?: ClassType): void {
     if (!this.socket || !this.isConnected) {
       // Try again after connection
-      setTimeout(() => this.joinMatch(matchId), 1000);
+      setTimeout(() => this.joinMatch(matchId, classType), 1000);
       return;
     }
     
-    this.socket.emit('join_match', { matchId });
-    console.log('Joining match:', matchId);
+    this.socket.emit('join_match', { matchId, classType });
+    console.log('Joining match:', matchId, 'with class:', classType);
   }
   
   /**
@@ -159,6 +177,7 @@ export class MainNetworkManager {
     
     this.socket.on('player:moved', (data) => {
       if (data.playerId !== this.playerId) {
+        console.log(`📥 Received movement from ${data.playerId} with class: ${data.classType}`);
         this.eventHandler.onPlayerMoved(
           data.playerId,
           data.position,
@@ -168,9 +187,28 @@ export class MainNetworkManager {
       }
     });
     
+    this.socket.on('player:rotated', (data) => {
+      if (data.playerId !== this.playerId && this.eventHandler.onPlayerRotated) {
+        console.log(`📥 Received rotation from ${data.playerId} with class: ${data.classType}`);
+        this.eventHandler.onPlayerRotated(
+          data.playerId,
+          data.angle,
+          data.classType
+        );
+      }
+    });
+    
     this.socket.on('game:state', (gameState) => {
       // Handle full game state updates
       console.log('Received game state update');
+    });
+
+    // Match ended event
+    this.socket.on('match_ended', (data) => {
+      console.log('Match ended:', data);
+      if (this.eventHandler.onMatchEnded) {
+        this.eventHandler.onMatchEnded(data);
+      }
     });
   }
   

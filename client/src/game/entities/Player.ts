@@ -13,16 +13,16 @@ export class Player {
   private armor: number = 0;
   private speed: number = 200;
   private lastPosition: Vector2 = { x: 0, y: 0 };
-  private targetPosition: Vector2 = { x: 0, y: 0 };
+  private _targetPosition: Vector2 = { x: 0, y: 0 };
   private velocity: Vector2 = { x: 0, y: 0 };
-  private interpolationAlpha: number = 0;
+  private _interpolationAlpha: number = 0;
   private nameTag!: Phaser.GameObjects.Text;
   private healthBar!: Phaser.GameObjects.Graphics;
-  private animations: Map<string, Phaser.Animations.Animation> = new Map();
+  private _animations: Map<string, Phaser.Animations.Animation> = new Map();
   private currentAnimation: string = 'idle';
-  private facing: 'left' | 'right' = 'right';
+  private _facing: 'left' | 'right' = 'right';
   private isMoving: boolean = false;
-  private lastMoveTime: number = 0;
+  private _lastMoveTime: number = 0;
   private moveBuffer: Vector2[] = [];
   private attackCooldown: number = 0;
   private abilityCooldown: number = 0;
@@ -67,12 +67,12 @@ export class Player {
     
     // Add glow effect for local player
     if (this.isLocal) {
-      this.sprite.setStroke(0xffffff, 2);
+      this.sprite.setTint(0xccccff);
     }
     
     // Store initial position
     this.lastPosition = { x, y };
-    this.targetPosition = { x, y };
+    this._targetPosition = { x, y };
   }
 
   private setupPhysics(): void {
@@ -85,7 +85,10 @@ export class Player {
     this.sprite.body!.setSize(24, 24);
     
     // Set physics properties
-    this.sprite.body!.setMaxVelocity(this.speed, this.speed);
+    const body = this.sprite.body as Phaser.Physics.Arcade.Body;
+    if (body && 'setMaxVelocity' in body) {
+      body.setMaxVelocity(this.speed, this.speed);
+    }
   }
 
   private setupAnimations(): void {

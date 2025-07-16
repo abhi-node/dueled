@@ -13,6 +13,17 @@ export class GameHandler {
   private rooms: Map<string, Set<string>> = new Map();
   private playerToRoom: Map<string, string> = new Map();
   private playerSockets: Map<string, Socket> = new Map();
+  private playerClasses: Map<string, ClassType> = new Map();
+  
+  // Track match states and join times
+  private matchStates: Map<string, {
+    expectedPlayers: Set<string>;
+    joinedPlayers: Set<string>;
+    createdAt: number;
+    allPlayersJoinedAt?: number;
+  }> = new Map();
+  
+  private readonly MATCH_JOIN_GRACE_PERIOD = 10000; // 10 seconds for both players to join
 
   constructor(io: Server) {
     this.io = io;
@@ -27,6 +38,11 @@ export class GameHandler {
     setInterval(() => {
       matchmakingService.cleanupQueue();
     }, 30000);
+    
+    // Start match state cleanup
+    setInterval(() => {
+      this.cleanupMatchStates();
+    }, 15000); // Every 15 seconds
   }
 
   private setupNamespace() {
@@ -80,6 +96,7 @@ export class GameHandler {
     // Game events
     socket.on('join_match', (data) => this.handleJoinMatch(socket, data));
     socket.on('player:move', (data) => this.handlePlayerMove(socket, data));
+    socket.on('player:rotate', (data) => this.handlePlayerRotate(socket, data));
     socket.on('player:attack', (data) => this.handlePlayerAttack(socket, data));
     socket.on('game:action', (action) => this.handleGameAction(socket, action));
     
@@ -97,6 +114,9 @@ export class GameHandler {
       
       // Join matchmaking queue
       await matchmakingService.joinQueue(userId, username, rating, data.classType);
+      
+      // Store player class
+      this.playerClasses.set(userId, data.classType);
       
       // Send confirmation
       socket.emit('queue_joined', { success: true });
@@ -139,8 +159,33 @@ export class GameHandler {
   }
 
   private async handleMatchAccepted(socket: Socket, data: { matchId: string }) {
-    // For now, matches are auto-accepted. This is for future expansion.
-    logger.info(`Match ${data.matchId} accepted by player ${socket.data.userId}`);
+    try {
+      const userId = socket.data.userId;
+      logger.info(`Match ${data.matchId} accepted by player ${userId}`);
+      
+      // Handle the acceptance through matchmaking service
+      const bothAccepted = await matchmakingService.handleMatchAccepted(userId, data.matchId);
+      
+      if (bothAccepted) {
+        // Both players have accepted, match is being created
+        socket.emit('match_accepted_confirmed', { 
+          matchId: data.matchId,
+          message: 'Both players accepted! Preparing game...',
+          status: 'BOTH_ACCEPTED'
+        });
+      } else {
+        // This player accepted, waiting for other player
+        socket.emit('match_accepted_confirmed', { 
+          matchId: data.matchId,
+          message: 'Waiting for opponent to accept...',
+          status: 'WAITING_FOR_OPPONENT'
+        });
+      }
+      
+    } catch (error) {
+      logger.error('Error handling match acceptance:', error);
+      socket.emit('match_error', { error: 'Failed to process match acceptance' });
+    }
   }
 
   private async handleMatchDeclined(socket: Socket, data: { matchId: string }) {
@@ -163,7 +208,7 @@ export class GameHandler {
     }
   }
 
-  private async handleJoinMatch(socket: Socket, data: { matchId: string }) {
+  private async handleJoinMatch(socket: Socket, data: { matchId: string, classType?: ClassType }) {
     try {
       const matchData = await matchmakingService.getMatch(data.matchId);
       if (!matchData) {
@@ -183,6 +228,13 @@ export class GameHandler {
       }
       this.rooms.get(roomId)!.add(userId);
       
+      // Store player class if provided, or get from match data
+      const playerClass = data.classType || 
+        (userId === matchData.player1.playerId ? matchData.player1.classType : matchData.player2.classType);
+      this.playerClasses.set(userId, playerClass);
+      
+      logger.info(`Player ${userId} joining match with class ${playerClass} (provided: ${data.classType}, from match: ${userId === matchData.player1.playerId ? matchData.player1.classType : matchData.player2.classType})`);
+      
       // Get initial spawn position for this player for notification
       let playerPosition = { x: 100, y: 100 }; // Default
       try {
@@ -201,10 +253,12 @@ export class GameHandler {
       socket.to(roomId).emit('player:joined', {
         playerId: userId,
         username: socket.data.username,
-        classType: userId === matchData.player1.playerId ? matchData.player1.classType : matchData.player2.classType,
+        classType: playerClass,
         position: playerPosition,
         angle: 0
       });
+      
+      logger.info(`Emitting player:joined for ${userId} with class ${playerClass} to room ${roomId}`);
       
       // Get initial spawn position for this player
       const playerIndex = userId === matchData.player1.playerId ? 0 : 1;
@@ -232,14 +286,30 @@ export class GameHandler {
         initialPosition: spawnPoint
       });
       
-      logger.info(`Player ${userId} joined match ${data.matchId}`);
+      logger.info(`Sent match_joined to ${userId} with players: player1(${matchData.player1.playerId}, class:${matchData.player1.classType}), player2(${matchData.player2.playerId}, class:${matchData.player2.classType})`);
+      
+      // Track player joining the match
+      const matchState = this.matchStates.get(data.matchId);
+      if (matchState) {
+        matchState.joinedPlayers.add(userId);
+        
+        // Check if all expected players have joined
+        if (matchState.joinedPlayers.size === matchState.expectedPlayers.size) {
+          matchState.allPlayersJoinedAt = Date.now();
+          logger.info(`All players have joined match ${data.matchId}`);
+        }
+        
+        logger.info(`Player ${userId} joined match ${data.matchId}. Players in match: ${matchState.joinedPlayers.size}/${matchState.expectedPlayers.size}`);
+      } else {
+        logger.info(`Player ${userId} joined match ${data.matchId}`);
+      }
     } catch (error) {
       logger.error('Error joining match:', error);
       socket.emit('match_error', { error: error instanceof Error ? error.message : 'Unknown error' });
     }
   }
 
-  private async handlePlayerMove(socket: Socket, data: { position: { x: number; y: number }; angle: number }) {
+  private async handlePlayerMove(socket: Socket, data: { position: { x: number; y: number }; angle: number; classType?: ClassType }) {
     const userId = socket.data.userId;
     const roomId = this.playerToRoom.get(userId);
     
@@ -263,11 +333,104 @@ export class GameHandler {
     
     await gameStateService.addPlayerInput(matchId, userId, action);
     
+    // Get player class (from data or stored)
+    let classType = data.classType || this.playerClasses.get(userId);
+    
+    // If class not found, try to get from match data
+    if (!classType) {
+      try {
+        const matchData = await matchmakingService.getMatch(matchId);
+        if (matchData) {
+          classType = userId === matchData.player1.playerId ? matchData.player1.classType : matchData.player2.classType;
+          // Store it for future use
+          if (classType) {
+            this.playerClasses.set(userId, classType);
+            logger.info(`Retrieved class ${classType} for player ${userId} from match data`);
+          }
+        }
+      } catch (error) {
+        logger.error(`Error retrieving player class from match data:`, error);
+      }
+    }
+    
+    if (!classType) {
+      logger.warn(`Player ${userId} movement without class type - class not found anywhere`);
+      // Still send the movement but without class type
+      socket.to(roomId).emit('player:moved', {
+        playerId: userId,
+        position: data.position,
+        angle: data.angle,
+        // No classType field when unknown
+      });
+      return;
+    }
+    
+    logger.debug(`Player ${userId} movement: provided class=${data.classType}, stored class=${this.playerClasses.get(userId)}, using class=${classType}`);
+    
+    // Update stored class if provided
+    if (data.classType) {
+      this.playerClasses.set(userId, data.classType);
+    }
+    
     // Broadcast movement to other players in the room
     socket.to(roomId).emit('player:moved', {
       playerId: userId,
       position: data.position,
-      angle: data.angle
+      angle: data.angle,
+      classType: classType
+    });
+  }
+
+  private async handlePlayerRotate(socket: Socket, data: { angle: number; classType?: ClassType }) {
+    const userId = socket.data.userId;
+    const roomId = this.playerToRoom.get(userId);
+    
+    if (!roomId) {
+      return;
+    }
+    
+    // Get player class (from data or stored)
+    let classType = data.classType || this.playerClasses.get(userId);
+    
+    // If class not found, try to get from match data
+    if (!classType) {
+      try {
+        const matchId = roomId.replace('match:', '');
+        const matchData = await matchmakingService.getMatch(matchId);
+        if (matchData) {
+          classType = userId === matchData.player1.playerId ? matchData.player1.classType : matchData.player2.classType;
+          // Store it for future use
+          if (classType) {
+            this.playerClasses.set(userId, classType);
+            logger.info(`Retrieved class ${classType} for player ${userId} from match data`);
+          }
+        }
+      } catch (error) {
+        logger.error(`Error retrieving player class from match data:`, error);
+      }
+    }
+    
+    if (!classType) {
+      logger.warn(`Player ${userId} rotation without class type - class not found anywhere`);
+      // Still send the rotation but without class type
+      socket.to(roomId).emit('player:rotated', {
+        playerId: userId,
+        angle: data.angle,
+        // No classType field when unknown
+      });
+      return;
+    }
+    
+    // Update stored class if provided
+    if (data.classType) {
+      this.playerClasses.set(userId, data.classType);
+    }
+    
+    // Broadcast rotation to other players in the room
+    socket.to(roomId).emit('player:rotated', {
+      playerId: userId,
+      angle: data.angle,
+      classType: classType
     });
   }
 
@@ -313,12 +476,12 @@ export class GameHandler {
     logger.debug(`Game action ${action.type} from player ${userId} in room ${roomId}`);
   }
 
-  private handleDisconnect(socket: Socket) {
+  private async handleDisconnect(socket: Socket) {
     const userId = socket.data.userId;
     const username = socket.data.username;
     const roomId = this.playerToRoom.get(userId);
     
-    logger.info(`Player ${userId} disconnected from game namespace`);
+    logger.info(`Player ${userId} (${username}) disconnected from game namespace`);
     
     // Remove from matchmaking queue
     matchmakingService.leaveQueue(userId).catch(error => {
@@ -327,24 +490,206 @@ export class GameHandler {
     
     // Remove socket reference
     this.playerSockets.delete(userId);
+    // Don't delete class data immediately - it might be needed for reconnection
+    // this.playerClasses.delete(userId);
     
     if (roomId) {
-      // Notify other players in the room with username for better notification
-      socket.to(roomId).emit('player:left', { 
-        playerId: userId,
-        username: username 
-      });
-      
-      // Clean up room data
       const room = this.rooms.get(roomId);
-      if (room) {
-        room.delete(userId);
-        if (room.size === 0) {
-          this.rooms.delete(roomId);
-        }
-      }
       
-      this.playerToRoom.delete(userId);
+      // If this is a match room
+      if (roomId.startsWith('match:') && room) {
+        const matchId = roomId.replace('match:', '');
+        const matchState = this.matchStates.get(matchId);
+        
+        let shouldEndMatch = false;
+        let reason = '';
+        
+        if (matchState) {
+          const now = Date.now();
+          const timeSinceCreation = now - matchState.createdAt;
+          
+          // Case 1: Both players joined and someone is leaving
+          if (matchState.allPlayersJoinedAt) {
+            shouldEndMatch = true;
+            reason = `Player ${username} left after match started`;
+            logger.info(`Match ${matchId}: Player disconnect after both joined. Ending match after 2 second delay.`);
+            
+            // Give a 2-second grace period for reconnection before ending the match
+            setTimeout(async () => {
+              // Check if the player rejoined during the delay
+              const currentMatchState = this.matchStates.get(matchId);
+              const currentRoom = this.rooms.get(roomId);
+              
+              // If match is still active and player hasn't rejoined
+              if (currentMatchState && currentRoom && !currentRoom.has(userId)) {
+                logger.info(`Match ${matchId}: Player ${username} didn't rejoin within 2 seconds. Ending match.`);
+                
+                // Notify all remaining players that the match is ending
+                this.io.of('/game').to(roomId).emit('match_ended', {
+                  reason: 'player_disconnect',
+                  disconnectedPlayer: {
+                    playerId: userId,
+                    username: username
+                  },
+                  message: `${username} has left the game. Match ended.`
+                });
+                
+                // Get all players in the room to disconnect them
+                const playersInRoom = Array.from(currentRoom);
+                
+                // Remove all players from the room
+                for (const playerId of playersInRoom) {
+                  const playerSocket = this.playerSockets.get(playerId);
+                  if (playerSocket && playerId !== userId) {
+                    // Force disconnect the remaining player after a short delay to allow notification to be received
+                    setTimeout(() => {
+                      logger.info(`Forcibly disconnecting player ${playerId} from ended match`);
+                      playerSocket.disconnect(true);
+                    }, 2000);
+                  }
+                  
+                  // Clean up player data
+                  this.playerToRoom.delete(playerId);
+                  this.playerSockets.delete(playerId);
+                  this.playerClasses.delete(playerId);
+                }
+                
+                // Clean up game state
+                try {
+                  await gameStateService.cleanup(matchId);
+                  logger.info(`Game state cleaned up for match ${matchId}`);
+                } catch (error) {
+                  logger.error(`Error cleaning up game state for match ${matchId}:`, error);
+                }
+                
+                // Clean up room
+                this.rooms.delete(roomId);
+                
+                // Clean up match state
+                this.matchStates.delete(matchId);
+                
+                // Clean up disconnected player's class data
+                this.playerClasses.delete(userId);
+              } else if (currentRoom && currentRoom.has(userId)) {
+                logger.info(`Match ${matchId}: Player ${username} rejoined within 2 seconds. Match continues.`);
+              }
+            }, 2000);
+            
+            // Don't end the match immediately
+            shouldEndMatch = false;
+          }
+          // Case 2: Still within grace period (10 seconds) and not all players joined
+          else if (timeSinceCreation < this.MATCH_JOIN_GRACE_PERIOD) {
+            shouldEndMatch = false;
+            logger.info(`Match ${matchId}: Player ${username} disconnected during grace period (${Math.round(timeSinceCreation/1000)}s/${Math.round(this.MATCH_JOIN_GRACE_PERIOD/1000)}s). Waiting for other player.`);
+          }
+          // Case 3: Grace period expired and not all players joined
+          else {
+            shouldEndMatch = true;
+            reason = `Grace period expired - not all players joined`;
+            logger.info(`Match ${matchId}: Grace period expired. Ending match.`);
+          }
+        } else {
+          // No match state - this shouldn't happen but end match to be safe
+          shouldEndMatch = true;
+          reason = `No match state found`;
+          logger.warn(`Match ${matchId}: No match state found. Ending match.`);
+        }
+        
+        if (shouldEndMatch) {
+          // Notify all remaining players that the match is ending
+          socket.to(roomId).emit('match_ended', {
+            reason: reason.includes('Grace period') ? 'grace_period_expired' : 'player_disconnect',
+            disconnectedPlayer: reason.includes('Grace period') ? undefined : {
+              playerId: userId,
+              username: username
+            },
+            message: reason
+          });
+          
+          // Get all players in the room to disconnect them
+          const playersInRoom = Array.from(room);
+          
+          // Remove all players from the room
+          for (const playerId of playersInRoom) {
+            const playerSocket = this.playerSockets.get(playerId);
+            if (playerSocket && playerId !== userId) {
+              // Force disconnect the remaining player after a short delay to allow notification to be received
+              setTimeout(() => {
+                logger.info(`Forcibly disconnecting player ${playerId} from ended match`);
+                playerSocket.disconnect(true);
+              }, 2000);
+            }
+            
+            // Clean up player data
+            this.playerToRoom.delete(playerId);
+            this.playerSockets.delete(playerId);
+            this.playerClasses.delete(playerId);
+          }
+          
+          // Clean up game state
+          try {
+            await gameStateService.cleanup(matchId);
+            logger.info(`Game state cleaned up for match ${matchId}`);
+          } catch (error) {
+            logger.error(`Error cleaning up game state for match ${matchId}:`, error);
+          }
+          
+          // Clean up room
+          this.rooms.delete(roomId);
+          
+          // Clean up match state
+          this.matchStates.delete(matchId);
+        } else {
+          // Player disconnected during grace period - just remove them
+          logger.info(`Match ${matchId}: Removing player ${username} during grace period`);
+          
+          // Notify other players that someone left (but match continues)
+          socket.to(roomId).emit('player:left', { 
+            playerId: userId,
+            username: username,
+            message: `${username} disconnected. Waiting for players to join...`
+          });
+          
+          // Remove player from room
+          if (room) {
+            room.delete(userId);
+          }
+          
+          // Clean up this player's data
+          this.playerToRoom.delete(userId);
+          this.playerSockets.delete(userId);
+          // Don't delete class data during grace period - player might reconnect
+          // this.playerClasses.delete(userId);
+          
+          // Update match state to remove this player from joined list
+          if (matchState) {
+            matchState.joinedPlayers.delete(userId);
+            logger.info(`Match ${matchId}: Players in match after disconnect: ${matchState.joinedPlayers.size}/${matchState.expectedPlayers.size}`);
+          }
+        }
+      } else {
+        // Handle normal room cleanup for non-match rooms or single player rooms
+        socket.to(roomId).emit('player:left', { 
+          playerId: userId,
+          username: username 
+        });
+        
+        // Clean up room data
+        if (room) {
+          room.delete(userId);
+          if (room.size === 0) {
+            this.rooms.delete(roomId);
+          }
+        }
+        
+        this.playerToRoom.delete(userId);
+      }
+    }
+    
+    // Final cleanup of class data if not in a match
+    if (!roomId || !roomId.startsWith('match:')) {
+      this.playerClasses.delete(userId);
     }
   }
 
@@ -401,6 +746,78 @@ export class GameHandler {
       logger.info(`Notified player ${playerId} they are back in queue`);
     }
   }
+
+  // Notify player that their opponent accepted the match
+  public notifyPlayerAccepted(playerId: string, acceptedPlayerId: string) {
+    const playerSocket = this.playerSockets.get(playerId);
+    if (playerSocket) {
+      playerSocket.emit('opponent_accepted', {
+        message: 'Your opponent has accepted the match! Waiting for you to accept...',
+        acceptedPlayerId,
+        timestamp: Date.now()
+      });
+      logger.info(`Notified player ${playerId} that opponent ${acceptedPlayerId} accepted`);
+    }
+  }
+
+  // Notify both players that the match is ready (both accepted)
+  public notifyMatchReady(matchData: any) {
+    const { player1, player2, matchId } = matchData;
+    
+    // Initialize match state tracking
+    this.matchStates.set(matchId, {
+      expectedPlayers: new Set([player1.playerId, player2.playerId]),
+      joinedPlayers: new Set(),
+      createdAt: Date.now()
+    });
+    
+    // Set a timeout to check if all players joined within grace period
+    setTimeout(() => {
+      this.checkMatchGracePeriod(matchId);
+    }, this.MATCH_JOIN_GRACE_PERIOD);
+    
+    const player1Socket = this.playerSockets.get(player1.playerId);
+    const player2Socket = this.playerSockets.get(player2.playerId);
+    
+    const readyMessage = {
+      matchId,
+      message: 'Both players accepted! Match is ready. You can now join the game.',
+      status: 'READY_TO_JOIN',
+      timestamp: Date.now()
+    };
+    
+    if (player1Socket) {
+      player1Socket.emit('match_ready', readyMessage);
+    }
+    
+    if (player2Socket) {
+      player2Socket.emit('match_ready', readyMessage);
+    }
+    
+    logger.info(`Match ${matchId} ready notification sent to both players`);
+  }
+
+  // Notify players about match timeout
+  public notifyMatchTimeout(player1Id: string, player2Id: string) {
+    const player1Socket = this.playerSockets.get(player1Id);
+    const player2Socket = this.playerSockets.get(player2Id);
+    
+    const timeoutMessage = {
+      message: 'Match acceptance timed out. You have been returned to the queue.',
+      reason: 'timeout',
+      timestamp: Date.now()
+    };
+    
+    if (player1Socket) {
+      player1Socket.emit('match_timeout', timeoutMessage);
+    }
+    
+    if (player2Socket) {
+      player2Socket.emit('match_timeout', timeoutMessage);
+    }
+    
+    logger.info(`Match timeout notification sent to players ${player1Id} and ${player2Id}`);
+  }
   
   // Clean up resources
   public cleanup() {
@@ -423,5 +840,90 @@ export class GameHandler {
     
     // Broadcast to all players in the match room
     this.io.of('/game').to(roomId).emit('game:update', gameUpdate);
+  }
+  
+  // Clean up orphaned match states
+  private cleanupMatchStates() {
+    const now = Date.now();
+    const statesToDelete: string[] = [];
+    
+    for (const [matchId, state] of this.matchStates) {
+      // Clean up matches where grace period has passed but not all players joined
+      if (!state.allPlayersJoinedAt && 
+          (now - state.createdAt) > this.MATCH_JOIN_GRACE_PERIOD * 2) {
+        statesToDelete.push(matchId);
+        logger.info(`Cleaning up orphaned match state for ${matchId} - players never fully joined`);
+      }
+      // Clean up old match states (matches that have been running for more than 2 hours)
+      else if (state.allPlayersJoinedAt && 
+               (now - state.allPlayersJoinedAt) > 7200000) { // 2 hours
+        statesToDelete.push(matchId);
+        logger.info(`Cleaning up old match state for ${matchId} - match has been running for over 2 hours`);
+      }
+    }
+    
+    // Delete identified match states
+    for (const matchId of statesToDelete) {
+      this.matchStates.delete(matchId);
+    }
+    
+    if (statesToDelete.length > 0) {
+      logger.info(`Cleaned up ${statesToDelete.length} orphaned/old match states`);
+    }
+  }
+  
+  // Check if match grace period has expired
+  private async checkMatchGracePeriod(matchId: string) {
+    const matchState = this.matchStates.get(matchId);
+    const roomId = `match:${matchId}`;
+    const room = this.rooms.get(roomId);
+    
+    if (!matchState || !room) {
+      return; // Match already cleaned up
+    }
+    
+    // If not all players joined within grace period, end the match
+    if (!matchState.allPlayersJoinedAt) {
+      logger.info(`Match ${matchId}: Grace period expired. Only ${matchState.joinedPlayers.size}/${matchState.expectedPlayers.size} players joined. Ending match.`);
+      
+      // Notify any players in the room
+      this.io.of('/game').to(roomId).emit('match_ended', {
+        reason: 'grace_period_expired',
+        message: 'Match cancelled - not all players joined in time.'
+      });
+      
+      // Get all players in the room to disconnect them
+      const playersInRoom = Array.from(room);
+      
+      // Remove all players from the room
+      for (const playerId of playersInRoom) {
+        const playerSocket = this.playerSockets.get(playerId);
+        if (playerSocket) {
+          // Force disconnect after a short delay
+          setTimeout(() => {
+            logger.info(`Forcibly disconnecting player ${playerId} from expired match`);
+            playerSocket.disconnect(true);
+          }, 2000);
+        }
+        
+        // Clean up player data
+        this.playerToRoom.delete(playerId);
+        this.playerSockets.delete(playerId);
+        this.playerClasses.delete(playerId);
+      }
+      
+      // Clean up game state
+      try {
+        const { gameStateService } = await import('../services/gameStateService.js');
+        await gameStateService.cleanup(matchId);
+        logger.info(`Game state cleaned up for expired match ${matchId}`);
+      } catch (error) {
+        logger.error(`Error cleaning up game state for expired match ${matchId}:`, error);
+      }
+      
+      // Clean up room and match state
+      this.rooms.delete(roomId);
+      this.matchStates.delete(matchId);
+    }
   }
 }

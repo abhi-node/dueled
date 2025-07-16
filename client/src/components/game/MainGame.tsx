@@ -8,11 +8,13 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { io, Socket } from 'socket.io-client';
 import { MainGameScene } from '../../game/scenes/MainGameScene';
 import { useAuthStore } from '../../store/authStore';
+import type { ClassType } from '@dueled/shared';
 
 export function MainGame() {
   const gameRef = useRef<MainGameScene | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<Socket | null>(null);
+  const selectedClassRef = useRef<ClassType>('berserker' as ClassType);
   const navigate = useNavigate();
   const location = useLocation();
   const { isAuthenticated, user } = useAuthStore();
@@ -22,6 +24,16 @@ export function MainGame() {
   const matchId = location.state?.matchId;
   const matchData = location.state?.matchData;
   const selectedClass = location.state?.selectedClass || 'berserker'; // Default to berserker if not specified
+  
+  // Store selected class in ref
+  selectedClassRef.current = selectedClass as ClassType;
+  
+  console.log('🎮 MainGame: Navigation state:', {
+    matchId,
+    matchData,
+    selectedClass,
+    fullState: location.state
+  });
   
   // Initialize WebSocket connection
   useEffect(() => {
@@ -39,12 +51,20 @@ export function MainGame() {
     
     socket.on('connect', () => {
       setConnectionStatus('connected');
-      // Join the match
-      socket.emit('join_match', { matchId });
+      // Join the match with selected class
+      socket.emit('join_match', { matchId, classType: selectedClassRef.current });
+      console.log('🎮 MainGame: Emitting join_match with classType:', selectedClassRef.current);
     });
     
     socket.on('disconnect', () => {
       setConnectionStatus('disconnected');
+    });
+    
+    socket.on('reconnect', () => {
+      console.log('🎮 MainGame: Reconnected! Rejoining match...');
+      setConnectionStatus('connected');
+      // Automatically rejoin the match on reconnection
+      socket.emit('join_match', { matchId, classType: selectedClassRef.current });
     });
     
     socket.on('game:update', (gameUpdate) => {
@@ -55,7 +75,20 @@ export function MainGame() {
     
     socket.on('player:moved', (data) => {
       if (gameRef.current) {
-        gameRef.current.onPlayerMoved(data.playerId, data.position, data.angle);
+        gameRef.current.onPlayerMoved(data.playerId, data.position, data.angle, data.classType);
+      }
+    });
+    
+    socket.on('player:rotated', (data) => {
+      if (gameRef.current && gameRef.current.onPlayerRotated) {
+        gameRef.current.onPlayerRotated(data.playerId, data.angle, data.classType);
+      }
+    });
+    
+    socket.on('match_ended', (data) => {
+      console.log('Match ended:', data);
+      if (gameRef.current && gameRef.current.onMatchEnded) {
+        gameRef.current.onMatchEnded(data);
       }
     });
     
@@ -75,7 +108,7 @@ export function MainGame() {
     // Initialize game
     if (containerRef.current && !gameRef.current) {
       try {
-        gameRef.current = new MainGameScene('main-game-container', matchId, matchData, socketRef.current, selectedClass);
+        gameRef.current = new MainGameScene('main-game-container', matchId, matchData, socketRef.current, selectedClassRef.current);
         gameRef.current.start();
       } catch (error) {
         console.error('Failed to initialize game:', error);

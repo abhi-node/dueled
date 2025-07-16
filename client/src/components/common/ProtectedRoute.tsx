@@ -58,7 +58,7 @@ export function ProtectedRoute({
 export function useAuthGuard() {
   const { user, isAuthenticated } = useAuthStore();
 
-  const checkPermission = (permission: string): boolean => {
+  const checkPermission = (_permission: string): boolean => {
     if (!isAuthenticated || !user) {
       return false;
     }

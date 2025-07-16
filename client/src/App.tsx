@@ -11,26 +11,32 @@ import { ToastContainer } from './components/common/Toast';
 import { useAuthStore } from './store/authStore';
 import { setupTokenRefresh } from './store/authStore';
 import { AuthDebug } from './components/debug/AuthDebug';
+import { ErrorBoundary } from './components/debug/ErrorBoundary';
 
 function App() {
   const { initializeAuth } = useAuthStore();
 
   useEffect(() => {
+    console.log('🚀 App: Initializing...');
+    
     // Initialize authentication on app start
     initializeAuth();
     
     // Setup automatic token refresh
     const cleanup = setupTokenRefresh();
     
+    console.log('✅ App: Initialization complete');
+    
     return cleanup;
   }, [initializeAuth]);
 
   return (
-    <Router>
-      <div className="min-h-screen bg-arena-900">
-        <Navbar />
-        <main className="container mx-auto px-4 py-8">
-          <Routes>
+    <ErrorBoundary>
+      <Router>
+        <div className="min-h-screen bg-arena-900">
+          <Navbar />
+          <main className="container mx-auto px-4 py-8">
+            <Routes>
             {/* Public routes */}
             <Route 
               path="/" 
@@ -98,6 +104,7 @@ function App() {
         <AuthDebug />
       </div>
     </Router>
+    </ErrorBoundary>
   );
 }
 

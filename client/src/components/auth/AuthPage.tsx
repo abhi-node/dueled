@@ -44,7 +44,7 @@ export function AuthPage() {
     confirmPassword: mode === 'register' ? [
       validationRules.required(),
       {
-        test: (value: string) => {
+        test: () => {
           // This will be properly handled in the useFormValidation hook
           return true;
         },

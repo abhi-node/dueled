@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Sprite Loading Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #fff;
+        }
+        .sprite-test {
+            margin: 20px 0;
+            padding: 20px;
+            border: 1px solid #333;
+            border-radius: 8px;
+            background: #2a2a2a;
+        }
+        img {
+            display: block;
+            margin: 10px 0;
+            border: 2px solid #555;
+            image-rendering: pixelated;
+            max-width: 400px;
+        }
+        .error {
+            color: #ff6666;
+        }
+        .success {
+            color: #66ff66;
+        }
+    </style>
+</head>
+<body>
+    <h1>Sprite Loading Test</h1>
+    <p>Testing sprite loading with different methods...</p>
+    
+    <div class="sprite-test">
+        <h2>Method 1: Direct IMG tags</h2>
+        <img src="/assets/sprites/players/berserker/berserker_walk.png" alt="Berserker sprite" onload="console.log('Berserker loaded via img tag')" onerror="console.error('Berserker failed via img tag')">
+        <img src="/assets/sprites/players/mage/mage_walk.png" alt="Mage sprite" onload="console.log('Mage loaded via img tag')" onerror="console.error('Mage failed via img tag')">
+    </div>
+    
+    <div class="sprite-test">
+        <h2>Method 2: JavaScript Image loading</h2>
+        <div id="js-results"></div>
+    </div>
+    
+    <script>
+        const resultsDiv = document.getElementById('js-results');
+        const classes = ['berserker', 'mage', 'bomber', 'archer'];
+        
+        classes.forEach(className => {
+            const img = new Image();
+            const resultP = document.createElement('p');
+            
+            img.onload = function() {
+                resultP.className = 'success';
+                resultP.textContent = `✅ ${className}: Loaded successfully (${img.width}x${img.height})`;
+                resultsDiv.appendChild(resultP);
+                
+                // Also append the image
+                const displayImg = document.createElement('img');
+                displayImg.src = img.src;
+                displayImg.style.maxWidth = '200px';
+                resultsDiv.appendChild(displayImg);
+            };
+            
+            img.onerror = function() {
+                resultP.className = 'error';
+                resultP.textContent = `❌ ${className}: Failed to load from ${img.src}`;
+                resultsDiv.appendChild(resultP);
+            };
+            
+            img.src = `/assets/sprites/players/${className}/${className}_walk.png`;
+        });
+    </script>
+</body>
+</html>

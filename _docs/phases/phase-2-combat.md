@@ -188,7 +188,7 @@ Phase 2 builds upon the MVP foundation to implement the complete combat system w
     - Visual feedback not matching actual armor
     - Armor bypass exploits
   - **Protections**:
-    - Careful balance testing
+    - Careful balance testing -
     - Optimized calculation methods
     - Regular state synchronization
     - Server validation of armor values

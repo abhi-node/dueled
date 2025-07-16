@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../store/authStore';
 import { io, Socket } from 'socket.io-client';
@@ -8,6 +9,8 @@ import type { ClassType } from '@dueled/shared';
 export function MainMenu() {
   const [isInQueue, setIsInQueue] = useState(false);
   const [selectedClass, setSelectedClass] = useState<ClassType>('berserker' as ClassType);
+  // Keep the latest class in a ref so socket callbacks always use the up-to-date value
+  const selectedClassRef = useRef<ClassType>('berserker' as ClassType);
   const [queueStatus, setQueueStatus] = useState<{
     inQueue: boolean;
     estimatedWait: number;
@@ -22,15 +25,19 @@ export function MainMenu() {
   const { isAuthenticated, user } = useAuthStore();
 
   useEffect(() => {
-    // Initialize socket connection
-    if (isAuthenticated) {
-      initializeSocket();
-    } else {
-      setConnectionStatus('disconnected');
-      if (socket) {
-        socket.disconnect();
-        setSocket(null);
+    try {
+      // Initialize socket connection
+      if (isAuthenticated) {
+        initializeSocket();
+      } else {
+        setConnectionStatus('disconnected');
+        if (socket) {
+          socket.disconnect();
+          setSocket(null);
+        }
       }
+    } catch (error) {
+      console.error('Error in auth effect:', error);
     }
     
     return () => {
@@ -86,12 +93,12 @@ export function MainMenu() {
       setConnectionStatus('disconnected');
     });
 
-    newSocket.on('queue_joined', (data) => {
+    newSocket.on('queue_joined', () => {
       setIsInQueue(true);
       setQueueStatus(prev => ({ ...prev, inQueue: true }));
     });
 
-    newSocket.on('queue_left', (data) => {
+    newSocket.on('queue_left', () => {
       setIsInQueue(false);
       setQueueStatus({ inQueue: false, estimatedWait: 0 });
     });
@@ -133,6 +140,71 @@ export function MainMenu() {
       setTimeout(() => setNotification(null), 5000);
     });
 
+    // New events for match acceptance flow
+    newSocket.on('match_accepted_confirmed', (data) => {
+      console.log('Match acceptance confirmed:', data);
+      if (data.status === 'WAITING_FOR_OPPONENT') {
+        setNotification({
+          message: data.message || 'Waiting for opponent to accept...',
+          type: 'info'
+        });
+        setTimeout(() => setNotification(null), 5000);
+      } else if (data.status === 'BOTH_ACCEPTED') {
+        setNotification({
+          message: data.message || 'Both players accepted! Preparing game...',
+          type: 'success'
+        });
+        setTimeout(() => setNotification(null), 3000);
+      }
+    });
+
+    newSocket.on('opponent_accepted', (data) => {
+      console.log('Opponent accepted:', data);
+      setNotification({
+        message: data.message || 'Your opponent has accepted! Please accept to continue.',
+        type: 'success'
+      });
+      setTimeout(() => setNotification(null), 5000);
+    });
+
+    newSocket.on('match_ready', (data) => {
+      console.log('Match ready:', data);
+      setMatchFound(false);
+      setMatchData(data);
+      
+      // Show brief notification then navigate to game
+      setNotification({
+        message: data.message || 'Match is ready! Joining game...',
+        type: 'success'
+      });
+      
+      // Navigate to game after brief delay
+      setTimeout(() => {
+        navigate('/game', { 
+          state: { 
+            matchId: data.matchId, 
+            matchData: data,
+            // Use the ref to guarantee the latest chosen class is used
+            selectedClass: selectedClassRef.current 
+          } 
+        });
+      }, 2000);
+    });
+
+    newSocket.on('match_timeout', (data) => {
+      console.log('Match timed out:', data);
+      setMatchFound(false);
+      setMatchData(null);
+      setIsInQueue(true);
+      setQueueStatus(prev => ({ ...prev, inQueue: true }));
+      
+      setNotification({
+        message: data.message || 'Match acceptance timed out. You have been returned to the queue.',
+        type: 'warning'
+      });
+      setTimeout(() => setNotification(null), 5000);
+    });
+
     newSocket.on('error', (error) => {
       console.error('Socket error:', error);
     });
@@ -143,7 +215,7 @@ export function MainMenu() {
   const handleQuickMatch = () => {
     if (!socket || !isAuthenticated) return;
     
-    socket.emit('join_queue', { classType: selectedClass });
+    socket.emit('join_queue', { classType: selectedClassRef.current });
   };
 
   const handleCancelQueue = () => {
@@ -153,17 +225,19 @@ export function MainMenu() {
   };
 
   const handleAcceptMatch = () => {
-    if (!matchData) return;
+    if (!socket || !matchData) return;
     
-    setMatchFound(false);
-    // Navigate to game with match ID and selected class
-    navigate('/game', { 
-      state: { 
-        matchId: matchData.matchId, 
-        matchData,
-        selectedClass: selectedClass 
-      } 
+    // Send acceptance to server instead of navigating immediately
+    socket.emit('match_accepted', { matchId: matchData.matchId });
+    
+    // Show notification that we're waiting
+    setNotification({
+      message: 'Match accepted! Waiting for opponent...',
+      type: 'info'
     });
+    setTimeout(() => setNotification(null), 5000);
+    
+    console.log('Match acceptance sent to server');
   };
 
   const handleDeclineMatch = () => {
@@ -180,14 +254,32 @@ export function MainMenu() {
     console.log('Match declined, removed from queue');
   };
 
-  const handleLoginClick = (e: React.MouseEvent) => {
-    console.log('Login/Register button clicked!');
-    e.preventDefault();
-    navigate('/auth');
-  };
+  // Removed unused handleLoginClick function
 
   return (
     <div className="flex flex-col items-center justify-center min-h-[80vh]">
+      {/* Debug test button */}
+      <button 
+        onClick={() => {
+          console.log('🔴 TEST BUTTON CLICKED!');
+          alert('Button clicked successfully!');
+        }}
+        style={{
+          position: 'fixed' as 'fixed',
+          top: '10px',
+          left: '10px',
+          padding: '10px 20px',
+          backgroundColor: 'red',
+          color: 'white',
+          border: 'none',
+          borderRadius: '5px',
+          cursor: 'pointer',
+          zIndex: 9999
+        }}
+      >
+        TEST CLICK
+      </button>
+      
       <div className="text-center mb-12">
         <h1 className="text-6xl font-bold text-dueled-500 mb-4 text-shadow font-game">
           DUELED
@@ -231,9 +323,9 @@ export function MainMenu() {
               <Link
                 to="/auth"
                 className="btn-secondary text-xl py-4 px-8 rounded-lg text-center transform hover:scale-105 transition-all duration-200"
-                                 onClick={() => {
-                   console.log('Link clicked! Navigating to /auth');
-                 }}
+                onClick={() => {
+                  console.log('Link clicked! Navigating to /auth');
+                }}
               >
                 Login / Register
               </Link>
@@ -296,7 +388,10 @@ export function MainMenu() {
               className={`card p-4 text-center hover:bg-arena-700 transition-colors cursor-pointer ${
                 selectedClass === classType.type ? 'ring-2 ring-dueled-500 bg-arena-700' : ''
               }`}
-              onClick={() => setSelectedClass(classType.type)}
+              onClick={() => {
+                setSelectedClass(classType.type);
+                selectedClassRef.current = classType.type;
+              }}
             >
               <div className={`text-4xl mb-2 ${classType.color}`}>
                 {classType.icon}

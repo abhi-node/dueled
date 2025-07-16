@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import { useEffect } from 'react';
 import { useToastStore, type Toast } from '../../store/toastStore';
 
 interface ToastItemProps {
