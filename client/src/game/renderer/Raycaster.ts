@@ -196,6 +196,17 @@ export class Raycaster {
   // Projectiles for 3D rendering
   private projectiles: Map<string, { x: number; y: number; type: string; rotation: number; size: number; color?: string }> = new Map();
   
+  // NEW: Sprites for 3D rendering (models after projectiles)
+  private sprites: Map<string, { 
+    id: string; 
+    x: number; 
+    y: number; 
+    angle: number; 
+    classType: ClassType; 
+    spriteFrame: any | null;
+    size: number;
+  }> = new Map();
+  
   // Sprite renderer reference
   private spriteRenderer: SpriteRenderer | null = null;
   
@@ -305,6 +316,55 @@ export class Raycaster {
    */
   public getProjectileIds(): string[] {
     return Array.from(this.projectiles.keys());
+  }
+
+  // NEW: Sprite persistence methods (modeled after projectiles)
+  
+  /**
+   * Persist a sprite for 3D rendering
+   */
+  public persistSprite(
+    id: string, 
+    x: number, 
+    y: number, 
+    angle: number, 
+    classType: ClassType, 
+    spriteFrame: any | null,
+    size: number = 1.0
+  ): void {
+    // Only update if sprite doesn't exist or position/angle has changed
+    const existing = this.sprites.get(id);
+    if (!existing || existing.x !== x || existing.y !== y || existing.angle !== angle) {
+      this.sprites.set(id, { id, x, y, angle, classType, spriteFrame, size });
+    }
+  }
+
+  /**
+   * Remove a sprite from 3D rendering
+   */
+  public removeSprite(id: string): void {
+    this.sprites.delete(id);
+  }
+
+  /**
+   * Clear all sprites
+   */
+  public clearSprites(): void {
+    this.sprites.clear();
+  }
+
+  /**
+   * Get the current number of sprites
+   */
+  public getSpriteCount(): number {
+    return this.sprites.size;
+  }
+
+  /**
+   * Get all sprite IDs currently in the Raycaster
+   */
+  public getSpriteIds(): string[] {
+    return Array.from(this.sprites.keys());
   }
 
   /**
@@ -665,6 +725,10 @@ export class Raycaster {
           });
         }
       }
+      // OLD PLAYER RENDERING SYSTEM - DISABLED TO PREVENT DUPLICATE RENDERING
+      // This system has been replaced by the new unified sprite system below
+      // The new system renders from this.sprites Map and uses SpriteSheetManager
+      /*
       // Add other players to render list - pre-calculate common values
       for (const [playerId, player] of this.otherPlayers.entries()) {
         const dx = player.x - this.playerX;
@@ -792,6 +856,7 @@ export class Raycaster {
           }
         });
       }
+      */
 
       // Add projectiles to render list - optimized loop
       for (const [projectileId, projectile] of this.projectiles.entries()) {
@@ -828,6 +893,43 @@ export class Raycaster {
           render: () => this.renderProjectile(projectile, screenX, projectileCenterY, projectedSize, fogFactor)
         });
       }
+
+      // NEW: Add sprites to render list - NO FOG for sprites
+      for (const [spriteId, sprite] of this.sprites.entries()) {
+        const dx = sprite.x - this.playerX;
+        const dy = sprite.y - this.playerY;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        
+        // Early exit conditions
+        if (distance < 0.1 || distance > this.viewDistance) continue;
+        
+        // Calculate angle to sprite
+        const angleToSprite = Math.atan2(dy, dx);
+        let relativeAngle = angleToSprite - this.playerAngle;
+        
+        // Normalize angle efficiently
+        if (relativeAngle > Math.PI) relativeAngle -= 2 * Math.PI;
+        else if (relativeAngle < -Math.PI) relativeAngle += 2 * Math.PI;
+        
+        // Check if sprite is in field of view
+        if (Math.abs(relativeAngle) > halfFov) continue;
+        
+        // Check line of sight after angle check for efficiency
+        if (!this.hasLineOfSight(this.playerX, this.playerY, sprite.x, sprite.y, map)) continue;
+        
+        // Calculate screen position and size
+        const screenX = halfWidth + (relativeAngle / halfFov) * halfWidth;
+        const clampedDistance = Math.max(0.5, distance);
+        const projectedSize = (sprite.size / clampedDistance) * this.distanceToProjectionPlane;
+        const spriteCenterY = this.halfHeight + pitchOffset;
+        // NO FOG FACTOR for sprites - always fully visible
+        
+        renderObjects.push({
+          distance,
+          render: () => this.renderSprite(sprite, screenX, spriteCenterY, projectedSize)
+        });
+      }
+
       // Sort by distance (far to near) and render efficiently
       renderObjects.sort((a, b) => b.distance - a.distance);
       
@@ -1149,6 +1251,50 @@ export class Raycaster {
     const foggedB = Math.floor(b * fogFactor);
     
     return `rgb(${foggedR}, ${foggedG}, ${foggedB})`;
+  }
+  
+  /**
+   * Render a sprite at the specified screen position and size
+   */
+  private renderSprite(
+    sprite: { 
+      id: string; 
+      x: number; 
+      y: number; 
+      angle: number; 
+      classType: ClassType; 
+      spriteFrame: any | null;
+      size: number;
+    },
+    screenX: number,
+    screenY: number,
+    projectedSize: number
+  ): void {
+    if (!sprite.spriteFrame || projectedSize < 1) {
+      return; // No frame or too small to render
+    }
+    
+    this.ctx.save();
+    
+    // No fog effects for sprites - always fully visible
+    this.ctx.globalAlpha = 1.0;
+    
+    // Calculate sprite rendering size
+    const renderSize = Math.max(8, projectedSize); // Minimum size for visibility
+    const halfSize = renderSize / 2;
+    
+    // Render the sprite frame
+    if (sprite.spriteFrame.canvas) {
+      this.ctx.drawImage(
+        sprite.spriteFrame.canvas,
+        screenX - halfSize,
+        screenY - halfSize,
+        renderSize,
+        renderSize
+      );
+    }
+    
+    this.ctx.restore();
   }
   
   /**

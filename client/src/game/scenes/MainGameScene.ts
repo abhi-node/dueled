@@ -8,7 +8,6 @@ import { Socket } from 'socket.io-client';
 import { Raycaster } from '../renderer/Raycaster.js';
 import { GameMap } from '../world/GameMap.js';
 import { MainNetworkManager } from '../network/MainNetworkManager.js';
-import { SpriteRenderer } from '../renderer/SpriteRenderer.js';
 import { TextureManager } from '../renderer/TextureManager.js';
 import { CombatManager } from '../combat/CombatManager.js';
 import { ArcherCombat } from '../combat/ArcherCombat.js';
@@ -16,13 +15,14 @@ import { Projectile } from '../combat/Projectile.js';
 import type { Vector2, ClassType, ClassConfig } from '@dueled/shared';
 import { getClassConfig, calculateDashCooldown, ClassType as CT } from '@dueled/shared';
 import { projectileSpriteManager } from '../renderer/ProjectileSpriteManager';
+import { angleToDirection } from '../utils/direction';
+import { spriteSheetManager } from '../renderer/SpriteSheetManager';
 
 export class MainGameScene {
   private canvas: HTMLCanvasElement;
   private raycaster: Raycaster;
   private gameMap: GameMap;
   private networkManager: MainNetworkManager;
-  private spriteRenderer: SpriteRenderer;
   private textureManager: TextureManager;
   
   // Combat system
@@ -41,13 +41,29 @@ export class MainGameScene {
     lastUpdate: number;
   }> = new Map();
 
-  // Direct player management for rendering (unified state)
+  // NEW: Unified sprite management for rendering (models after renderProjectiles)
+  private renderSprites: Map<string, {
+    id: string;
+    position: { x: number; y: number };
+    angle: number;  // Direction the player is facing
+    classType: ClassType;
+    health: number;
+    armor: number;
+    isAlive: boolean;
+    isMoving: boolean;
+    velocity: { x: number; y: number };  // For interpolation
+    lastUpdate: number;
+    username?: string;
+  }> = new Map();
+
+  // OLD: Will be removed once new system is working
   private renderPlayers: Map<string, {
     id: string;
     position: { x: number; y: number };
     angle: number;
     classType: ClassType;
     isMoving: boolean;
+    velocity: { x: number; y: number };
     health: number;
     armor: number;
     isAlive: boolean;
@@ -69,7 +85,6 @@ export class MainGameScene {
   private localPlayerId: string = '';
   private localPlayerClass: ClassType;
   private classConfig!: ClassConfig;
-  private remotePlayers: Map<string, any> = new Map();
   
   // Rendering optimization
   private lastPlayerCleanup: number = 0;
@@ -190,7 +205,6 @@ export class MainGameScene {
     
     this.gameMap = new GameMap();
     this.networkManager = new MainNetworkManager(this, this.socket);
-    this.spriteRenderer = new SpriteRenderer();
     this.textureManager = new TextureManager();
     
     // Initialize combat systems
@@ -520,7 +534,7 @@ export class MainGameScene {
       console.log('🎨 DEBUG: R key pressed - checking rendering status');
       const viewerState = this.raycaster.getPlayerState();
       console.log('🎨 Player state:', viewerState);
-      console.log('🎨 Remote players:', this.remotePlayers.size);
+      console.log('🎨 Remote players:', this.renderPlayers.size);
       console.log('🎨 Projectiles in combat manager:', this.combatManager?.getProjectiles().size || 0);
       console.log('🎨 Running:', this.running);
       this.showNotification(`Rendering: ${this.running ? 'Active' : 'Inactive'}`, 'info');
@@ -1013,8 +1027,8 @@ export class MainGameScene {
     const projectileCountCombatManager = this.combatManager ? this.combatManager.getProjectiles().size : 0;
     const projectileCountRenderDirect = this.renderProjectiles.size;
     const projectileCountRaycaster = this.raycaster.getProjectileCount();
-    const playerCount = this.remotePlayers.size;
-    const spriteCount = this.spriteRenderer ? 'N/A' : 'No SpriteRenderer';
+    const playerCount = this.renderPlayers.size;
+    const spriteCount = this.renderSprites.size;
     
     this.debugOverlayDiv.innerHTML = `
       <strong>🔍 ENTITY DEBUG OVERLAY</strong><br><br>
@@ -1026,6 +1040,7 @@ export class MainGameScene {
       
       <strong>PLAYERS:</strong><br>
       • Remote Players: ${playerCount}<br>
+      • Active Sprites: ${spriteCount}<br>
       • Local Player: ${this.localPlayerId ? '✓' : '✗'}<br><br>
       
       <strong>SYSTEMS:</strong><br>
@@ -1034,7 +1049,7 @@ export class MainGameScene {
       • Socket Status: ${this.networkManager?.getSocket()?.connected ? '✅ ACTIVE' : '❌ DISCONNECTED'}<br>
       • Player ID: ${this.localPlayerId ? this.localPlayerId.substr(0, 12) + '...' : 'None'}<br>
       • Combat Manager: ${this.combatManager ? '✓' : '✗'}<br>
-      • Sprite Renderer: ${this.spriteRenderer ? '✓' : '✗'}<br>
+      • Sprite System: ${this.renderSprites.size >= 0 ? '✓' : '✗'}<br>
       • Texture Manager: ${this.textureManager ? '✓' : '✗'}<br><br>
       
       <strong>PERFORMANCE:</strong><br>
@@ -1055,11 +1070,11 @@ export class MainGameScene {
     
     // Generate remote player debug info
     let opponentDebugInfo = '';
-    if (this.debugCombat && this.remotePlayers.size > 0) {
+    if (this.debugCombat && this.renderPlayers.size > 0) {
       opponentDebugInfo = '<br><strong>Opponents:</strong><br>';
-      for (const [playerId, player] of this.remotePlayers) {
+      for (const [playerId, player] of this.renderPlayers) {
         const raycasterPos = this.raycaster.getOtherPlayerPosition(playerId);
-        opponentDebugInfo += `${player.username}: Server(${player.position.x.toFixed(1)}, ${player.position.y.toFixed(1)})`;
+        opponentDebugInfo += `${player.username || playerId.substring(0, 8)}: Server(${player.position.x.toFixed(1)}, ${player.position.y.toFixed(1)})`;
         if (raycasterPos) {
           const posDiff = Math.sqrt(Math.pow(player.position.x - raycasterPos.x, 2) + Math.pow(player.position.y - raycasterPos.y, 2));
           opponentDebugInfo += ` Render(${raycasterPos.x.toFixed(1)}, ${raycasterPos.y.toFixed(1)}) Δ${posDiff.toFixed(2)}<br>`;
@@ -1223,8 +1238,11 @@ export class MainGameScene {
       // Update projectiles in raycaster for 3D rendering
       this.updateProjectilesInRaycaster();
       
-      // Update players in raycaster for 3D rendering
-      this.updatePlayersInRaycaster();
+      // NEW: Update sprites in raycaster for 3D rendering
+      this.updateSpritesInRaycaster();
+      
+      // OLD: Update players in raycaster for 3D rendering (will be removed)
+      // this.updatePlayersInRaycaster();
       
       // Check if gameMap exists and has valid grid
       if (!this.gameMap) {
@@ -1248,7 +1266,7 @@ export class MainGameScene {
       this.raycaster.render(mapGrid);
       
       // Update sprite animations
-      this.spriteRenderer.update(Date.now());
+      // Sprite system is handled in render loop
       
       // Render debug hitboxes on top if needed
       if (this.debugCombat && this.combatManager) {
@@ -1337,7 +1355,110 @@ export class MainGameScene {
   }
 
   /**
-   * Update players in raycaster for 3D rendering
+   * NEW: Update sprites in raycaster for 3D rendering
+   * Models exactly after updateProjectilesInRaycaster for consistency
+   */
+  private updateSpritesInRaycaster(): void {
+    try {
+      // Use direct render sprites map for better control
+      if (this.debugCombat) {
+        console.log(`[MainGameScene] Updating sprites in Raycaster (direct):`, {
+          count: this.renderSprites.size,
+          spriteIds: Array.from(this.renderSprites.keys())
+        });
+      }
+
+      // Get viewer state for sprite direction calculation
+      const viewerState = this.raycaster.getPlayerState();
+      const now = Date.now();
+
+      // First, collect all active sprite IDs
+      const activeSpriteIds = new Set<string>();
+
+      if (this.renderSprites.size > 0) {
+        console.log(`🎨 Updating ${this.renderSprites.size} sprites in raycaster`);
+      }
+      
+      // Update or add active sprites from direct management
+      for (const [id, sprite] of this.renderSprites) {
+        // Skip local player - never render ourselves
+        if (id === this.localPlayerId) continue;
+
+        // Validate position is within map bounds
+        if (sprite.position.x < 0 || sprite.position.x > 20 || 
+            sprite.position.y < 0 || sprite.position.y > 20) {
+          console.warn(`🚨 Sprite ${id} outside map bounds at (${sprite.position.x}, ${sprite.position.y})`);
+          continue;
+        }
+        
+        // Track this as an active sprite
+        activeSpriteIds.add(id);
+        
+        // Calculate correct sprite direction based on viewer perspective
+        const direction = this.calculateSpriteDirection(
+          sprite.angle,
+          { x: viewerState.x, y: viewerState.y },
+          sprite.position
+        );
+        
+        // Get sprite frame from sprite sheet manager
+        const spriteFrame = spriteSheetManager.getFrame(
+          sprite.classType,
+          direction,
+          sprite.isMoving,
+          now
+        );
+        
+        if (!spriteFrame) {
+          console.warn(`🚨 No sprite frame for ${id} (${sprite.classType}, ${direction})`);
+        }
+        
+        // Persist sprite to raycaster for rendering
+        this.raycaster.persistSprite(
+          id,
+          sprite.position.x,
+          sprite.position.y,
+          sprite.angle,
+          sprite.classType,
+          spriteFrame,
+          1.0 // size
+        );
+        
+        if (this.debugCombat) {
+          console.log(`[MainGameScene] Added/Updated sprite in Raycaster:`, {
+            id,
+            position: { x: sprite.position.x, y: sprite.position.y },
+            angle: sprite.angle,
+            direction,
+            classType: sprite.classType
+          });
+        }
+      }
+      
+      // Remove stale sprites from Raycaster
+      const raycasterSpriteIds = this.raycaster.getSpriteIds();
+      if (this.debugCombat) {
+        console.log(`[MainGameScene] Before cleanup - Raycaster has ${raycasterSpriteIds.length} sprites`);
+      }
+      
+      let removedCount = 0;
+      for (const spriteId of raycasterSpriteIds) {
+        if (!activeSpriteIds.has(spriteId)) {
+          this.raycaster.removeSprite(spriteId);
+          removedCount++;
+          // Performance optimized: no logging in hot path
+        }
+      }
+      
+      // Performance optimized: no logging in hot path
+    } catch (error) {
+      console.error('🚨 Error updating sprites in raycaster:', error);
+      // Don't crash the render loop
+    }
+  }
+
+  /**
+   * OLD: Update players in raycaster for 3D rendering
    * Uses direct player management similar to projectiles
    */
   private updatePlayersInRaycaster(): void {
@@ -1375,6 +1496,10 @@ export class MainGameScene {
           Math.abs(existingPlayer.x - player.position.x) > 0.01 ||
           Math.abs(existingPlayer.y - player.position.y) > 0.01;
         
+        // OLD SYSTEM: Removed to prevent duplicate rendering
+        // The old updateOtherPlayer populates the legacy otherPlayers map
+        // This has been replaced by the unified sprite system
+        /*
         if (positionChanged) {
           this.raycaster.updateOtherPlayer(
             id,
@@ -1389,19 +1514,9 @@ export class MainGameScene {
             color
           );
         }
+        */
         
-        // Always update sprite renderer for direction changes
-        // The sprite renderer will handle caching to prevent flickering
-        this.spriteRenderer.updatePlayerSprite(
-          id,
-          player.classType,
-          player.position,
-          player.angle,
-          { x: viewerState.x, y: viewerState.y },
-          viewerState.angle,
-          undefined, // fogFactor - let raycaster handle this
-          player.isMoving
-        );
+        // Sprites are now updated via unified updateSpritesInRaycaster method
         
         updatedPlayers.add(id);
       }
@@ -1413,7 +1528,7 @@ export class MainGameScene {
         for (const id of this.raycaster.getAllOtherPlayers().keys()) {
           if (!activeIds.has(id)) {
             this.raycaster.removeOtherPlayer(id);
-            this.spriteRenderer.removePlayerSprite(id);
+            this.removeSprite(id);
           }
         }
         this.lastPlayerCleanup = now;
@@ -1514,17 +1629,14 @@ export class MainGameScene {
     // Note: EnhancedGameMap uses grid-based rendering, no need to set flexible map
     console.log('🗺️ MainGameScene: Using enhanced grid-based map');
     
-    // Initialize sprite renderer
+
+    // Initialize NEW sprite sheet manager
     try {
-      console.log('🎮 MainGameScene: About to initialize sprite renderer...');
-      await this.spriteRenderer.initialize();
-      console.log('🎮 MainGameScene: Sprite renderer initialized successfully');
-      
-      // Pass sprite renderer to raycaster
-      this.raycaster.setSpriteRenderer(this.spriteRenderer);
-      console.log('🎮 MainGameScene: Sprite renderer passed to raycaster');
+      console.log('🎨 MainGameScene: Initializing new sprite sheet manager...');
+      await spriteSheetManager.initialize();
+      console.log('🎨 MainGameScene: Sprite sheet manager initialized successfully');
     } catch (error) {
-      console.error('🎮 MainGameScene: Failed to initialize sprite renderer:', error);
+      console.error('🎨 MainGameScene: Failed to initialize sprite sheet manager:', error);
     }
     
     // Initialize projectile sprite manager
@@ -1590,9 +1702,9 @@ export class MainGameScene {
     // Check if we have necessary initialization
     const hasValidPosition = this.initialPosition || this.gameMap.getSpawnPoints().length > 0;
     const hasTextureManager = this.textureManager !== null;
-    const hasSpriteRenderer = this.spriteRenderer !== null;
+    const hasSpriteSheetManager = spriteSheetManager.isReady();
     
-    if (hasValidPosition && hasTextureManager && hasSpriteRenderer) {
+    if (hasValidPosition && hasTextureManager && hasSpriteSheetManager) {
       console.log('🎮 MainGameScene: All systems ready, starting game loop!');
       
       // Initialize combat system
@@ -1613,8 +1725,8 @@ export class MainGameScene {
     this.running = false;
     this.networkManager.disconnect();
     
-    // Cleanup sprite renderer
-    this.spriteRenderer.dispose();
+    // Cleanup sprite system
+    this.renderSprites.clear();
     
     // Exit pointer lock
     if (this.pointerLocked) {
@@ -1657,12 +1769,6 @@ export class MainGameScene {
     
     this.renderPlayers.set(playerId, player);
     
-    // Keep remotePlayers for compatibility with other systems (temporary)
-    this.remotePlayers.set(playerId, {
-      position: player.position,
-      angle: player.angle,
-      classType: classType
-    });
     
     // Show notification
     const username = data.username || `Player ${playerId.substring(0, 8)}`;
@@ -1679,12 +1785,9 @@ export class MainGameScene {
     // Remove from unified state
     this.renderPlayers.delete(playerId);
     
-    // Remove from legacy state (temporary)
-    this.remotePlayers.delete(playerId);
-    
     // Remove from rendering systems
+    this.removeSprite(playerId);
     this.raycaster.removeOtherPlayer(playerId);
-    this.spriteRenderer.removePlayerSprite(playerId);
     
     // Show notification
     this.showNotification(`${username} has disconnected`, 'info');
@@ -1777,7 +1880,8 @@ export class MainGameScene {
     console.log('🔄 Returning to lobby...');
     
     // Clear all game data
-    this.remotePlayers.clear();
+    this.renderPlayers.clear();
+    this.renderSprites.clear();
     this.stop();
     
     // Redirect to the main page or lobby
@@ -1796,6 +1900,7 @@ export class MainGameScene {
       angle: 0,
       classType: classType,
       isMoving: false,
+      velocity: { x: 0, y: 0 },
       health: 100,
       armor: 50,
       isAlive: true,
@@ -1803,93 +1908,188 @@ export class MainGameScene {
     };
   }
 
-  public onPlayerMoved(playerId: string, position: Vector2, angle: number, classType?: ClassType, isMoving?: boolean): void {
-    // CRITICAL: Skip updates for local player
-    if (playerId === this.localPlayerId) {
-      console.warn(`⚠️ MainGameScene: Attempted to update local player ${playerId} position. Ignoring.`);
-      return;
+  // NEW: Sprite management helper methods
+  private createDefaultSprite(playerId: string, classType: ClassType = CT.BERSERKER): typeof this.renderSprites extends Map<string, infer T> ? T : never {
+    return {
+      id: playerId,
+      position: { x: 10, y: 10 },
+      angle: 0,
+      classType: classType,
+      health: 100,
+      armor: 50,
+      isAlive: true,
+      isMoving: false,
+      velocity: { x: 0, y: 0 },
+      lastUpdate: Date.now()
+    };
+  }
+
+  private updateSprite(playerId: string, updates: Partial<{
+    position: { x: number; y: number };
+    angle: number;
+    classType: ClassType;
+    health: number;
+    armor: number;
+    isAlive: boolean;
+    isMoving: boolean;
+    velocity: { x: number; y: number };
+    username: string;
+  }>): void {
+    let sprite = this.renderSprites.get(playerId);
+    
+    if (!sprite) {
+      // Create new sprite if it doesn't exist
+      if (!updates.classType) {
+        console.warn(`🚨 Cannot create sprite for ${playerId} without classType`);
+        return;
+      }
+      sprite = this.createDefaultSprite(playerId, updates.classType);
+      console.log(`🎨 Created new sprite for ${playerId} with class ${updates.classType}`);
+    }
+
+    // Update only provided fields
+    Object.assign(sprite, updates, { lastUpdate: Date.now() });
+    this.renderSprites.set(playerId, sprite);
+  }
+
+  /**
+   * Remove a sprite from the rendering system
+   */
+  private removeSprite(playerId: string): void {
+    this.renderSprites.delete(playerId);
+    this.raycaster.removeSprite(playerId);
+  }
+
+  /**
+   * Calculate sprite direction based on viewer perspective
+   * This is the CRITICAL function that fixes sprite direction issues
+   * 
+   * Example: If player faces north and viewer is south of player, sprite should show FORWARD
+   */
+  private calculateSpriteDirection(
+    spriteAngle: number,      // Direction sprite is facing (in radians)
+    viewerPosition: Vector2,   // Where viewer is
+    spritePosition: Vector2    // Where sprite is
+  ): import('../renderer/SpriteSheet').WalkDirection {
+    // Calculate angle from viewer to sprite (FIXED: was sprite to viewer)
+    // According to memory: sprite.angle - atan2(sprite.y - viewer.y, sprite.x - viewer.x) + PI
+    const dx = spritePosition.x - viewerPosition.x;  // Fixed: was viewerPosition.x - spritePosition.x
+    const dy = spritePosition.y - viewerPosition.y;  // Fixed: was viewerPosition.y - spritePosition.y
+    const angleFromViewerToSprite = Math.atan2(dy, dx);
+    
+    // Calculate relative angle (how sprite appears to viewer)
+    // CRITICAL FIX: Added + Math.PI offset for correct viewing perspective
+    let relativeAngle = spriteAngle - angleFromViewerToSprite + Math.PI;  // Added + PI
+    
+    // Normalize to [-PI, PI]
+    while (relativeAngle > Math.PI) relativeAngle -= 2 * Math.PI;
+    while (relativeAngle < -Math.PI) relativeAngle += 2 * Math.PI;
+    
+    // Convert to walk direction using existing utility
+    const direction = angleToDirection(relativeAngle);
+    
+    // Debug logging (throttled to prevent spam)
+    if (Math.random() < 0.01) { // Log 1% of calculations
+      console.log(`🧭 Sprite direction calc: angle=${(spriteAngle * 180 / Math.PI).toFixed(1)}°, viewerToSprite=${(angleFromViewerToSprite * 180 / Math.PI).toFixed(1)}°, relative=${(relativeAngle * 180 / Math.PI).toFixed(1)}°, direction=${direction}`);
     }
     
-    // Update renderPlayers Map (unified state)
+    return direction;
+  }
+
+  /**
+   * Unified player update method - handles all player state changes
+   * This method replaces onPlayerMoved, onPlayerRotated, and consolidates player updates
+   */
+  public onPlayerUpdate(playerId: string, updateData: {
+    position?: Vector2;
+    angle?: number;
+    classType?: ClassType;
+    isMoving?: boolean;
+    health?: number;
+    armor?: number;
+    isAlive?: boolean;
+    username?: string;
+    velocity?: { x: number; y: number };
+  }): void {
+    // CRITICAL: Skip updates for local player
+    if (playerId === this.localPlayerId) {
+      console.warn(`⚠️ MainGameScene: Attempted to update local player ${playerId}. Ignoring.`);
+      return;
+    }
+
+    // Get or create player in unified state
     let player = this.renderPlayers.get(playerId);
     if (!player) {
-      if (!classType) {
+      if (!updateData.classType) {
         console.error(`⚠️ MainGameScene: Cannot create player ${playerId} without class type!`);
         return;
       }
-      player = this.createDefaultPlayer(playerId, classType);
+      player = this.createDefaultPlayer(playerId, updateData.classType);
     }
-    
-    // Update player data
-    player.position = position;
-    player.angle = angle;
-    player.isMoving = isMoving ?? false;
+
+    // Update player data with provided values
+    if (updateData.position !== undefined) {
+      player.position = { ...updateData.position };
+    }
+    if (updateData.angle !== undefined) {
+      player.angle = updateData.angle;
+    }
+    if (updateData.classType !== undefined) {
+      player.classType = updateData.classType;
+    }
+    if (updateData.isMoving !== undefined) {
+      player.isMoving = updateData.isMoving;
+    }
+    if (updateData.health !== undefined) {
+      player.health = updateData.health;
+    }
+    if (updateData.armor !== undefined) {
+      player.armor = updateData.armor;
+    }
+    if (updateData.isAlive !== undefined) {
+      player.isAlive = updateData.isAlive;
+    }
+    if (updateData.username !== undefined) {
+      player.username = updateData.username;
+    }
+    if (updateData.velocity !== undefined) {
+      player.velocity = { ...updateData.velocity };
+    }
+
     player.lastUpdate = Date.now();
-    if (classType) {
-      player.classType = classType;
-    }
-    
     this.renderPlayers.set(playerId, player);
-    
-    // Keep remotePlayers for compatibility with other systems (temporary)
-    let legacyPlayer = this.remotePlayers.get(playerId);
-    if (!legacyPlayer) {
-      legacyPlayer = {
-        position: position,
-        angle: angle,
-        classType: classType
-      };
-      this.remotePlayers.set(playerId, legacyPlayer);
-    } else {
-      legacyPlayer.position = position;
-      legacyPlayer.angle = angle;
-      if (classType) {
-        legacyPlayer.classType = classType;
-      }
-    }
+
+    // Update unified sprite system
+    this.updateSprite(playerId, {
+      position: player.position,
+      angle: player.angle,
+      classType: player.classType,
+      health: player.health,
+      armor: player.armor,
+      isAlive: player.isAlive,
+      isMoving: player.isMoving,
+      velocity: player.velocity || { x: 0, y: 0 },
+      username: player.username
+    });
+
+  }
+
+  public onPlayerMoved(playerId: string, position: Vector2, angle: number, classType?: ClassType, isMoving?: boolean): void {
+    // Use unified update method
+    this.onPlayerUpdate(playerId, {
+      position,
+      angle,
+      classType,
+      isMoving
+    });
   }
   
   public onPlayerRotated(playerId: string, angle: number, classType?: ClassType): void {
-    // CRITICAL: Skip updates for local player
-    if (playerId === this.localPlayerId) {
-      console.warn(`⚠️ MainGameScene: Attempted to update local player ${playerId} rotation. Ignoring.`);
-      return;
-    }
-    
-    // Update renderPlayers Map (unified state)
-    let player = this.renderPlayers.get(playerId);
-    if (!player) {
-      if (!classType) {
-        console.error(`⚠️ MainGameScene: Cannot create player ${playerId} in rotation without class type!`);
-        return;
-      }
-      player = this.createDefaultPlayer(playerId, classType);
-    }
-    
-    // Update player data
-    player.angle = angle;
-    player.lastUpdate = Date.now();
-    if (classType) {
-      player.classType = classType;
-    }
-    
-    this.renderPlayers.set(playerId, player);
-    
-    // Keep remotePlayers for compatibility with other systems (temporary)
-    let legacyPlayer = this.remotePlayers.get(playerId);
-    if (!legacyPlayer) {
-      legacyPlayer = {
-        position: player.position,
-        angle: angle,
-        classType: classType
-      };
-      this.remotePlayers.set(playerId, legacyPlayer);
-    } else {
-      legacyPlayer.angle = angle;
-      if (classType) {
-        legacyPlayer.classType = classType;
-      }
-    }
+    // Use unified update method
+    this.onPlayerUpdate(playerId, {
+      angle,
+      classType
+    });
   }
   
   /**
@@ -1908,10 +2108,8 @@ export class MainGameScene {
       }
       
       // CRITICAL: Remove any sprite registered for local player
-      if (this.spriteRenderer) {
-        this.spriteRenderer.removePlayerSprite(this.localPlayerId);
-        console.log(`🔧 MainGameScene: Removed any sprite for local player ${this.localPlayerId}`);
-      }
+      this.removeSprite(this.localPlayerId);
+      console.log(`🔧 MainGameScene: Removed any sprite for local player ${this.localPlayerId}`);
       
       // Re-initialize combat if needed
       if (this.combatManager && this.archerCombat) {
@@ -1920,11 +2118,12 @@ export class MainGameScene {
       }
     }
     
-    // CRITICAL: Purge local player from remotePlayers Map
+    // CRITICAL: Purge local player from rendering system
     // This handles the race condition where player:joined fired before localPlayerId was set
-    if (this.remotePlayers.has(this.localPlayerId)) {
-      console.log(`🧹 MainGameScene: Purging local player ${this.localPlayerId} from remotePlayers`);
-      this.remotePlayers.delete(this.localPlayerId);
+    if (this.renderPlayers.has(this.localPlayerId)) {
+      console.log(`🧹 MainGameScene: Purging local player ${this.localPlayerId} from renderPlayers`);
+      this.renderPlayers.delete(this.localPlayerId);
+      this.removeSprite(this.localPlayerId);
     }
     
     // CRITICAL: Remove local player from raycaster's otherPlayers
@@ -1935,13 +2134,11 @@ export class MainGameScene {
     
     // CRITICAL: Remove any sprites for the old player ID as well
     if (oldPlayerId && oldPlayerId !== this.localPlayerId) {
-      if (this.remotePlayers.has(oldPlayerId)) {
-        console.log(`🧹 MainGameScene: Purging old player ID ${oldPlayerId} from remotePlayers`);
-        this.remotePlayers.delete(oldPlayerId);
+      if (this.renderPlayers.has(oldPlayerId)) {
+        console.log(`🧹 MainGameScene: Purging old player ID ${oldPlayerId} from renderPlayers`);
+        this.renderPlayers.delete(oldPlayerId);
       }
-      if (this.spriteRenderer) {
-        this.spriteRenderer.removePlayerSprite(oldPlayerId);
-      }
+      this.removeSprite(oldPlayerId);
       if (this.raycaster) {
         this.raycaster.removeOtherPlayer(oldPlayerId);
       }
@@ -2062,8 +2259,8 @@ export class MainGameScene {
         // Update position with server-authoritative data
         this.onPlayerMoved(playerData.id, playerData.position, playerData.angle || 0, playerData.classType);
         
-        // Store their health/armor for UI display
-        let remotePlayer = this.remotePlayers.get(playerData.id);
+        // Store their health/armor for UI display in renderPlayers
+        let remotePlayer = this.renderPlayers.get(playerData.id);
         if (remotePlayer) {
           remotePlayer.health = playerData.health;
           remotePlayer.armor = playerData.armor;
@@ -2208,54 +2405,27 @@ export class MainGameScene {
     // Remove players that are no longer on the server
     for (const id of currentPlayerIds) {
       if (!serverPlayerIds.has(id) && id !== this.localPlayerId) {
-        console.log(`🗑️ Removing local player ${id} - not in server state`);
+        console.log(`🗑️ Removing remote player ${id} - not in server state`);
         this.renderPlayers.delete(id);
-        // Legacy cleanup (temporary)
-        this.remotePlayers.delete(id);
+        this.removeSprite(id);
       }
     }
     
-    // Add or update players from server
+    // Add or update players from server using unified update method
     for (const serverPlayer of serverPlayers) {
       // Skip local player - we manage that separately
       if (serverPlayer.id === this.localPlayerId) continue;
       
-      const existing = this.renderPlayers.get(serverPlayer.id);
-      
-      if (existing) {
-        // Update existing player
-        existing.position = { ...serverPlayer.position };
-        existing.angle = serverPlayer.angle;
-        existing.classType = serverPlayer.classType;
-        existing.health = serverPlayer.health ?? existing.health;
-        existing.armor = serverPlayer.armor ?? existing.armor;
-        existing.isAlive = serverPlayer.isAlive ?? existing.isAlive;
-        existing.isMoving = serverPlayer.isMoving ?? false;
-        existing.username = serverPlayer.username ?? existing.username;
-        existing.lastUpdate = Date.now();
-        
-        console.log(`📍 Updated player ${serverPlayer.id} to pos(${serverPlayer.position.x.toFixed(1)}, ${serverPlayer.position.y.toFixed(1)})`);
-      } else {
-        // Create new player
-        const newPlayer = this.createDefaultPlayer(serverPlayer.id, serverPlayer.classType);
-        newPlayer.position = { ...serverPlayer.position };
-        newPlayer.angle = serverPlayer.angle;
-        newPlayer.health = serverPlayer.health ?? 100;
-        newPlayer.armor = serverPlayer.armor ?? 50;
-        newPlayer.isAlive = serverPlayer.isAlive ?? true;
-        newPlayer.isMoving = serverPlayer.isMoving ?? false;
-        newPlayer.username = serverPlayer.username;
-        
-        this.renderPlayers.set(serverPlayer.id, newPlayer);
-        
-        console.log(`✅ Created new player ${serverPlayer.id} at (${serverPlayer.position.x.toFixed(1)}, ${serverPlayer.position.y.toFixed(1)})`);
-      }
-      
-      // Update legacy system (temporary)
-      this.remotePlayers.set(serverPlayer.id, {
+      // Use unified update method for all player changes
+      this.onPlayerUpdate(serverPlayer.id, {
         position: serverPlayer.position,
         angle: serverPlayer.angle,
-        classType: serverPlayer.classType
+        classType: serverPlayer.classType,
+        health: serverPlayer.health,
+        armor: serverPlayer.armor,
+        isAlive: serverPlayer.isAlive,
+        isMoving: serverPlayer.isMoving,
+        username: serverPlayer.username
       });
     }
     
@@ -2370,7 +2540,8 @@ export class MainGameScene {
     } else {
       this.showNotification(`Player ${event.playerId.substring(0, 8)} was defeated!`, 'info');
       // Remove dead player from rendering
-      this.remotePlayers.delete(event.playerId);
+      this.renderPlayers.delete(event.playerId);
+      this.removeSprite(event.playerId);
     }
   }
 
