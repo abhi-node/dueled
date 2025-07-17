@@ -118,8 +118,8 @@ export class ArcherCombat {
     if (!attackTarget) {
       const range = getClassConfig(ClassType.ARCHER).weapon.range;
       attackTarget = {
-        x: archer.position.x + Math.cos(archer.facingAngle) * range * 32, // Convert tiles to pixels
-        y: archer.position.y + Math.sin(archer.facingAngle) * range * 32
+        x: archer.position.x + Math.cos(archer.facingAngle) * range, // Use tile coordinates directly
+        y: archer.position.y + Math.sin(archer.facingAngle) * range
       };
     }
     

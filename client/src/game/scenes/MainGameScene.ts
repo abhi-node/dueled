@@ -1089,13 +1089,41 @@ export class MainGameScene {
     const playerState = this.raycaster.getPlayerState();
     const currentTime = Date.now() / 1000;
     
+    // Generate remote player debug info
+    let opponentDebugInfo = '';
+    if (this.debugCombat && this.remotePlayers.size > 0) {
+      opponentDebugInfo = '<br><strong>Opponents:</strong><br>';
+      for (const [playerId, player] of this.remotePlayers) {
+        const raycasterPos = this.raycaster.getOtherPlayerPosition(playerId);
+        opponentDebugInfo += `${player.username}: Server(${player.position.x.toFixed(1)}, ${player.position.y.toFixed(1)})`;
+        if (raycasterPos) {
+          const posDiff = Math.sqrt(Math.pow(player.position.x - raycasterPos.x, 2) + Math.pow(player.position.y - raycasterPos.y, 2));
+          opponentDebugInfo += ` Render(${raycasterPos.x.toFixed(1)}, ${raycasterPos.y.toFixed(1)}) Δ${posDiff.toFixed(2)}<br>`;
+        } else {
+          opponentDebugInfo += ` Render(Not Found)<br>`;
+        }
+      }
+    }
+
+    // Generate projectile debug info
+    let projectileDebugInfo = '';
+    if (this.debugCombat && this.renderProjectiles.size > 0) {
+      projectileDebugInfo = '<br><strong>Projectiles:</strong><br>';
+      for (const [id, projectile] of this.renderProjectiles) {
+        const velocity = Math.sqrt(projectile.velocity.x ** 2 + projectile.velocity.y ** 2);
+        const angle = (projectile.rotation * 180 / Math.PI).toFixed(0);
+        projectileDebugInfo += `${projectile.type}: (${projectile.position.x.toFixed(1)}, ${projectile.position.y.toFixed(1)}) `;
+        projectileDebugInfo += `V${velocity.toFixed(1)} ∠${angle}°<br>`;
+      }
+    }
+
     // Update performance stats
     this.statsDiv.innerHTML = `
       FPS: ${this.fps.toFixed(0)}<br>
       Pos: ${playerState.x.toFixed(1)}, ${playerState.y.toFixed(1)}<br>
       Angle: ${(playerState.angle * 180 / Math.PI).toFixed(0)}°<br>
       Pitch: ${(playerState.pitch * 180 / Math.PI).toFixed(0)}°<br>
-      Combat: ${this.debugCombat ? 'DEBUG' : 'OFF'}
+      Combat: ${this.debugCombat ? 'DEBUG' : 'OFF'}${opponentDebugInfo}${projectileDebugInfo}
     `;
     
     // Calculate cooldown times
@@ -2173,6 +2201,11 @@ export class MainGameScene {
         
         console.log(`✅ [STEP 23] Created new projectile ${serverProjectile.id} at (${serverProjectile.position.x.toFixed(1)}, ${serverProjectile.position.y.toFixed(1)})`);
       }
+    }
+    
+    // Also sync with CombatManager for unified projectile management
+    if (this.combatManager) {
+      this.combatManager.syncServerProjectiles(serverProjectiles);
     }
     
     console.log(`📊 Total projectiles after sync: ${this.renderProjectiles.size}`);

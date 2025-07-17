@@ -49,7 +49,7 @@ export class CombatManager {
   private lastProjectileId: number = 0;
   
   // Combat constants
-  private static readonly PLAYER_RADIUS = 16; // pixels
+  private static readonly PLAYER_RADIUS = 0.5; // tiles
   private static readonly TILE_SIZE = 32; // pixels per tile
   
   /**
@@ -155,7 +155,7 @@ export class CombatManager {
       // Velocity already encodes magnitude; use unit speed scalar
       speed: 1,
       range: weapon.range,
-      size: { width: 32, height: 12 }, // Made larger for visibility
+      size: { width: 1.0, height: 0.375 }, // Converted from pixels to tiles (32/32, 12/32)
       piercing: true, // Archer inherent ability
       homing: false,
       armorPenetration: 50, // Piercing shot ignores 50% armor
@@ -417,6 +417,55 @@ export class CombatManager {
     }
     
     ctx.restore();
+  }
+
+  /**
+   * Sync with server projectiles (for multiplayer authority)
+   */
+  public syncServerProjectiles(serverProjectiles: any[]): void {
+    // Get current projectile IDs
+    const currentIds = new Set(this.projectiles.keys());
+    const serverIds = new Set(serverProjectiles.map(p => p.id));
+    
+    // Remove projectiles that are no longer on server
+    for (const id of currentIds) {
+      if (!serverIds.has(id)) {
+        this.projectiles.delete(id);
+      }
+    }
+    
+    // Add or update projectiles from server
+    for (const serverProjectile of serverProjectiles) {
+      const existing = this.projectiles.get(serverProjectile.id);
+      
+      if (existing) {
+        // Update existing projectile with server data
+        existing.updateFromServer({
+          position: serverProjectile.position,
+          velocity: serverProjectile.velocity,
+          rotation: serverProjectile.rotation,
+          isActive: serverProjectile.isActive
+        });
+      } else {
+        // Create new projectile from server data
+        const projectileConfig = {
+          id: serverProjectile.id,
+          type: serverProjectile.type as 'arrow' | 'ice_shard' | 'fire_bomb' | 'magic_missile',
+          ownerId: serverProjectile.ownerId,
+          position: serverProjectile.position,
+          velocity: serverProjectile.velocity,
+          damage: serverProjectile.damage || 30,
+          range: serverProjectile.range || 10,
+          homing: false,
+          path: `/assets/projectiles/${serverProjectile.type}_sheet.png`,
+          size: 0.1
+        };
+        
+        const projectile = new Projectile(projectileConfig);
+        projectile.setRotation(serverProjectile.rotation || 0);
+        this.projectiles.set(serverProjectile.id, projectile);
+      }
+    }
   }
 
   // Getters

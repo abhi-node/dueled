@@ -92,8 +92,8 @@ export class Projectile {
       this.updateHoming(targets, deltaSeconds);
     }
     
-    // Update position - velocity is already in tiles per second from server
-    const moveDistance = deltaSeconds; // Only deltaSeconds, no speed multiplier
+    // Update position using proper speed calculation
+    const moveDistance = this.config.speed * deltaSeconds;
     const newX = this.state.position.x + this.state.velocity.x * moveDistance;
     const newY = this.state.position.y + this.state.velocity.y * moveDistance;
     

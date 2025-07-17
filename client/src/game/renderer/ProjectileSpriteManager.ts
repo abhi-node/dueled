@@ -57,6 +57,7 @@ export class ProjectileSpriteManager extends BaseSpriteManager {
         const loadPromise = spriteSheet.load(projectileType.path).then(() => {
           successCount++;
           console.log(`✅ ProjectileSpriteManager: Successfully loaded sprite sheet for ${projectileType.type} (${successCount}/${projectileTypes.length})`);
+          console.log(`🎨 Sprite sheet dimensions: ${spriteSheet.getWidth()}x${spriteSheet.getHeight()}`);
           
           // Create animation for this projectile type - use all frames (row 0)
           const animation = spriteSheet.createAnimation(WalkDirection.FORWARD, ProjectileSpriteManager.PROJECTILE_FRAME_TIME);
@@ -182,7 +183,7 @@ export class ProjectileSpriteManager extends BaseSpriteManager {
   public getProjectileFrame(type: string, timestamp?: number): SpriteFrame | null {
     const projectileSprite = this.projectileSprites.get(type);
     if (!projectileSprite) {
-      console.warn(`No sprite loaded for projectile type: ${type}`);
+      console.warn(`No sprite loaded for projectile type: ${type}. Available types: ${Array.from(this.projectileSprites.keys()).join(', ')}`);
       return null;
     }
     
@@ -192,7 +193,11 @@ export class ProjectileSpriteManager extends BaseSpriteManager {
     }
     
     // Get current animation frame
-    return projectileSprite.spriteSheet.getCurrentFrame(projectileSprite.animation);
+    const frame = projectileSprite.spriteSheet.getCurrentFrame(projectileSprite.animation);
+    if (!frame) {
+      console.warn(`No frame returned for projectile type: ${type}`);
+    }
+    return frame;
   }
   
   /**

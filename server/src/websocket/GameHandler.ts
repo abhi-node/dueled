@@ -443,59 +443,35 @@ export class GameHandler {
     const userId = socket.data.userId;
     const roomId = this.playerToRoom.get(userId);
     
-    if (!roomId) {
-      return;
-    }
+    if (!roomId) return;
     
-    // Extract match ID from room ID
     const matchId = roomId.replace('match:', '');
     
-    // Add player input to game state
+    // Add player input to game state efficiently
     const action: GameAction = {
       type: ActionType.MOVE,
       playerId: userId,
-      data: {
-        position: data.position,
-        angle: data.angle
-      },
+      data: { position: data.position, angle: data.angle },
       timestamp: Date.now()
     };
     
     await gameStateService.addPlayerInput(matchId, userId, action);
     
-    // Get player class (from data or stored)
+    // Get player class efficiently - cache lookup first
     let classType = data.classType || this.playerClasses.get(userId);
     
-    // If class not found, try to get from match data
+    // Only query match data if class not found and not already cached
     if (!classType) {
       try {
         const matchData = await matchmakingService.getMatch(matchId);
         if (matchData) {
           classType = userId === matchData.player1.playerId ? matchData.player1.classType : matchData.player2.classType;
-          // Store it for future use
-          if (classType) {
-            this.playerClasses.set(userId, classType);
-            logger.info(`Retrieved class ${classType} for player ${userId} from match data`);
-          }
+          if (classType) this.playerClasses.set(userId, classType);
         }
       } catch (error) {
-        logger.error(`Error retrieving player class from match data:`, error);
+        // Silent fail for performance
       }
     }
-    
-    if (!classType) {
-      logger.warn(`Player ${userId} movement without class type - class not found anywhere`);
-      // Still send the movement but without class type
-      socket.to(roomId).emit('player:moved', {
-        playerId: userId,
-        position: data.position,
-        angle: data.angle,
-        // No classType field when unknown
-      });
-      return;
-    }
-    
-    logger.debug(`Player ${userId} movement: provided class=${data.classType}, stored class=${this.playerClasses.get(userId)}, using class=${classType}`);
     
     // Update stored class if provided
     if (data.classType) {
@@ -568,91 +544,48 @@ export class GameHandler {
     const userId = socket.data.userId;
     const roomId = this.playerToRoom.get(userId);
     
-    logger.info(`🎯 [STEP 4] Received player:attack from ${userId}, roomId: ${roomId}`);
-    logger.info(`🎯 [STEP 4] Attack data:`, {
-      direction: data.direction,
-      targetPosition: data.targetPosition,
-      attackType: data.attackType,
-      timestamp: data.timestamp
-    });
-    
-    // 🔒 EARLY VALIDATION: Check payload structure
-    if (!data || typeof data !== 'object') {
-      logger.warn(`❌ Player ${userId} sent invalid attack data: ${JSON.stringify(data)}`);
-      socket.emit('attack:error', { error: 'Invalid attack data format' });
+    // Fast validation - essential checks only
+    if (!data || typeof data !== 'object' || 
+        (!data.direction && !data.targetPosition) ||
+        !data.attackType || !roomId) {
+      socket.emit('attack:error', { error: 'Invalid attack data' });
       return;
     }
     
-    if (!data.direction && !data.targetPosition) {
-      logger.warn(`❌ Player ${userId} attack missing both direction and targetPosition`);
-      socket.emit('attack:error', { error: 'Attack must include direction or targetPosition' });
-      return;
-    }
-    
-    if (!data.attackType) {
-      logger.warn(`❌ Player ${userId} attack missing attackType`);
-      socket.emit('attack:error', { error: 'Attack must include attackType' });
-      return;
-    }
-    
-    if (!roomId) {
-      logger.warn(`❌ Player ${userId} tried to attack without being in a room`);
-      socket.emit('attack:error', { error: 'Must be in a match to attack' });
-      return;
-    }
-    
-    // Extract match ID from room ID
     const matchId = roomId.replace('match:', '');
-    logger.info(`📍 Attack for match: ${matchId}`);
     
-    // Ensure game state exists before processing attack
-    const gameState = await gameStateService.getGameState(matchId);
+    // Ensure game state exists
+    let gameState = await gameStateService.getGameState(matchId);
     if (!gameState) {
-      logger.warn(`⚠️ Game state not found for match ${matchId}, attempting to create it...`);
       await this.ensureGameStateAndStart(matchId);
-      
-      // Check again after creation attempt
-      const newGameState = await gameStateService.getGameState(matchId);
-      if (!newGameState) {
+      gameState = await gameStateService.getGameState(matchId);
+      if (!gameState) {
         logger.error(`❌ Failed to create game state for match ${matchId}`);
         return;
       }
     }
     
-    // Check if game loop is running
+    // Ensure game loop is running
     const gameLoopRunning = await gameStateService.isGameLoopRunning(matchId);
     if (!gameLoopRunning) {
-      logger.warn(`⚠️ Game loop not running for match ${matchId}, starting it...`);
       await this.ensureGameStateAndStart(matchId);
     }
     
-    // Get player class for attack processing
+    // Get player class efficiently
     let classType = this.playerClasses.get(userId);
     if (!classType) {
       try {
         const matchData = await matchmakingService.getMatch(matchId);
         if (matchData) {
           classType = userId === matchData.player1.playerId ? matchData.player1.classType : matchData.player2.classType;
-          if (classType) {
-            this.playerClasses.set(userId, classType);
-            logger.info(`🔍 Retrieved class ${classType} for player ${userId}`);
-          }
+          if (classType) this.playerClasses.set(userId, classType);
         }
       } catch (error) {
-        logger.error(`Error retrieving player class for attack:`, error);
+        // Silent fail for performance
       }
     }
     
-    if (!classType) {
-      logger.warn(`❌ Player ${userId} attack without class type`);
-      return;
-    }
-    
-    logger.info(`⚔️ [STEP 5] Processing attack from ${userId} (${classType}):`, {
-      direction: data.direction,
-      targetPosition: data.targetPosition,
-      attackType: data.attackType
-    });
+    if (!classType) return;
     
     // Create attack action for server processing
     const action: GameAction = {

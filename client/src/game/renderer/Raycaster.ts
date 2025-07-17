@@ -549,86 +549,38 @@ export class Raycaster {
    * Render the 3D view with optimized camera pitch
    */
   public render(map: number[][]): void {
-    console.log(`[Raycaster] render() called - projectiles in Map:`, this.projectiles.size);
-    if (this.projectiles.size > 0) {
-      console.log(`[Raycaster] Projectile IDs:`, Array.from(this.projectiles.keys()));
+    // Fast validation - no logging in hot path
+    if (!map || map.length === 0 || !this.ctx || this.width <= 0 || this.height <= 0) {
+      // Only log errors in development
+      if (process.env.NODE_ENV !== 'production') {
+        console.error('🚨 Render validation failed:', { map: !!map, ctx: !!this.ctx, dimensions: `${this.width}x${this.height}` });
+      }
+      return;
     }
     
     try {
-      // Validate map
-      if (!map || map.length === 0) {
-        console.error('🚨 Invalid map provided to render');
-        // Render a fallback screen instead of returning
-        this.ctx.fillStyle = '#ff0000';
-        this.ctx.fillRect(0, 0, this.width, this.height);
-        this.ctx.fillStyle = '#ffffff';
-        this.ctx.font = '20px monospace';
-        this.ctx.fillText('Map Error', this.width / 2 - 50, this.height / 2);
-        return;
-      }
-      
-      // Validate canvas context
-      if (!this.ctx) {
-        console.error('🚨 Canvas context is null in render');
-        return;
-      }
-      
-      // Test if canvas has proper dimensions
-      if (this.width <= 0 || this.height <= 0) {
-        console.error('🚨 Canvas has invalid dimensions:', this.width, 'x', this.height);
-        return;
-      }
-      
-      // Pre-calculate pitch offset for efficiency
+      // Pre-calculate common values for efficiency
       const pitchOffset = this.playerPitch * this.distanceToProjectionPlane;
+      const halfFov = (this.fov / 2) * Math.PI / 180;
+      const halfWidth = this.width / 2;
       
       // Clear canvas efficiently
       this.ctx.fillStyle = '#1e293b';
       this.ctx.fillRect(0, 0, this.width, this.height);
-      
-      // Debug: Log player position and map info periodically
-      if (Math.random() < 0.01) { // Log 1% of frames to avoid spam
-        console.log('🎮 Raycaster debug:', {
-          playerPos: `(${this.playerX.toFixed(2)}, ${this.playerY.toFixed(2)})`,
-          playerAngle: this.playerAngle.toFixed(2),
-          mapSize: `${map.length}x${map[0]?.length}`,
-          canvasSize: `${this.width}x${this.height}`,
-          numRays: this.numRays,
-          viewDistance: this.viewDistance
-        });
-        
-        // Also check if player is in a wall
-        const playerMapX = Math.floor(this.playerX);
-        const playerMapY = Math.floor(this.playerY);
-        if (playerMapY >= 0 && playerMapY < map.length && 
-            playerMapX >= 0 && playerMapX < map[0].length) {
-          const tileValue = map[playerMapY][playerMapX];
-          if (tileValue !== 0) {
-            console.warn(`⚠️ Player is inside a wall! Tile value: ${tileValue}`);
-          }
-        } else {
-          console.warn(`⚠️ Player is outside map bounds! Position: (${this.playerX}, ${this.playerY}), Map size: ${map.length}x${map[0].length}`);
-        }
-      }
-      
       // Render floor and ceiling with textures
       this.renderFloorAndCeiling(map);
       
       // Collect all objects to render (walls and players)
       const renderObjects: { distance: number; render: () => void }[] = [];
       
-      // Cast rays for walls
-      const startAngle = this.playerAngle - (this.fov / 2) * Math.PI / 180;
+      // Cast rays for walls - pre-calculate start angle
+      const startAngle = this.playerAngle - halfFov;
       
-      // Debug logging removed for performance
-      
-      let raysWithHits = 0;
       for (let i = 0; i < this.numRays; i++) {
         const rayAngle = startAngle + i * this.rayAngleStep;
         const ray = this.castRay(rayAngle, map);
         
         if (ray) {
-          raysWithHits++;
           const correctedDistance = ray.distance * Math.cos(rayAngle - this.playerAngle);
           const projectedWallHeight = (this.wallHeight / correctedDistance) * this.distanceToProjectionPlane;
           
@@ -673,55 +625,32 @@ export class Raycaster {
           });
         }
       }
-      
-      // Debug: Log ray hit statistics
-      if (Math.random() < 0.01) { // Log 1% of frames
-        console.log(`🎯 Ray casting results: ${raysWithHits}/${this.numRays} rays hit walls`);
-        if (raysWithHits === 0) {
-          console.warn('🚨 NO RAYS HIT ANY WALLS - This is likely the cause of the black screen!');
-          // Test a single ray going directly right
-          const testRay = this.castRay(0, map); // 0 radians = right
-          console.log('🧪 Test ray result:', testRay);
-        }
-      }
-      
-      // Add other players to render list
-      // Debug logging removed for performance
-      
-      const otherPlayersArray = Array.from(this.otherPlayers.entries());
-      for (const [playerId, player] of otherPlayersArray) {
+      // Add other players to render list - pre-calculate common values
+      for (const [playerId, player] of this.otherPlayers.entries()) {
         const dx = player.x - this.playerX;
         const dy = player.y - this.playerY;
         const distance = Math.sqrt(dx * dx + dy * dy);
         
-        // Skip if too far
-        if (distance > this.viewDistance) {
-          continue;
-        }
-        
-        // Check line of sight - skip if blocked by walls
-        const hasLOS = this.hasLineOfSight(this.playerX, this.playerY, player.x, player.y, map);
-        if (!hasLOS) {
-          continue;
-        }
+        // Early exit conditions
+        if (distance > this.viewDistance) continue;
         
         // Calculate angle to player
         const angleToPlayer = Math.atan2(dy, dx);
         let relativeAngle = angleToPlayer - this.playerAngle;
         
-        // Normalize angle to [-PI, PI]
-        while (relativeAngle > Math.PI) relativeAngle -= 2 * Math.PI;
-        while (relativeAngle < -Math.PI) relativeAngle += 2 * Math.PI;
+        // Normalize angle efficiently
+        if (relativeAngle > Math.PI) relativeAngle -= 2 * Math.PI;
+        else if (relativeAngle < -Math.PI) relativeAngle += 2 * Math.PI;
         
         // Check if player is in field of view
-        const halfFov = (this.fov / 2) * Math.PI / 180;
-        if (Math.abs(relativeAngle) > halfFov) {
-          continue;
-        }
+        if (Math.abs(relativeAngle) > halfFov) continue;
+        
+        // Check line of sight after angle check for efficiency
+        if (!this.hasLineOfSight(this.playerX, this.playerY, player.x, player.y, map)) continue;
         
         // Calculate screen position
-        const screenX = this.width / 2 + (relativeAngle / halfFov) * (this.width / 2);
-        const projectedPlayerHeight = (0.8 / distance) * this.distanceToProjectionPlane; // Balanced height
+        const screenX = halfWidth + (relativeAngle / halfFov) * halfWidth;
+        const projectedPlayerHeight = (0.8 / distance) * this.distanceToProjectionPlane;
         
         // Apply pitch offset to player positioning
         const playerCenterY = this.halfHeight + pitchOffset;
@@ -805,109 +734,52 @@ export class Raycaster {
         });
       }
 
-      // Add projectiles to render list
-      const projectilesArray = Array.from(this.projectiles.entries());
-      
-      console.log(`[Raycaster] Processing projectiles for rendering:`, {
-        count: projectilesArray.length,
-        projectileDetails: projectilesArray.map(([id, p]) => ({
-          id,
-          position: { x: p.x, y: p.y },
-          type: p.type
-        }))
-      });
-      
-      for (const [projectileId, projectile] of projectilesArray) {
+      // Add projectiles to render list - optimized loop
+      for (const [projectileId, projectile] of this.projectiles.entries()) {
         const dx = projectile.x - this.playerX;
         const dy = projectile.y - this.playerY;
         const distance = Math.sqrt(dx * dx + dy * dy);
         
-        // Skip projectiles that are too close to the camera to avoid visual glitches
-        if (distance < 0.2) {
-          continue;
-        }
-        
-        // Skip if too far
-        if (distance > this.viewDistance) {
-          continue;
-        }
-        
-        // Check line of sight - skip if blocked by walls
-        const hasLOS = this.hasLineOfSight(this.playerX, this.playerY, projectile.x, projectile.y, map);
-        if (!hasLOS) {
-          continue;
-        }
+        // Early exit conditions
+        if (distance < 0.2 || distance > this.viewDistance) continue;
         
         // Calculate angle to projectile
         const angleToProjectile = Math.atan2(dy, dx);
         let relativeAngle = angleToProjectile - this.playerAngle;
         
-        // Normalize angle to [-PI, PI]
-        while (relativeAngle > Math.PI) relativeAngle -= 2 * Math.PI;
-        while (relativeAngle < -Math.PI) relativeAngle += 2 * Math.PI;
+        // Normalize angle efficiently
+        if (relativeAngle > Math.PI) relativeAngle -= 2 * Math.PI;
+        else if (relativeAngle < -Math.PI) relativeAngle += 2 * Math.PI;
         
         // Check if projectile is in field of view
-        const halfFov = (this.fov / 2) * Math.PI / 180;
-        if (Math.abs(relativeAngle) > halfFov) {
-          continue;
-        }
+        if (Math.abs(relativeAngle) > halfFov) continue;
         
-        // Calculate screen position
-        const screenX = this.width / 2 + (relativeAngle / halfFov) * (this.width / 2);
+        // Check line of sight after angle check for efficiency
+        if (!this.hasLineOfSight(this.playerX, this.playerY, projectile.x, projectile.y, map)) continue;
         
-        // Fix for very close projectiles - use minimum distance to prevent extreme size
-        const minDistance = 0.5; // Minimum distance to prevent division issues
-        const clampedDistance = Math.max(minDistance, distance);
+        // Calculate screen position and size
+        const screenX = halfWidth + (relativeAngle / halfFov) * halfWidth;
+        const clampedDistance = Math.max(0.5, distance);
         const projectedSize = (projectile.size / clampedDistance) * this.distanceToProjectionPlane;
-        
-        // Apply pitch offset to projectile positioning
         const projectileCenterY = this.halfHeight + pitchOffset;
-        
         const fogFactor = Math.max(0, 1 - distance / this.viewDistance);
-        
-        console.log(`🎨 [STEP 27] Adding projectile ${projectileId} to render list at screen pos (${screenX.toFixed(1)}, ${projectileCenterY.toFixed(1)}), distance: ${distance.toFixed(2)}`);
         
         renderObjects.push({
           distance,
-          render: () => {
-            console.log(`🎨 [STEP 28] Actually rendering projectile ${projectileId} at (${screenX.toFixed(1)}, ${projectileCenterY.toFixed(1)})`);
-            // Render projectile as a sprite or geometric shape
-            this.renderProjectile(projectile, screenX, projectileCenterY, projectedSize, fogFactor);
-          }
+          render: () => this.renderProjectile(projectile, screenX, projectileCenterY, projectedSize, fogFactor)
         });
       }
-      
-      // Sort by distance (far to near) and render
+      // Sort by distance (far to near) and render efficiently
       renderObjects.sort((a, b) => b.distance - a.distance);
       
-      // Debug: If no render objects, show a warning overlay
-      if (renderObjects.length === 0) {
-        console.warn('🚨 No render objects to draw - this causes black screen');
-        // Draw a diagnostic overlay
-        this.ctx.fillStyle = 'rgba(255, 255, 0, 0.3)';
-        this.ctx.fillRect(0, 0, this.width, this.height);
-        this.ctx.fillStyle = '#ffffff';
-        this.ctx.font = '16px monospace';
-        this.ctx.fillText('No walls found to render', 10, 30);
-        this.ctx.fillText(`Player: (${this.playerX.toFixed(1)}, ${this.playerY.toFixed(1)})`, 10, 50);
-        this.ctx.fillText(`Map: ${map.length}x${map[0].length}`, 10, 70);
-      }
-      
+      // Render all objects
       for (const obj of renderObjects) {
-        try {
-          obj.render();
-        } catch (renderError) {
-          // Silently fail to avoid console spam
-        }
+        obj.render();
       }
     } catch (error) {
-      console.error('🚨 Critical error in render method:', error);
-      // Fallback render - show error state
-      this.ctx.fillStyle = '#ff0000';
-      this.ctx.fillRect(0, 0, this.width, this.height);
-      this.ctx.fillStyle = '#ffffff';
-      this.ctx.font = '20px monospace';
-      this.ctx.fillText('Render Error - Check Console', 10, 30);
+      if (process.env.NODE_ENV !== 'production') {
+        console.error('🚨 Critical error in render method:', error);
+      }
     }
   }
   
@@ -1017,6 +889,14 @@ export class Raycaster {
       angle: this.playerAngle,
       pitch: this.playerPitch
     };
+  }
+  
+  /**
+   * Get the current rendered position of another player
+   */
+  public getOtherPlayerPosition(playerId: string): { x: number; y: number } | null {
+    const player = this.otherPlayers.get(playerId);
+    return player ? { x: player.x, y: player.y } : null;
   }
   
   /**

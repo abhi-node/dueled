@@ -415,9 +415,7 @@ export class GameStateService {
       // Process unprocessed inputs
       const unprocessedInputs = inputs.filter(input => !input.processed);
       
-      if (unprocessedInputs.length > 0) {
-        logger.info(`📥 [STEP 7] Processing ${unprocessedInputs.length} inputs for player ${playerId}`);
-      }
+      // Remove excessive logging for performance
       
       const inputsToProcess = unprocessedInputs.slice(0, this.MAX_EVENTS_PER_TICK);
       
@@ -454,7 +452,7 @@ export class GameStateService {
   private async processPlayerInput(gameState: ServerGameState, player: ServerPlayer, input: PlayerInput, deltaTime: number): Promise<void> {
     const action = input.action;
     
-    logger.info(`🎮 [STEP 8] Processing ${action.type} action for player ${player.id}`);
+    // Process action efficiently
     
     // Validate input timing
     if (input.timestamp < player.lastInputTime) {
@@ -471,7 +469,7 @@ export class GameStateService {
         break;
         
       case ActionType.ATTACK:
-        logger.info(`⚔️ [STEP 8.5] Processing ATTACK action for player ${player.id}`);
+        // Process attack efficiently
         await this.processAttack(gameState, player, action.data);
         break;
         
@@ -536,15 +534,10 @@ export class GameStateService {
   private async processAttack(gameState: ServerGameState, player: ServerPlayer, attackData: any): Promise<void> {
     const { direction, attackType, targetPosition } = attackData;
     
-    logger.info(`⚔️ [STEP 9] Processing ${attackType || 'basic'} attack from player ${player.id} (${player.classType})`);
-    
-    // Check if this is a projectile-based attack
+    // Process attack based on class type efficiently
     if (this.isProjectileClass(player.classType)) {
-      logger.info(`🏹 [STEP 9.5] Player ${player.id} is projectile class, processing projectile attack`);
       await this.processProjectileAttack(gameState, player, attackData);
     } else {
-      // Handle melee/instant attacks for other classes
-      logger.info(`🗡️ Player ${player.id} is melee class, processing melee attack`);
       await this.processMeleeAttack(gameState, player, attackData);
     }
   }
@@ -554,26 +547,16 @@ export class GameStateService {
    */
   private async processProjectileAttack(gameState: ServerGameState, player: ServerPlayer, attackData: any): Promise<void> {
     let { direction, attackType, targetPosition } = attackData;
-    
-    logger.info(`🏹 [STEP 10] === PROJECTILE ATTACK PROCESSING START ===`);
-    logger.info(`🏹 [STEP 10] Processing projectile attack for player ${player.id} (${player.classType})`);
-    logger.info(`📊 [STEP 10] Current game state has ${gameState.projectiles.size} projectiles`);
-    logger.info(`📊 [STEP 10] Attack data received: ${JSON.stringify({ direction, attackType, targetPosition })}`);
-    
     // 🔒 SAFETY: ensure we always have a direction object
     if (!direction && targetPosition) {
       const dx = targetPosition.x - player.position.x;
       const dy = targetPosition.y - player.position.y;
       const len = Math.hypot(dx, dy) || 1;
       direction = { x: dx / len, y: dy / len };
-      logger.info(`🔒 [STEP 10.1] Created direction from targetPosition: ${JSON.stringify(direction)}`);
     }
-    if (!direction) {
-      direction = { x: 1, y: 0 };   // DEFAULT: facing right
-      logger.warn(`🔒 [STEP 10.1] No direction provided, defaulting to (1, 0)`);
-    }
+    if (!direction) direction = { x: 1, y: 0 };   // DEFAULT: facing right
     
-    // Calculate direction vector
+    // Calculate direction vector efficiently
     let attackDirection = direction;
     if (targetPosition) {
       const dx = targetPosition.x - player.position.x;
@@ -582,7 +565,6 @@ export class GameStateService {
       if (distance > 0) {
         attackDirection = { x: dx / distance, y: dy / distance };
       }
-      logger.info(`📊 [STEP 10.5] Calculated direction from targetPosition: (${attackDirection.x.toFixed(2)}, ${attackDirection.y.toFixed(2)})`);
     }
     
     // Ensure direction is normalized
@@ -598,23 +580,13 @@ export class GameStateService {
     
     // 🔒 SAFETY: validate direction components for NaN
     if (Number.isNaN(attackDirection.x) || Number.isNaN(attackDirection.y)) {
-      logger.warn(`🔒 [STEP 10.5] Invalid direction components (NaN) from player ${player.id}, aborting attack`);
       return; // Don't create a projectile with NaN vectors
     }
     
-    logger.info(`📊 [STEP 10.6] Final normalized direction: (${attackDirection.x.toFixed(2)}, ${attackDirection.y.toFixed(2)})`);
+    // Determine projectile type based on class efficiently
+    const projectileType = player.classType === ClassType.MAGE ? 'magic_missile' : 'arrow';
     
-    // Determine projectile type based on class
-    let projectileType = 'arrow';
-    if (player.classType === ClassType.ARCHER) {
-      projectileType = 'arrow';
-    } else if (player.classType === ClassType.MAGE) {
-      projectileType = 'magic_missile';
-    }
-    
-    logger.info(`🎯 [STEP 11] Creating ${projectileType} projectile for ${player.id} at position (${player.position.x.toFixed(1)}, ${player.position.y.toFixed(1)}) with direction (${attackDirection.x.toFixed(2)}, ${attackDirection.y.toFixed(2)})`);
-    
-    // Create projectile
+    // Create projectile data
     const projectileData = {
       type: projectileType,
       ownerId: player.id,
@@ -624,25 +596,11 @@ export class GameStateService {
       attackType: attackType || 'basic'
     };
     
-    logger.info(`📊 [STEP 11.5] About to call createProjectile with data: ${JSON.stringify(projectileData)}`);
-    
     const projectile = this.createProjectile(gameState, projectileData);
     
     if (projectile) {
-      logger.info(`✅ [STEP 11.6] Successfully created ${projectileType} projectile ${projectile.id} for ${player.id}`);
-      logger.info(`📊 [STEP 11.7] Projectile stats: pos(${projectile.position.x.toFixed(2)}, ${projectile.position.y.toFixed(2)}), vel(${projectile.velocity.x.toFixed(2)}, ${projectile.velocity.y.toFixed(2)})`);
-      logger.info(`📊 [STEP 11.8] Game state now has ${gameState.projectiles.size} projectiles`);
-      
-      // CRITICAL: Save the game state to persist the projectile
-      const matchId = gameState.matchId;
-      await this.updateGameState(matchId, gameState);
-      logger.info(`💾 [STEP 11.85] Game state saved after adding projectile`);
-      
-      logger.info(`🏹 [STEP 11.9] === PROJECTILE ATTACK PROCESSING END (SUCCESS) ===`);
-    } else {
-      logger.error(`❌ [STEP 11.9] Failed to create ${projectileType} projectile for ${player.id}`);
-      logger.error(`📊 [STEP 11.9] createProjectile returned null/undefined`);
-      logger.info(`🏹 [STEP 11.9] === PROJECTILE ATTACK PROCESSING END (FAILED) ===`);
+      // Save the game state to persist the projectile
+      await this.updateGameState(gameState.matchId, gameState);
     }
   }
 
