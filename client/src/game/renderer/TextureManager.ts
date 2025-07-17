@@ -87,7 +87,7 @@ export class TextureManager {
           canvas.width = image.width;
           canvas.height = image.height;
           
-          const ctx = canvas.getContext('2d');
+          const ctx = canvas.getContext('2d', { willReadFrequently: true });
           if (!ctx) {
             throw new Error('Could not get 2D context');
           }
@@ -102,7 +102,7 @@ export class TextureManager {
           const scaledCanvas = document.createElement('canvas');
           scaledCanvas.width = this.SCALED_SIZE;
           scaledCanvas.height = this.SCALED_SIZE;
-          const scaledCtx = scaledCanvas.getContext('2d');
+          const scaledCtx = scaledCanvas.getContext('2d', { willReadFrequently: true });
           
           if (!scaledCtx) {
             throw new Error('Could not get 2D context for scaled canvas');

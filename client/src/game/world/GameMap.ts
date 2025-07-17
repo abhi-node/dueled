@@ -49,26 +49,35 @@ export class GameMap {
       }
     }
     
-    // Add some obstacles for cover
-    this.addPillar(5, 5);
-    this.addPillar(14, 5);
-    this.addPillar(5, 14);
-    this.addPillar(14, 14);
+    // Add some obstacles for cover (scaled to map size)
+    const quarterWidth = Math.floor(this.width / 4);
+    const quarterHeight = Math.floor(this.height / 4);
+    const threeQuarterWidth = Math.floor(3 * this.width / 4);
+    const threeQuarterHeight = Math.floor(3 * this.height / 4);
     
-    // Add some walls for interesting gameplay
-    this.addWall(9, 3, 2, 4, false); // Vertical wall
-    this.addWall(9, 13, 2, 4, false); // Vertical wall
-    this.addWall(3, 9, 4, 2, true); // Horizontal wall
-    this.addWall(13, 9, 4, 2, true); // Horizontal wall
+    this.addPillar(quarterWidth, quarterHeight);
+    this.addPillar(threeQuarterWidth - 1, quarterHeight);
+    this.addPillar(quarterWidth, threeQuarterHeight - 1);
+    this.addPillar(threeQuarterWidth - 1, threeQuarterHeight - 1);
     
-    // Set spawn points
+    // Add some walls for interesting gameplay (scaled to map size)
+    const centerX = Math.floor(this.width / 2);
+    const centerY = Math.floor(this.height / 2);
+    
+    this.addWall(centerX - 1, Math.floor(this.height * 0.15), 2, 4, false); // Top vertical wall
+    this.addWall(centerX - 1, Math.floor(this.height * 0.65), 2, 4, false); // Bottom vertical wall
+    this.addWall(Math.floor(this.width * 0.15), centerY - 1, 4, 2, true); // Left horizontal wall
+    this.addWall(Math.floor(this.width * 0.65), centerY - 1, 4, 2, true); // Right horizontal wall
+    
+    // Set spawn points (scaled to map size, ensuring they're within walkable areas)
     this.spawnPoints = [
-      { x: 2.5, y: 2.5 },    // Top-left
-      { x: 17.5, y: 2.5 },   // Top-right
-      { x: 2.5, y: 17.5 },   // Bottom-left
-      { x: 17.5, y: 17.5 },  // Bottom-right
-      { x: 10, y: 10 }       // Center
+      { x: 2.5, y: 2.5 },    // Top-left - matches server spawn point
+      { x: this.width - 2.5, y: this.height - 2.5 },  // Bottom-right - matches server spawn point
+      { x: this.width / 2, y: this.height / 2 }       // Center
     ];
+    
+    // Validate and fix spawn points to ensure they're in walkable areas
+    this.validateSpawnPoints();
   }
   
   /**
@@ -139,7 +148,8 @@ export class GameMap {
    * Get the raw grid data
    */
   public getGrid(): number[][] {
-    return this.grid;
+    // Return a deep copy to prevent accidental modification
+    return this.grid.map(row => [...row]);
   }
   
   /**
@@ -156,6 +166,71 @@ export class GameMap {
     return [...this.spawnPoints];
   }
   
+  /**
+   * Validate spawn points and move them to walkable areas if necessary
+   */
+  private validateSpawnPoints(): void {
+    const validatedSpawns: Vector2[] = [];
+    
+    for (const spawn of this.spawnPoints) {
+      let validSpawn = { ...spawn };
+      
+      // Check if spawn point is walkable
+      if (!this.isWalkable(spawn.x, spawn.y)) {
+        console.warn(`⚠️ Spawn point (${spawn.x}, ${spawn.y}) is not walkable, finding alternative...`);
+        
+        // Try to find a nearby walkable position
+        const nearestWalkable = this.findNearestWalkablePosition(spawn.x, spawn.y);
+        
+        if (!nearestWalkable) {
+          console.error(`❌ Could not find walkable position near (${spawn.x}, ${spawn.y}), using fallback`);
+          // Use a guaranteed fallback position in the center of the map
+          validSpawn = { x: this.width / 2, y: this.height / 2 };
+        } else {
+          validSpawn = nearestWalkable;
+        }
+      }
+      
+      // Additional boundary check to ensure spawn is well within map bounds
+      validSpawn.x = Math.max(1.5, Math.min(this.width - 1.5, validSpawn.x));
+      validSpawn.y = Math.max(1.5, Math.min(this.height - 1.5, validSpawn.y));
+      
+      validatedSpawns.push(validSpawn);
+      
+      if (validSpawn.x !== spawn.x || validSpawn.y !== spawn.y) {
+        console.log(`✅ Adjusted spawn point from (${spawn.x}, ${spawn.y}) to (${validSpawn.x}, ${validSpawn.y})`);
+      }
+    }
+    
+    this.spawnPoints = validatedSpawns;
+    console.log(`🎯 Validated ${this.spawnPoints.length} spawn points:`, this.spawnPoints);
+  }
+  
+  /**
+   * Find the nearest walkable position to a given coordinate
+   */
+  private findNearestWalkablePosition(targetX: number, targetY: number): Vector2 | null {
+    const maxRadius = 5;
+    
+    for (let radius = 0; radius <= maxRadius; radius++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        for (let dy = -radius; dy <= radius; dy++) {
+          if (Math.abs(dx) + Math.abs(dy) === radius || radius === 0) {
+            const x = targetX + dx;
+            const y = targetY + dy;
+            
+            // Check if position is within bounds and walkable
+            if (x >= 1 && x < this.width - 1 && y >= 1 && y < this.height - 1 && this.isWalkable(x, y)) {
+              return { x, y };
+            }
+          }
+        }
+      }
+    }
+    
+    return null;
+  }
+
   /**
    * Get a random spawn point
    */

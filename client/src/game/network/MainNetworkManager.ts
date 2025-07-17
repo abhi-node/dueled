@@ -15,6 +15,8 @@ export interface NetworkEventHandler {
   handleGameUpdate?(data: any): void;
   onProjectileUpdate?(projectiles: any[]): void;
   onGameEvents?(events: any[]): void;
+  updatePlayerIdFromNetwork?(playerId: string): void;
+  onInitialGameState?(data: any): void;
 }
 
 export class MainNetworkManager {
@@ -29,6 +31,7 @@ export class MainNetworkManager {
     if (socket) {
       this.socket = socket;
       this.isConnected = socket.connected;
+      console.log('🔌 MainNetworkManager: Using existing socket, connected:', this.isConnected);
     }
   }
   
@@ -36,24 +39,47 @@ export class MainNetworkManager {
    * Connect to the game server
    */
   public connect(): void {
-    if (this.socket && this.isConnected) {
-      console.warn('Already connected to server');
+    // If we already have a socket from constructor, set up event handlers and use it
+    if (this.socket) {
+      console.log('🔌 MainNetworkManager: Using existing socket from constructor');
+      this.isConnected = this.socket.connected;
+      this.setupEventHandlers();
+      
+      // If socket is already connected, we're ready
+      if (this.socket.connected) {
+        console.log('🔌 MainNetworkManager: Socket already connected');
+        return;
+      }
+      
+      // If socket is not connected, try to reconnect
+      console.log('🔌 MainNetworkManager: Socket not connected, attempting to reconnect...');
+      this.socket.connect();
       return;
     }
+    
+    // Only create new socket if we don't have one
+    console.log('🔌 MainNetworkManager: Creating new socket connection');
     
     const token = this.getAuthToken();
     if (!token) {
-      console.error('No authentication token found');
-      return;
+      console.warn('🔌 No authentication token found - attempting anonymous connection');
+      // Create anonymous connection
+      this.socket = io(`${this.serverUrl}/game`, {
+        autoConnect: true,
+        reconnection: true,
+        reconnectionDelay: 1000,
+        reconnectionAttempts: 5,
+      });
+    } else {
+      // Create authenticated connection
+      this.socket = io(`${this.serverUrl}/game`, {
+        auth: { token },
+        autoConnect: true,
+        reconnection: true,
+        reconnectionDelay: 1000,
+        reconnectionAttempts: 5,
+      });
     }
-    
-    this.socket = io(`${this.serverUrl}/game`, {
-      auth: { token },
-      autoConnect: true,
-      reconnection: true,
-      reconnectionDelay: 1000,
-      reconnectionAttempts: 5,
-    });
     
     this.setupEventHandlers();
   }
@@ -99,6 +125,13 @@ export class MainNetworkManager {
   }
   
   /**
+   * Get the player ID from the server
+   */
+  public getPlayerId(): string {
+    return this.playerId;
+  }
+  
+  /**
    * Send attack action with target information
    */
   public sendAttack(attackData: {
@@ -106,14 +139,32 @@ export class MainNetworkManager {
     targetPosition?: { x: number; y: number };
     attackType?: 'basic' | 'special';
   }): void {
-    if (!this.socket || !this.isConnected) return;
+    if (!this.socket || !this.isConnectedToServer()) {
+      console.error('🚨 Cannot send attack - socket not connected', {
+        hasSocket: !!this.socket,
+        isConnected: this.isConnected,
+        socketConnected: this.socket?.connected,
+        socketId: this.socket?.id
+      });
+      return;
+    }
     
-    this.socket.emit('player:attack', {
+    const attackPayload = {
       direction: attackData.direction,
       targetPosition: attackData.targetPosition,
       attackType: attackData.attackType || 'basic',
       timestamp: Date.now()
+    };
+    
+    console.log(`📡 [STEP 3] NetworkManager sending player:attack:`, attackPayload);
+    console.log(`📡 [STEP 3] Socket details:`, {
+      socketId: this.socket.id,
+      connected: this.socket.connected,
+      playerId: this.playerId
     });
+    
+    this.socket.emit('player:attack', attackPayload);
+    console.log(`📡 [STEP 3.5] Socket.emit('player:attack') called`);
   }
   
   /**
@@ -136,6 +187,11 @@ export class MainNetworkManager {
   private setupEventHandlers(): void {
     if (!this.socket) return;
     
+    // Remove existing event handlers to avoid duplication
+    this.socket.off('connect');
+    this.socket.off('disconnect');
+    this.socket.off('connect_error');
+    
     // Connection events
     this.socket.on('connect', () => {
       console.log('✅ Connected to game server namespace');
@@ -154,11 +210,27 @@ export class MainNetworkManager {
     // Game events
     this.socket.on('game:joined', (data) => {
       this.playerId = data.playerId;
-      console.log('Joined game as player:', this.playerId);
+      console.log('✅ NetworkManager: Joined game as player:', this.playerId);
+      
+      // Update the game scene with the player ID BEFORE processing any other events
+      if ('updatePlayerIdFromNetwork' in this.eventHandler) {
+        (this.eventHandler as any).updatePlayerIdFromNetwork(this.playerId);
+      }
     });
     
     this.socket.on('match_joined', (data) => {
-      console.log('Successfully joined match:', data.matchId);
+      console.log('✅ NetworkManager: Successfully joined match:', data.matchId, 'with playerId:', this.playerId);
+      
+      // Make sure we have the player ID set before processing match data
+      if (!this.playerId && data.yourPlayerId) {
+        this.playerId = data.yourPlayerId;
+        console.log('✅ NetworkManager: Setting player ID from match_joined:', this.playerId);
+        
+        // Update the game scene with the player ID
+        if ('updatePlayerIdFromNetwork' in this.eventHandler) {
+          (this.eventHandler as any).updatePlayerIdFromNetwork(this.playerId);
+        }
+      }
       
       // Forward the entire match_joined data to the event handler
       if ('onMatchJoined' in this.eventHandler) {
@@ -214,25 +286,30 @@ export class MainNetworkManager {
     });
 
     this.socket.on('game:update', (data) => {
-      console.log(`🌐 NetworkManager received game:update:`, {
+      console.log(`🌐 [STEP 19] NetworkManager received game:update:`, {
         hasData: !!data,
         hasProjectiles: !!data?.projectiles,
         projectileCount: data?.projectiles?.length || 0,
+        projectileDetails: data?.projectiles || [],
         hasEvents: !!data?.events,
-        eventCount: data?.events?.length || 0
+        eventCount: data?.events?.length || 0,
+        eventDetails: data?.events || []
       });
       
       if (this.eventHandler.handleGameUpdate) {
+        console.log(`🌐 [STEP 19.5] Calling handleGameUpdate on event handler`);
         this.eventHandler.handleGameUpdate(data);
       }
       
       // Handle projectile updates
       if (data.projectiles && this.eventHandler.onProjectileUpdate) {
+        console.log(`📡 [STEP 20] NetworkManager forwarding ${data.projectiles.length} projectiles to event handler`);
         this.eventHandler.onProjectileUpdate(data.projectiles);
       }
       
       // Handle game events (projectile creation, hits, etc.)
       if (data.events && this.eventHandler.onGameEvents) {
+        console.log(`📡 [STEP 20.5] NetworkManager forwarding ${data.events.length} events to event handler`);
         this.eventHandler.onGameEvents(data.events);
       }
     });
@@ -242,6 +319,30 @@ export class MainNetworkManager {
       console.log('Match ended:', data);
       if (this.eventHandler.onMatchEnded) {
         this.eventHandler.onMatchEnded(data);
+      }
+    });
+
+    // Handle initial game state when joining
+    this.socket.on('game:initial_state', (data) => {
+      console.log('📋 Received initial game state:', data);
+      
+      if (this.eventHandler.onInitialGameState) {
+        this.eventHandler.onInitialGameState(data);
+      }
+      
+      // Process players from initial state
+      if (data.players && this.eventHandler.onPlayerJoined) {
+        for (const player of data.players) {
+          // Skip local player
+          if (player.id !== this.playerId) {
+            this.eventHandler.onPlayerJoined(player.id, {
+              username: player.username,
+              classType: player.classType,
+              position: player.position,
+              angle: player.rotation || 0
+            });
+          }
+        }
       }
     });
   }
@@ -273,16 +374,30 @@ export class MainNetworkManager {
   }
   
   /**
-   * Get connection status
+   * Check if connected to server
    */
   public isConnectedToServer(): boolean {
-    return this.isConnected;
+    return this.socket !== null && this.socket.connected && this.isConnected;
   }
   
   /**
-   * Get current player ID
+   * Get diagnostic information about the connection
    */
-  public getPlayerId(): string {
-    return this.playerId;
+  public getDiagnosticInfo(): any {
+    return {
+      hasSocket: !!this.socket,
+      socketConnected: this.socket?.connected,
+      socketId: this.socket?.id,
+      isConnected: this.isConnected,
+      playerId: this.playerId,
+      serverUrl: this.serverUrl
+    };
+  }
+  
+  /**
+   * Get the socket instance for debugging
+   */
+  public getSocket(): Socket | null {
+    return this.socket;
   }
 } 

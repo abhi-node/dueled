@@ -6,6 +6,7 @@
 import type { SpriteRenderer } from './SpriteRenderer';
 import { TextureManager } from './TextureManager';
 import type { FlexibleMap } from '../world/FlexibleMap';
+import { projectileSpriteManager } from './ProjectileSpriteManager';
 
 export interface RayResult {
   distance: number;
@@ -25,9 +26,9 @@ export class Raycaster {
   private viewDistance: number = 20; // Maximum view distance in grid units
   private wallHeight: number = 1; // Height of walls in world units
   
-  // Player state - start at a safe position
-  private playerX: number = 15.5;
-  private playerY: number = 15.5;
+  // Player state - start at a safe position (center of 20x20 map)
+  private playerX: number = 10;
+  private playerY: number = 10;
   private playerAngle: number = 0; // In radians
   private playerPitch: number = 0; // Camera pitch in radians (up/down looking)
   
@@ -69,6 +70,9 @@ export class Raycaster {
     
     // Set sprite renderer reference
     this.spriteRenderer = spriteRenderer || null;
+    
+    // Load arrow sprite sheet
+    // Projectile sprites are now managed by ProjectileSpriteManager
   }
   
   /**
@@ -78,7 +82,8 @@ export class Raycaster {
     try {
       return this.castGridRay(angle, map);
     } catch (error) {
-      // Silently fail to avoid console spam
+      // Log errors to help debug rendering issues
+      console.error('🚨 castRay error:', error, 'angle:', angle, 'mapSize:', map?.length, 'x', map?.[0]?.length);
       return null;
     }
   }
@@ -89,6 +94,7 @@ export class Raycaster {
   private castGridRay(angle: number, map: number[][]): RayResult | null {
     // Validate map
     if (!map || map.length === 0 || !map[0]) {
+      console.error('🚨 castGridRay: Invalid map', { mapExists: !!map, mapLength: map?.length, firstRowExists: !!map?.[0] });
       return null;
     }
     
@@ -113,12 +119,32 @@ export class Raycaster {
       const mapX = Math.floor(x);
       const mapY = Math.floor(y);
       
+      // If the ray has reached outside the map, treat the boundary as a solid wall so the
+      // renderer always has something to draw. This prevents the "blank world" issue where
+      // rays exit the grid without ever colliding with a wall tile and therefore render
+      // nothing. We approximate the hit as a vertical wall.
       if (mapX < 0 || mapX >= map[0].length || mapY < 0 || mapY >= map.length) {
-        break;
+        // Debug log for boundary hits (very rarely)
+        if (Math.random() < 0.001) {
+          console.log('🎯 Ray hit boundary:', { mapX, mapY, mapSize: `${map.length}x${map[0].length}`, distance });
+        }
+        return {
+          distance,
+          wallType: 1,               // Default wall type for boundaries
+          textureX: 0,               // Use the first column of the texture
+          side: 'vertical',          // Treat boundary as a vertical wall for shading
+          mapX,
+          mapY
+        };
       }
       
       // Check for wall collision
       if (map[mapY][mapX] > 0) {
+        // Debug log for wall hits (very rarely)
+        if (Math.random() < 0.001) {
+          console.log('🎯 Ray hit wall:', { mapX, mapY, wallType: map[mapY][mapX], distance });
+        }
+        
         // Determine which side of the wall was hit
         const xFrac = x - mapX;
         const yFrac = y - mapY;
@@ -152,8 +178,11 @@ export class Raycaster {
   // Other players
   private otherPlayers: Map<string, { x: number; y: number; color: string }> = new Map();
   
+  // Local player ID to filter out
+  private localPlayerId: string | null = null;
+  
   // Projectiles for 3D rendering
-  private projectiles: Map<string, { x: number; y: number; type: string; rotation: number; size: number }> = new Map();
+  private projectiles: Map<string, { x: number; y: number; type: string; rotation: number; size: number; color?: string }> = new Map();
   
   // Sprite renderer reference
   private spriteRenderer: SpriteRenderer | null = null;
@@ -172,11 +201,26 @@ export class Raycaster {
     this.textureManager = textureManager;
   }
   
+  /**
+   * Set local player ID to filter out from rendering
+   */
+  public setLocalPlayerId(playerId: string): void {
+    this.localPlayerId = playerId;
+    // Remove any existing entry for local player
+    this.otherPlayers.delete(playerId);
+    console.log(`🎮 Raycaster: Set local player ID to ${playerId}, will not render this player`);
+  }
   
   /**
    * Add or update another player
    */
   public updateOtherPlayer(playerId: string, x: number, y: number, color: string = '#ff0000'): void {
+    // CRITICAL: Never add local player to other players
+    if (playerId === this.localPlayerId) {
+      console.warn(`⚠️ Raycaster: Attempted to add local player ${playerId} to other players. Ignoring.`);
+      return;
+    }
+    
     this.otherPlayers.set(playerId, { x, y, color });
     // Removed console.log for performance
   }
@@ -184,8 +228,22 @@ export class Raycaster {
   /**
    * Add or update a projectile for 3D rendering
    */
-  public updateProjectile(projectileId: string, x: number, y: number, type: string, rotation: number, size: number = 0.3): void {
-    this.projectiles.set(projectileId, { x, y, type, rotation, size });
+  public updateProjectile(projectileId: string, x: number, y: number, type: string, rotation: number, size: number = 0.1, color?: string): void {
+    console.log(`🎨 [STEP 25] Raycaster.updateProjectile called for ${projectileId} at (${x.toFixed(1)}, ${y.toFixed(1)}), type: ${type}, size: ${size}, color: ${color}`);
+    this.projectiles.set(projectileId, { x, y, type, rotation, size, color: color || '#ffffff' });
+    console.log(`🎨 [STEP 25.5] Raycaster now has ${this.projectiles.size} projectiles total`);
+  }
+
+  /**
+   * Persist a projectile for 3D rendering (similar to updateOtherPlayer)
+   * This method ensures projectiles persist between frames
+   */
+  public persistProjectile(projectileId: string, x: number, y: number, type: string, rotation: number, size: number = 0.1, color?: string): void {
+    // Only update if projectile exists or position has changed
+    const existing = this.projectiles.get(projectileId);
+    if (!existing || existing.x !== x || existing.y !== y || existing.rotation !== rotation) {
+      this.projectiles.set(projectileId, { x, y, type, rotation, size, color: color || '#ffffff' });
+    }
   }
 
   /**
@@ -203,36 +261,59 @@ export class Raycaster {
   }
 
   /**
+   * Get the current number of projectiles
+   */
+  public getProjectileCount(): number {
+    return this.projectiles.size;
+  }
+
+  /**
+   * Get all projectile IDs currently in the Raycaster
+   */
+  public getProjectileIds(): string[] {
+    return Array.from(this.projectiles.keys());
+  }
+
+  /**
    * Render a projectile in 3D space
    */
   private renderProjectile(
-    projectile: { x: number; y: number; type: string; rotation: number; size: number },
+    projectile: { x: number; y: number; type: string; rotation: number; size: number; color?: string },
     screenX: number,
     screenY: number,
-    projectedSize: number,
+    size: number,
     fogFactor: number
   ): void {
-    const size = Math.max(8, projectedSize * 2); // Minimum visible size, doubled for debugging
+    console.log(`🎨 [STEP 30] renderProjectile called: type=${projectile.type}, screen=(${screenX.toFixed(1)}, ${screenY.toFixed(1)}), size=${size.toFixed(1)}`);
+    
+    // Scale down the projectile size for arrows (they should be small)
+    const renderSize = Math.max(4, size * 0.5); // Reduced size multiplier from 2 to 0.5
+    
+    if (renderSize < 1) {
+      console.warn(`🎨 [STEP 30.5] Projectile too small to render: renderSize=${renderSize}`);
+      return; // Too small to render
+    }
     
     this.ctx.save();
     this.ctx.translate(screenX, screenY);
     this.ctx.rotate(projectile.rotation);
-    this.ctx.globalAlpha = Math.max(0.7, fogFactor); // More visible minimum alpha
+    
+    // Apply fog effect with minimum visibility
+    this.ctx.globalAlpha = Math.max(0.5, fogFactor); // Ensure minimum 50% visibility
     
     // Render different projectile types
     switch (projectile.type) {
       case 'arrow':
-        this.renderArrowProjectile(size);
+        this.renderArrowProjectile(renderSize, projectile.color);
         break;
       case 'ice_shard':
-        this.renderIceShardProjectile(size);
+        this.renderIceShardProjectile(renderSize, projectile.color);
         break;
       case 'fire_bomb':
-        this.renderFireBombProjectile(size);
+        this.renderFireBombProjectile(renderSize, projectile.color);
         break;
       default:
-        this.renderDefaultProjectile(size);
-        break;
+        this.renderDefaultProjectile(renderSize, projectile.color);
     }
     
     this.ctx.restore();
@@ -241,92 +322,186 @@ export class Raycaster {
   /**
    * Render an arrow projectile
    */
-  private renderArrowProjectile(size: number): void {
-    const length = size * 3; // Make arrow longer
-    const width = size * 0.8; // Make arrow thicker
+  private renderArrowProjectile(size: number, color?: string): void {
+    // Get sprite frame from projectile sprite manager
+    const frame = projectileSpriteManager.getProjectileFrame('arrow', Date.now());
     
-    // Arrow shaft with bright color for visibility
-    this.ctx.fillStyle = '#ff9500'; // Bright orange for visibility
-    this.ctx.fillRect(-length/2, -width/2, length, width);
+    if (frame && frame.canvas) {
+      // Render sprite
+      this.ctx.drawImage(
+        frame.canvas,
+        -size / 2,
+        -size / 2,
+        size,
+        size
+      );
+    } else {
+      // Fallback simple geometry
+      this.renderArrowFallback(size, color);
+    }
+  }
+  
+  private renderArrowFallback(size: number, color?: string): void {
+    // Scaled down arrow shape - arrows should be small
+    const arrowLength = size * 0.8;
+    const arrowWidth = size * 0.3;
     
-    // Arrow head (triangle) - bright red
-    this.ctx.fillStyle = '#ff0000';
+    this.ctx.fillStyle = color || '#8B4513'; // Brown for wood
+    this.ctx.strokeStyle = '#654321'; // Darker brown
+    this.ctx.lineWidth = 1;
+    
+    // Arrow shaft
+    this.ctx.fillRect(-arrowLength / 2, -arrowWidth / 6, arrowLength * 0.7, arrowWidth / 3);
+    
+    // Arrow head
     this.ctx.beginPath();
-    this.ctx.moveTo(length/2, 0);
-    this.ctx.lineTo(length/2 - width*2, -width*1.5);
-    this.ctx.lineTo(length/2 - width*2, width*1.5);
+    this.ctx.moveTo(arrowLength * 0.2, 0);
+    this.ctx.lineTo(arrowLength / 2, -arrowWidth / 2);
+    this.ctx.lineTo(arrowLength / 2, arrowWidth / 2);
     this.ctx.closePath();
     this.ctx.fill();
+    this.ctx.stroke();
     
-    // Arrow fletching - bright yellow
-    this.ctx.fillStyle = '#ffff00';
-    this.ctx.fillRect(-length/2, -width/2, width, width);
-    
-    // Add glow effect for visibility
-    this.ctx.shadowColor = '#ff9500';
-    this.ctx.shadowBlur = size;
-    this.ctx.fillStyle = '#ff9500';
-    this.ctx.fillRect(-length/2, -width/2, length, width);
-    this.ctx.shadowBlur = 0;
+    // Arrow fletching
+    this.ctx.fillStyle = '#DC143C'; // Crimson
+    this.ctx.beginPath();
+    this.ctx.moveTo(-arrowLength / 2, 0);
+    this.ctx.lineTo(-arrowLength * 0.3, -arrowWidth / 3);
+    this.ctx.lineTo(-arrowLength * 0.3, arrowWidth / 3);
+    this.ctx.closePath();
+    this.ctx.fill();
   }
 
   /**
    * Render an ice shard projectile
    */
-  private renderIceShardProjectile(size: number): void {
-    this.ctx.fillStyle = '#60a5fa';
-    this.ctx.beginPath();
-    this.ctx.moveTo(size, 0);
-    this.ctx.lineTo(0, -size/2);
-    this.ctx.lineTo(-size/2, 0);
-    this.ctx.lineTo(0, size/2);
-    this.ctx.closePath();
-    this.ctx.fill();
+  private renderIceShardProjectile(size: number, color?: string): void {
+    // Get sprite frame from projectile sprite manager
+    const frame = projectileSpriteManager.getProjectileFrame('ice_shard', Date.now());
     
-    // Ice glow effect
-    this.ctx.shadowColor = '#60a5fa';
-    this.ctx.shadowBlur = size / 2;
-    this.ctx.fill();
-    this.ctx.shadowBlur = 0;
+    if (frame && frame.canvas) {
+      // Render sprite
+      this.ctx.drawImage(
+        frame.canvas,
+        -size / 2,
+        -size / 2,
+        size,
+        size
+      );
+    } else {
+      // Fallback - ice blue crystal
+      const shardLength = size;
+      const shardWidth = size * 0.4;
+      
+      // Create gradient for ice effect
+      const gradient = this.ctx.createLinearGradient(-shardLength/2, 0, shardLength/2, 0);
+      gradient.addColorStop(0, '#00FFFF');
+      gradient.addColorStop(0.5, '#FFFFFF');
+      gradient.addColorStop(1, '#00CED1');
+      
+      this.ctx.fillStyle = gradient;
+      this.ctx.strokeStyle = '#4682B4';
+      this.ctx.lineWidth = 2;
+      
+      // Diamond/crystal shape
+      this.ctx.beginPath();
+      this.ctx.moveTo(-shardLength / 2, 0);
+      this.ctx.lineTo(0, -shardWidth / 2);
+      this.ctx.lineTo(shardLength / 2, 0);
+      this.ctx.lineTo(0, shardWidth / 2);
+      this.ctx.closePath();
+      this.ctx.fill();
+      this.ctx.stroke();
+      
+      // Inner highlight
+      this.ctx.globalAlpha = 0.5;
+      this.ctx.fillStyle = '#FFFFFF';
+      this.ctx.beginPath();
+      this.ctx.moveTo(-shardLength / 4, 0);
+      this.ctx.lineTo(0, -shardWidth / 4);
+      this.ctx.lineTo(shardLength / 4, 0);
+      this.ctx.lineTo(0, shardWidth / 4);
+      this.ctx.closePath();
+      this.ctx.fill();
+      this.ctx.globalAlpha = 1;
+    }
   }
 
   /**
    * Render a fire bomb projectile
    */
-  private renderFireBombProjectile(size: number): void {
-    // Bomb body
-    this.ctx.fillStyle = '#4a5568';
-    this.ctx.beginPath();
-    this.ctx.arc(0, 0, size * 0.7, 0, Math.PI * 2);
-    this.ctx.fill();
+  private renderFireBombProjectile(size: number, color?: string): void {
+    // Get sprite frame from projectile sprite manager
+    const frame = projectileSpriteManager.getProjectileFrame('fire_bomb', Date.now());
     
-    // Fire trail
-    this.ctx.fillStyle = '#ef4444';
-    this.ctx.beginPath();
-    this.ctx.arc(-size * 0.3, 0, size * 0.3, 0, Math.PI * 2);
-    this.ctx.fill();
-    
-    // Orange inner flame
-    this.ctx.fillStyle = '#f97316';
-    this.ctx.beginPath();
-    this.ctx.arc(-size * 0.2, 0, size * 0.2, 0, Math.PI * 2);
-    this.ctx.fill();
+    if (frame && frame.canvas) {
+      // Render sprite
+      this.ctx.drawImage(
+        frame.canvas,
+        -size / 2,
+        -size / 2,
+        size,
+        size
+      );
+    } else {
+      // Fallback - flaming orb
+      const bombRadius = size * 0.4;
+      
+      // Create radial gradient for fire effect
+      const gradient = this.ctx.createRadialGradient(0, 0, 0, 0, 0, bombRadius);
+      gradient.addColorStop(0, '#FFFF00');
+      gradient.addColorStop(0.5, '#FF8C00');
+      gradient.addColorStop(1, '#FF4500');
+      
+      this.ctx.fillStyle = gradient;
+      this.ctx.strokeStyle = '#8B0000';
+      this.ctx.lineWidth = 2;
+      
+      // Main bomb circle
+      this.ctx.beginPath();
+      this.ctx.arc(0, 0, bombRadius, 0, Math.PI * 2);
+      this.ctx.fill();
+      this.ctx.stroke();
+      
+      // Fire particles
+      this.ctx.globalAlpha = 0.7;
+      for (let i = 0; i < 6; i++) {
+        const angle = (i / 6) * Math.PI * 2 + Date.now() * 0.001;
+        const x = Math.cos(angle) * bombRadius * 0.8;
+        const y = Math.sin(angle) * bombRadius * 0.8;
+        
+        this.ctx.fillStyle = '#FF6347';
+        this.ctx.beginPath();
+        this.ctx.arc(x, y, bombRadius * 0.3, 0, Math.PI * 2);
+        this.ctx.fill();
+      }
+      this.ctx.globalAlpha = 1;
+    }
   }
 
   /**
    * Render a default projectile
    */
-  private renderDefaultProjectile(size: number): void {
-    this.ctx.fillStyle = '#ffffff';
+  private renderDefaultProjectile(size: number, color?: string): void {
+    this.ctx.fillStyle = color || '#FFFFFF';
+    this.ctx.strokeStyle = '#000000';
+    this.ctx.lineWidth = 2;
+    
     this.ctx.beginPath();
-    this.ctx.arc(0, 0, size * 0.5, 0, Math.PI * 2);
+    this.ctx.ellipse(0, 0, size * 0.5, size * 0.2, 0, 0, Math.PI * 2);
     this.ctx.fill();
+    this.ctx.stroke();
   }
 
   /**
    * Check if there's a clear line of sight between two points using DDA algorithm
    */
   private hasLineOfSight(x1: number, y1: number, x2: number, y2: number, map: number[][]): boolean {
+    // Validate map
+    if (!map || map.length === 0 || !map[0]) {
+      return false;
+    }
+    
     const dx = x2 - x1;
     const dy = y2 - y1;
     const distance = Math.sqrt(dx * dx + dy * dy);
@@ -339,6 +514,9 @@ export class Raycaster {
     const stepX = dx / steps;
     const stepY = dy / steps;
     
+    const mapHeight = map.length;
+    const mapWidth = map[0]?.length || 0;
+    
     for (let i = 1; i < steps; i++) { // Skip first and last points for edge cases
       const currentX = x1 + stepX * i;
       const currentY = y1 + stepY * i;
@@ -347,12 +525,12 @@ export class Raycaster {
       const mapY = Math.floor(currentY);
       
       // Check bounds
-      if (mapX < 0 || mapX >= map[0].length || mapY < 0 || mapY >= map.length) {
+      if (mapX < 0 || mapX >= mapWidth || mapY < 0 || mapY >= mapHeight) {
         return false;
       }
       
-      // Check for wall
-      if (map[mapY][mapX] !== 0) {
+      // Check for wall (with safety check)
+      if (map[mapY] && map[mapY][mapX] !== 0) {
         return false; // Wall blocking line of sight
       }
     }
@@ -371,10 +549,33 @@ export class Raycaster {
    * Render the 3D view with optimized camera pitch
    */
   public render(map: number[][]): void {
+    console.log(`[Raycaster] render() called - projectiles in Map:`, this.projectiles.size);
+    if (this.projectiles.size > 0) {
+      console.log(`[Raycaster] Projectile IDs:`, Array.from(this.projectiles.keys()));
+    }
+    
     try {
       // Validate map
       if (!map || map.length === 0) {
-        console.error('Invalid map provided to render');
+        console.error('🚨 Invalid map provided to render');
+        // Render a fallback screen instead of returning
+        this.ctx.fillStyle = '#ff0000';
+        this.ctx.fillRect(0, 0, this.width, this.height);
+        this.ctx.fillStyle = '#ffffff';
+        this.ctx.font = '20px monospace';
+        this.ctx.fillText('Map Error', this.width / 2 - 50, this.height / 2);
+        return;
+      }
+      
+      // Validate canvas context
+      if (!this.ctx) {
+        console.error('🚨 Canvas context is null in render');
+        return;
+      }
+      
+      // Test if canvas has proper dimensions
+      if (this.width <= 0 || this.height <= 0) {
+        console.error('🚨 Canvas has invalid dimensions:', this.width, 'x', this.height);
         return;
       }
       
@@ -384,6 +585,31 @@ export class Raycaster {
       // Clear canvas efficiently
       this.ctx.fillStyle = '#1e293b';
       this.ctx.fillRect(0, 0, this.width, this.height);
+      
+      // Debug: Log player position and map info periodically
+      if (Math.random() < 0.01) { // Log 1% of frames to avoid spam
+        console.log('🎮 Raycaster debug:', {
+          playerPos: `(${this.playerX.toFixed(2)}, ${this.playerY.toFixed(2)})`,
+          playerAngle: this.playerAngle.toFixed(2),
+          mapSize: `${map.length}x${map[0]?.length}`,
+          canvasSize: `${this.width}x${this.height}`,
+          numRays: this.numRays,
+          viewDistance: this.viewDistance
+        });
+        
+        // Also check if player is in a wall
+        const playerMapX = Math.floor(this.playerX);
+        const playerMapY = Math.floor(this.playerY);
+        if (playerMapY >= 0 && playerMapY < map.length && 
+            playerMapX >= 0 && playerMapX < map[0].length) {
+          const tileValue = map[playerMapY][playerMapX];
+          if (tileValue !== 0) {
+            console.warn(`⚠️ Player is inside a wall! Tile value: ${tileValue}`);
+          }
+        } else {
+          console.warn(`⚠️ Player is outside map bounds! Position: (${this.playerX}, ${this.playerY}), Map size: ${map.length}x${map[0].length}`);
+        }
+      }
       
       // Render floor and ceiling with textures
       this.renderFloorAndCeiling(map);
@@ -396,239 +622,292 @@ export class Raycaster {
       
       // Debug logging removed for performance
       
+      let raysWithHits = 0;
       for (let i = 0; i < this.numRays; i++) {
         const rayAngle = startAngle + i * this.rayAngleStep;
         const ray = this.castRay(rayAngle, map);
+        
+        if (ray) {
+          raysWithHits++;
+          const correctedDistance = ray.distance * Math.cos(rayAngle - this.playerAngle);
+          const projectedWallHeight = (this.wallHeight / correctedDistance) * this.distanceToProjectionPlane;
+          
+          // Apply pitch offset to wall positioning
+          const wallCenter = this.halfHeight + pitchOffset;
+          const wallTop = wallCenter - projectedWallHeight / 2;
+          const wallBottom = wallCenter + projectedWallHeight / 2;
+          
+          let color: string;
+          if (ray.wallType === 1) {
+            color = ray.side === 'vertical' ? '#64748b' : '#475569';
+          } else if (ray.wallType === 2) {
+            color = ray.side === 'vertical' ? '#ef4444' : '#dc2626';
+          } else {
+            color = ray.side === 'vertical' ? '#3b82f6' : '#2563eb';
+          }
+          
+          // Apply fog by darkening the color rather than making it transparent
+          const fogFactor = Math.max(0.3, 1 - ray.distance / this.viewDistance);
+          const foggedColor = this.applyFogToColor(color, fogFactor);
+          
+          renderObjects.push({
+            distance: ray.distance,
+            render: () => {
+              // Render walls as solid, opaque columns that properly occlude floor/ceiling
+              this.ctx.globalAlpha = 1; // Ensure walls are fully opaque
+              
+              // Try to render with texture first
+              if (this.textureManager) {
+                const wallTexture = this.textureManager.getWallTexture(ray.wallType);
+                if (wallTexture) {
+                  this.renderTexturedWallStrip(i * this.rayWidth, wallTop, wallBottom - wallTop, ray, wallTexture, fogFactor);
+                  return;
+                }
+              }
+              
+              // Fallback to solid color with fog applied to color, not transparency
+              this.ctx.fillStyle = foggedColor;
+              this.ctx.globalAlpha = 1; // Always fully opaque
+              this.ctx.fillRect(i * this.rayWidth, wallTop, this.rayWidth, wallBottom - wallTop);
+            }
+          });
+        }
+      }
       
-      if (ray) {
-        const correctedDistance = ray.distance * Math.cos(rayAngle - this.playerAngle);
-        const projectedWallHeight = (this.wallHeight / correctedDistance) * this.distanceToProjectionPlane;
+      // Debug: Log ray hit statistics
+      if (Math.random() < 0.01) { // Log 1% of frames
+        console.log(`🎯 Ray casting results: ${raysWithHits}/${this.numRays} rays hit walls`);
+        if (raysWithHits === 0) {
+          console.warn('🚨 NO RAYS HIT ANY WALLS - This is likely the cause of the black screen!');
+          // Test a single ray going directly right
+          const testRay = this.castRay(0, map); // 0 radians = right
+          console.log('🧪 Test ray result:', testRay);
+        }
+      }
+      
+      // Add other players to render list
+      // Debug logging removed for performance
+      
+      const otherPlayersArray = Array.from(this.otherPlayers.entries());
+      for (const [playerId, player] of otherPlayersArray) {
+        const dx = player.x - this.playerX;
+        const dy = player.y - this.playerY;
+        const distance = Math.sqrt(dx * dx + dy * dy);
         
-        // Apply pitch offset to wall positioning
-        const wallCenter = this.halfHeight + pitchOffset;
-        const wallTop = wallCenter - projectedWallHeight / 2;
-        const wallBottom = wallCenter + projectedWallHeight / 2;
-        
-        let color: string;
-        if (ray.wallType === 1) {
-          color = ray.side === 'vertical' ? '#64748b' : '#475569';
-        } else if (ray.wallType === 2) {
-          color = ray.side === 'vertical' ? '#ef4444' : '#dc2626';
-        } else {
-          color = ray.side === 'vertical' ? '#3b82f6' : '#2563eb';
+        // Skip if too far
+        if (distance > this.viewDistance) {
+          continue;
         }
         
-        // Apply fog by darkening the color rather than making it transparent
-        const fogFactor = Math.max(0.3, 1 - ray.distance / this.viewDistance);
-        const foggedColor = this.applyFogToColor(color, fogFactor);
+        // Check line of sight - skip if blocked by walls
+        const hasLOS = this.hasLineOfSight(this.playerX, this.playerY, player.x, player.y, map);
+        if (!hasLOS) {
+          continue;
+        }
+        
+        // Calculate angle to player
+        const angleToPlayer = Math.atan2(dy, dx);
+        let relativeAngle = angleToPlayer - this.playerAngle;
+        
+        // Normalize angle to [-PI, PI]
+        while (relativeAngle > Math.PI) relativeAngle -= 2 * Math.PI;
+        while (relativeAngle < -Math.PI) relativeAngle += 2 * Math.PI;
+        
+        // Check if player is in field of view
+        const halfFov = (this.fov / 2) * Math.PI / 180;
+        if (Math.abs(relativeAngle) > halfFov) {
+          continue;
+        }
+        
+        // Calculate screen position
+        const screenX = this.width / 2 + (relativeAngle / halfFov) * (this.width / 2);
+        const projectedPlayerHeight = (0.8 / distance) * this.distanceToProjectionPlane; // Balanced height
+        
+        // Apply pitch offset to player positioning
+        const playerCenterY = this.halfHeight + pitchOffset;
+        
+        const fogFactor = Math.max(0, 1 - distance / this.viewDistance);
         
         renderObjects.push({
-          distance: ray.distance,
+          distance,
           render: () => {
-            // Render walls as solid, opaque columns that properly occlude floor/ceiling
-            this.ctx.globalAlpha = 1; // Ensure walls are fully opaque
-            
-            // Try to render with texture first
-            if (this.textureManager) {
-              const wallTexture = this.textureManager.getWallTexture(ray.wallType);
-              if (wallTexture) {
-                this.renderTexturedWallStrip(i * this.rayWidth, wallTop, wallBottom - wallTop, ray, wallTexture, fogFactor);
-                return;
+            // Try to render sprite if sprite renderer is available
+            let spriteRendered = false;
+            if (this.spriteRenderer) {
+              try {
+                const spriteFrame = this.spriteRenderer.getPlayerSpriteFrame(playerId);
+                if (spriteFrame && spriteFrame.canvas) {
+                  // Validate sprite frame canvas
+                  if (spriteFrame.canvas.width > 0 && spriteFrame.canvas.height > 0) {
+                    // Render sprite with stable positioning
+                    const spriteSize = Math.max(1, projectedPlayerHeight); // Ensure positive size
+                    const spriteX = screenX - spriteSize / 2;
+                    // Position sprite so bottom edge is at ground level
+                    const spriteY = playerCenterY - spriteSize / 2;
+                    
+                    // Validate screen position
+                    if (spriteX < this.width && spriteX + spriteSize > 0 && 
+                        spriteY < this.height && spriteY + spriteSize > 0) {
+                      this.ctx.globalAlpha = Math.max(0, Math.min(1, fogFactor));
+                      try {
+                        this.ctx.drawImage(
+                          spriteFrame.canvas,
+                          spriteX,
+                          spriteY,
+                          spriteSize,
+                          spriteSize
+                        );
+                        spriteRendered = true;
+                      } catch (drawError) {
+                        // Silently fail to avoid console spam
+                      }
+                      this.ctx.globalAlpha = 1;
+                    }
+                  }
+                }
+              } catch (spriteError) {
+                // Silently fail to avoid console spam
               }
             }
             
-            // Fallback to solid color with fog applied to color, not transparency
-            this.ctx.fillStyle = foggedColor;
-            this.ctx.globalAlpha = 1; // Always fully opaque
-            this.ctx.fillRect(i * this.rayWidth, wallTop, this.rayWidth, wallBottom - wallTop);
+            // Fallback to circle rendering if no sprite available
+            if (!spriteRendered) {
+              const radius = projectedPlayerHeight / 2;
+              const circleCenterY = playerCenterY;
+              this.ctx.fillStyle = player.color;
+              this.ctx.globalAlpha = fogFactor;
+              
+              // Draw sphere shadow/outline for better visibility
+              this.ctx.beginPath();
+              this.ctx.arc(screenX, circleCenterY, radius + 2, 0, Math.PI * 2);
+              this.ctx.fillStyle = '#000000';
+              this.ctx.fill();
+              
+              // Draw main sphere
+              this.ctx.beginPath();
+              this.ctx.arc(screenX, circleCenterY, radius, 0, Math.PI * 2);
+              this.ctx.fillStyle = player.color;
+              this.ctx.fill();
+              
+              // Add highlight for 3D effect
+              const gradient = this.ctx.createRadialGradient(
+                screenX - radius/3, circleCenterY - radius/3, 0,
+                screenX, circleCenterY, radius
+              );
+              gradient.addColorStop(0, 'rgba(255, 255, 255, 0.6)');
+              gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+              this.ctx.fillStyle = gradient;
+              this.ctx.fill();
+              
+              this.ctx.globalAlpha = 1;
+            }
           }
         });
       }
-    }
-    
-    // Add other players to render list
-    // Debug logging removed for performance
-    
-    const otherPlayersArray = Array.from(this.otherPlayers.entries());
-    for (const [playerId, player] of otherPlayersArray) {
-      const dx = player.x - this.playerX;
-      const dy = player.y - this.playerY;
-      const distance = Math.sqrt(dx * dx + dy * dy);
-      
-      // Skip if too far
-      if (distance > this.viewDistance) {
-        continue;
-      }
-      
-      // Check line of sight - skip if blocked by walls
-      const hasLOS = this.hasLineOfSight(this.playerX, this.playerY, player.x, player.y, map);
-      if (!hasLOS) {
-        continue;
-      }
-      
-      // Calculate angle to player
-      const angleToPlayer = Math.atan2(dy, dx);
-      let relativeAngle = angleToPlayer - this.playerAngle;
-      
-      // Normalize angle to [-PI, PI]
-      while (relativeAngle > Math.PI) relativeAngle -= 2 * Math.PI;
-      while (relativeAngle < -Math.PI) relativeAngle += 2 * Math.PI;
-      
-      // Check if player is in field of view
-      const halfFov = (this.fov / 2) * Math.PI / 180;
-      if (Math.abs(relativeAngle) > halfFov) {
-        continue;
-      }
-      
-      // Calculate screen position
-      const screenX = this.width / 2 + (relativeAngle / halfFov) * (this.width / 2);
-      const projectedPlayerHeight = (0.8 / distance) * this.distanceToProjectionPlane; // Balanced height
-      
-      // Apply pitch offset to player positioning
-      const playerCenterY = this.halfHeight + pitchOffset;
-      
-      const fogFactor = Math.max(0, 1 - distance / this.viewDistance);
-      
-      renderObjects.push({
-        distance,
-        render: () => {
-          // Try to render sprite if sprite renderer is available
-          let spriteRendered = false;
-          if (this.spriteRenderer) {
-            try {
-              const spriteFrame = this.spriteRenderer.getPlayerSpriteFrame(playerId);
-              if (spriteFrame && spriteFrame.canvas) {
-                // Validate sprite frame canvas
-                if (spriteFrame.canvas.width > 0 && spriteFrame.canvas.height > 0) {
-                  // Render sprite with stable positioning
-                  const spriteSize = Math.max(1, projectedPlayerHeight); // Ensure positive size
-                  const spriteX = screenX - spriteSize / 2;
-                  // Position sprite so bottom edge is at ground level
-                  const spriteY = playerCenterY - spriteSize / 2;
-                  
-                  // Validate screen position
-                  if (spriteX < this.width && spriteX + spriteSize > 0 && 
-                      spriteY < this.height && spriteY + spriteSize > 0) {
-                    this.ctx.globalAlpha = Math.max(0, Math.min(1, fogFactor));
-                    try {
-                      this.ctx.drawImage(
-                        spriteFrame.canvas,
-                        spriteX,
-                        spriteY,
-                        spriteSize,
-                        spriteSize
-                      );
-                      spriteRendered = true;
-                    } catch (drawError) {
-                      // Silently fail to avoid console spam
-                    }
-                    this.ctx.globalAlpha = 1;
-                  }
-                }
-              }
-            } catch (spriteError) {
-              // Silently fail to avoid console spam
-            }
-          }
-          
-          // Fallback to circle rendering if no sprite available
-          if (!spriteRendered) {
-            const radius = projectedPlayerHeight / 2;
-            const circleCenterY = playerCenterY;
-            this.ctx.fillStyle = player.color;
-            this.ctx.globalAlpha = fogFactor;
-            
-            // Draw sphere shadow/outline for better visibility
-            this.ctx.beginPath();
-            this.ctx.arc(screenX, circleCenterY, radius + 2, 0, Math.PI * 2);
-            this.ctx.fillStyle = '#000000';
-            this.ctx.fill();
-            
-            // Draw main sphere
-            this.ctx.beginPath();
-            this.ctx.arc(screenX, circleCenterY, radius, 0, Math.PI * 2);
-            this.ctx.fillStyle = player.color;
-            this.ctx.fill();
-            
-            // Add highlight for 3D effect
-            const gradient = this.ctx.createRadialGradient(
-              screenX - radius/3, circleCenterY - radius/3, 0,
-              screenX, circleCenterY, radius
-            );
-            gradient.addColorStop(0, 'rgba(255, 255, 255, 0.6)');
-            gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
-            this.ctx.fillStyle = gradient;
-            this.ctx.fill();
-            
-            this.ctx.globalAlpha = 1;
-          }
-        }
-      });
-    }
 
-    // Add projectiles to render list
-    const projectilesArray = Array.from(this.projectiles.entries());
-    for (const [projectileId, projectile] of projectilesArray) {
-      const dx = projectile.x - this.playerX;
-      const dy = projectile.y - this.playerY;
-      const distance = Math.sqrt(dx * dx + dy * dy);
+      // Add projectiles to render list
+      const projectilesArray = Array.from(this.projectiles.entries());
       
-      // Skip if too far
-      if (distance > this.viewDistance) {
-        continue;
-      }
-      
-      // Check line of sight - skip if blocked by walls
-      const hasLOS = this.hasLineOfSight(this.playerX, this.playerY, projectile.x, projectile.y, map);
-      if (!hasLOS) {
-        continue;
-      }
-      
-      // Calculate angle to projectile
-      const angleToProjectile = Math.atan2(dy, dx);
-      let relativeAngle = angleToProjectile - this.playerAngle;
-      
-      // Normalize angle to [-PI, PI]
-      while (relativeAngle > Math.PI) relativeAngle -= 2 * Math.PI;
-      while (relativeAngle < -Math.PI) relativeAngle += 2 * Math.PI;
-      
-      // Check if projectile is in field of view
-      const halfFov = (this.fov / 2) * Math.PI / 180;
-      if (Math.abs(relativeAngle) > halfFov) {
-        continue;
-      }
-      
-      // Calculate screen position
-      const screenX = this.width / 2 + (relativeAngle / halfFov) * (this.width / 2);
-      const projectedSize = (projectile.size / distance) * this.distanceToProjectionPlane;
-      
-      // Apply pitch offset to projectile positioning
-      const projectileCenterY = this.halfHeight + pitchOffset;
-      
-      const fogFactor = Math.max(0, 1 - distance / this.viewDistance);
-      
-      renderObjects.push({
-        distance,
-        render: () => {
-          // Render projectile as a sprite or geometric shape
-          this.renderProjectile(projectile, screenX, projectileCenterY, projectedSize, fogFactor);
-        }
+      console.log(`[Raycaster] Processing projectiles for rendering:`, {
+        count: projectilesArray.length,
+        projectileDetails: projectilesArray.map(([id, p]) => ({
+          id,
+          position: { x: p.x, y: p.y },
+          type: p.type
+        }))
       });
-    }
-    
-    // Sort by distance (far to near) and render
-    renderObjects.sort((a, b) => b.distance - a.distance);
-    for (const obj of renderObjects) {
-      try {
-        obj.render();
-      } catch (renderError) {
-        // Silently fail to avoid console spam
+      
+      for (const [projectileId, projectile] of projectilesArray) {
+        const dx = projectile.x - this.playerX;
+        const dy = projectile.y - this.playerY;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        
+        // Skip projectiles that are too close to the camera to avoid visual glitches
+        if (distance < 0.2) {
+          continue;
+        }
+        
+        // Skip if too far
+        if (distance > this.viewDistance) {
+          continue;
+        }
+        
+        // Check line of sight - skip if blocked by walls
+        const hasLOS = this.hasLineOfSight(this.playerX, this.playerY, projectile.x, projectile.y, map);
+        if (!hasLOS) {
+          continue;
+        }
+        
+        // Calculate angle to projectile
+        const angleToProjectile = Math.atan2(dy, dx);
+        let relativeAngle = angleToProjectile - this.playerAngle;
+        
+        // Normalize angle to [-PI, PI]
+        while (relativeAngle > Math.PI) relativeAngle -= 2 * Math.PI;
+        while (relativeAngle < -Math.PI) relativeAngle += 2 * Math.PI;
+        
+        // Check if projectile is in field of view
+        const halfFov = (this.fov / 2) * Math.PI / 180;
+        if (Math.abs(relativeAngle) > halfFov) {
+          continue;
+        }
+        
+        // Calculate screen position
+        const screenX = this.width / 2 + (relativeAngle / halfFov) * (this.width / 2);
+        
+        // Fix for very close projectiles - use minimum distance to prevent extreme size
+        const minDistance = 0.5; // Minimum distance to prevent division issues
+        const clampedDistance = Math.max(minDistance, distance);
+        const projectedSize = (projectile.size / clampedDistance) * this.distanceToProjectionPlane;
+        
+        // Apply pitch offset to projectile positioning
+        const projectileCenterY = this.halfHeight + pitchOffset;
+        
+        const fogFactor = Math.max(0, 1 - distance / this.viewDistance);
+        
+        console.log(`🎨 [STEP 27] Adding projectile ${projectileId} to render list at screen pos (${screenX.toFixed(1)}, ${projectileCenterY.toFixed(1)}), distance: ${distance.toFixed(2)}`);
+        
+        renderObjects.push({
+          distance,
+          render: () => {
+            console.log(`🎨 [STEP 28] Actually rendering projectile ${projectileId} at (${screenX.toFixed(1)}, ${projectileCenterY.toFixed(1)})`);
+            // Render projectile as a sprite or geometric shape
+            this.renderProjectile(projectile, screenX, projectileCenterY, projectedSize, fogFactor);
+          }
+        });
       }
-    }
+      
+      // Sort by distance (far to near) and render
+      renderObjects.sort((a, b) => b.distance - a.distance);
+      
+      // Debug: If no render objects, show a warning overlay
+      if (renderObjects.length === 0) {
+        console.warn('🚨 No render objects to draw - this causes black screen');
+        // Draw a diagnostic overlay
+        this.ctx.fillStyle = 'rgba(255, 255, 0, 0.3)';
+        this.ctx.fillRect(0, 0, this.width, this.height);
+        this.ctx.fillStyle = '#ffffff';
+        this.ctx.font = '16px monospace';
+        this.ctx.fillText('No walls found to render', 10, 30);
+        this.ctx.fillText(`Player: (${this.playerX.toFixed(1)}, ${this.playerY.toFixed(1)})`, 10, 50);
+        this.ctx.fillText(`Map: ${map.length}x${map[0].length}`, 10, 70);
+      }
+      
+      for (const obj of renderObjects) {
+        try {
+          obj.render();
+        } catch (renderError) {
+          // Silently fail to avoid console spam
+        }
+      }
     } catch (error) {
-      // Silently fail and attempt basic rendering as fallback
-      this.ctx.fillStyle = '#1e293b';
+      console.error('🚨 Critical error in render method:', error);
+      // Fallback render - show error state
+      this.ctx.fillStyle = '#ff0000';
       this.ctx.fillRect(0, 0, this.width, this.height);
+      this.ctx.fillStyle = '#ffffff';
+      this.ctx.font = '20px monospace';
+      this.ctx.fillText('Render Error - Check Console', 10, 30);
     }
   }
   
@@ -651,6 +930,12 @@ export class Raycaster {
    * Move player forward/backward
    */
   public movePlayer(forward: number, strafe: number, map: number[][]): void {
+    // Validate map first
+    if (!map || map.length === 0 || !map[0] || map[0].length === 0) {
+      console.error('Invalid map provided to movePlayer');
+      return;
+    }
+    
     const moveSpeed = 0.1; // Constant movement speed regardless of pitch
     
     // Calculate new position using ONLY horizontal angle (not pitch)
@@ -665,14 +950,18 @@ export class Raycaster {
     const mapX = Math.floor(newX);
     const mapY = Math.floor(newY);
     
-    if (mapX >= 0 && mapX < map[0].length && mapY >= 0 && mapY < map.length) {
-      // Check Y movement
-      if (map[mapY][Math.floor(this.playerX)] === 0) {
+    // Get map dimensions safely
+    const mapHeight = map.length;
+    const mapWidth = map[0]?.length || 0;
+    
+    if (mapX >= 0 && mapX < mapWidth && mapY >= 0 && mapY < mapHeight) {
+      // Check Y movement (make sure not to access out of bounds)
+      if (Math.floor(this.playerX) < mapWidth && map[mapY] && map[mapY][Math.floor(this.playerX)] === 0) {
         this.playerY = newY;
       }
       
-      // Check X movement
-      if (map[Math.floor(this.playerY)][mapX] === 0) {
+      // Check X movement (make sure not to access out of bounds)
+      if (Math.floor(this.playerY) < mapHeight && map[Math.floor(this.playerY)] && map[Math.floor(this.playerY)][mapX] === 0) {
         this.playerX = newX;
       }
     }
@@ -786,20 +1075,21 @@ export class Raycaster {
     try {
       // Get pitch offset
       const pitchOffset = this.playerPitch * this.distanceToProjectionPlane;
-      const horizonY = this.halfHeight + pitchOffset;
+      const horizonY = Math.min(Math.max(0, this.halfHeight + pitchOffset), this.height);
       
       // OPTIMIZED: Using solid colors instead of textures for better performance
       // Ceiling
       if (horizonY > 0) {
         this.ctx.fillStyle = '#0f172a';
-        this.ctx.fillRect(0, 0, this.width, horizonY);
+        this.ctx.fillRect(0, 0, this.width, Math.floor(horizonY));
       }
       // Floor
       if (horizonY < this.height) {
         this.ctx.fillStyle = '#1a202c';
-        this.ctx.fillRect(0, horizonY, this.width, this.height - horizonY);
+        this.ctx.fillRect(0, Math.ceil(horizonY), this.width, this.height - Math.ceil(horizonY));
       }
     } catch (error) {
+      console.error('Error in renderFloorAndCeiling:', error);
       // Silently fail and use fallback
       this.ctx.fillStyle = '#0f172a';
       this.ctx.fillRect(0, 0, this.width, this.halfHeight);

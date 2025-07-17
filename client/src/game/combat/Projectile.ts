@@ -79,7 +79,10 @@ export class Projectile {
    * Update projectile physics and animation
    */
   public update(deltaTime: number, targets: Map<string, Vector2>, walls: number[][]): boolean {
-    if (!this.state.isActive) return false;
+    if (!this.state.isActive) {
+      console.log(`🏹 Projectile ${this.state.id} is not active, skipping update`);
+      return false;
+    }
     
     const deltaSeconds = deltaTime / 1000;
     this.state.lastUpdate = Date.now();
@@ -89,13 +92,14 @@ export class Projectile {
       this.updateHoming(targets, deltaSeconds);
     }
     
-    // Update position
-    const moveDistance = this.config.speed * deltaSeconds;
+    // Update position - velocity is already in tiles per second from server
+    const moveDistance = deltaSeconds; // Only deltaSeconds, no speed multiplier
     const newX = this.state.position.x + this.state.velocity.x * moveDistance;
     const newY = this.state.position.y + this.state.velocity.y * moveDistance;
     
     // Check wall collisions
     if (this.checkWallCollision(newX, newY, walls)) {
+      console.log(`🏹 Projectile ${this.state.id} hit wall at (${newX.toFixed(1)}, ${newY.toFixed(1)}), deactivating`);
       this.onImpact();
       return false;
     }
@@ -103,14 +107,18 @@ export class Projectile {
     // Update position
     this.state.position.x = newX;
     this.state.position.y = newY;
-    this.state.distanceTraveled += moveDistance;
+    this.state.distanceTraveled += Math.sqrt(
+      (this.state.velocity.x * moveDistance) ** 2 + 
+      (this.state.velocity.y * moveDistance) ** 2
+    );
     
     // Update rotation based on velocity
     this.state.rotation = Math.atan2(this.state.velocity.y, this.state.velocity.x);
     
     // Check range limit
-    const maxDistance = this.config.range * 32; // Convert tiles to pixels (assuming 32px per tile)
+    const maxDistance = this.config.range;
     if (this.state.distanceTraveled >= maxDistance) {
+      console.log(`🏹 Projectile ${this.state.id} exceeded range: ${this.state.distanceTraveled.toFixed(1)} >= ${maxDistance.toFixed(1)}, deactivating`);
       this.state.isActive = false;
       return false;
     }
@@ -167,14 +175,22 @@ export class Projectile {
    * Check collision with walls
    */
   private checkWallCollision(x: number, y: number, walls: number[][]): boolean {
-    const tileX = Math.floor(x / 32); // Convert to tile coordinates
-    const tileY = Math.floor(y / 32);
+    const tileX = Math.floor(x);
+    const tileY = Math.floor(y);
     
-    if (tileY >= 0 && tileY < walls.length && tileX >= 0 && tileX < walls[0].length) {
-      return walls[tileY][tileX] !== 0; // 0 = empty, 1+ = wall
+    // Check bounds first
+    if (tileY < 0 || tileY >= walls.length || tileX < 0 || tileX >= walls[0].length) {
+      console.log(`🏹 Projectile ${this.state.id} out of bounds at tile (${tileX}, ${tileY}), pixel (${x.toFixed(1)}, ${y.toFixed(1)})`);
+      return true; // Out of bounds = collision
     }
     
-    return true; // Out of bounds = collision
+    const tileValue = walls[tileY][tileX];
+    if (tileValue !== 0) {
+      console.log(`🏹 Projectile ${this.state.id} hit wall tile (${tileX}, ${tileY}) = ${tileValue}, pixel (${x.toFixed(1)}, ${y.toFixed(1)})`);
+      return true; // Wall collision
+    }
+    
+    return false; // No collision
   }
 
   /**
@@ -323,4 +339,14 @@ export class Projectile {
   // Setters
   public setTarget(targetId: string): void { this.state.targetId = targetId; }
   public deactivate(): void { this.state.isActive = false; }
+  
+  /**
+   * Update state from server data (for network synchronization)
+   */
+  public updateFromServer(serverData: { position: Vector2; velocity: Vector2; rotation: number }): void {
+    this.state.position = { ...serverData.position };
+    this.state.velocity = { ...serverData.velocity };
+    this.state.rotation = serverData.rotation;
+    this.state.lastUpdate = Date.now();
+  }
 } 

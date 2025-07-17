@@ -47,10 +47,10 @@ export class MatchmakingService {
   private readonly PENDING_MATCH_PREFIX = 'pending_match:';
   private readonly MATCH_ACCEPTANCE_PREFIX = 'match_acceptance:';
   private readonly PLAYER_IN_QUEUE_PREFIX = 'player:inqueue:';
-  private readonly RATING_THRESHOLD_INITIAL = 100;
-  private readonly RATING_THRESHOLD_MAX = 500;
-  private readonly THRESHOLD_INCREASE_PER_SECOND = 10;
-  private readonly MATCH_ACCEPTANCE_TIMEOUT = 30000; // 30 seconds
+  private readonly RATING_THRESHOLD_INITIAL = 200; // Start with wider range
+  private readonly RATING_THRESHOLD_MAX = 1000; // Allow wider matches
+  private readonly THRESHOLD_INCREASE_PER_SECOND = 50; // Increase faster
+  private readonly MATCH_ACCEPTANCE_TIMEOUT = 15000; // 15 seconds (faster acceptance)
 
   constructor() {
     // Start periodic cleanup of expired pending matches
@@ -87,7 +87,20 @@ export class MatchmakingService {
       logger.info(`Player ${playerId} joined queue with rating ${rating}`);
       
       // Try to find a match immediately
-      await this.findMatch(queueEntry);
+      const match = await this.findMatch(queueEntry);
+      
+      // If we found a match immediately, great! Otherwise they'll be matched in next processQueue cycle
+      if (match) {
+        logger.info(`Instant match found for ${playerId}!`);
+      } else {
+        // Check queue size and trigger immediate processing if we have enough players
+        const queueSize = await redis.zcard(this.QUEUE_KEY);
+        if (queueSize >= 2) {
+          logger.info(`${queueSize} players in queue, triggering immediate queue processing`);
+          // Process queue immediately instead of waiting for next cycle
+          this.processQueue().catch(err => logger.error('Error in immediate queue processing:', err));
+        }
+      }
     } catch (error) {
       logger.error('Error joining queue:', error);
       throw error;
@@ -161,44 +174,77 @@ export class MatchmakingService {
   }
   
   /**
-   * Try to find a match for a player
+   * Try to find a match for a player - OPTIMIZED for fast matching
    */
   private async findMatch(playerEntry: QueueEntry): Promise<MatchData | null> {
     try {
       const currentTime = Date.now();
       const timeInQueue = (currentTime - playerEntry.joinedAt) / 1000; // seconds
       
-      // Calculate rating threshold based on time in queue
+      // OPTIMIZATION 1: Get ALL players in queue first (for small player base, this is faster)
+      const allMembers = await redis.zrange(this.QUEUE_KEY, 0, -1) as string[];
+      
+      if (allMembers.length < 2) {
+        logger.info(`Only ${allMembers.length} players in queue, need at least 2`);
+        return null;
+      }
+      
+      // Parse all entries once
+      const allEntries = allMembers.map(member => JSON.parse(member) as QueueEntry);
+      
+      // OPTIMIZATION 2: Filter out self and sort by wait time (prioritize longest waiting)
+      const candidates = allEntries
+        .filter(entry => entry.playerId !== playerEntry.playerId)
+        .sort((a, b) => a.joinedAt - b.joinedAt); // Oldest first
+      
+      if (candidates.length === 0) {
+        logger.info(`No candidates available for player ${playerEntry.playerId}`);
+        return null;
+      }
+      
+      // OPTIMIZATION 3: Dynamic rating threshold that grows faster
       const ratingThreshold = Math.min(
         this.RATING_THRESHOLD_INITIAL + (timeInQueue * this.THRESHOLD_INCREASE_PER_SECOND),
         this.RATING_THRESHOLD_MAX
       );
       
-      // Get players within rating range
-      const minRating = playerEntry.rating - ratingThreshold;
-      const maxRating = playerEntry.rating + ratingThreshold;
+      // OPTIMIZATION 4: Find best match (closest rating within threshold)
+      let bestMatch: QueueEntry | null = null;
+      let bestRatingDiff = Infinity;
       
-      const candidates = await redis.zrangebyscore(this.QUEUE_KEY, minRating, maxRating) as string[];
-      
-      // Find suitable opponent
-      for (const candidateData of candidates) {
-        const candidate = JSON.parse(candidateData) as QueueEntry;
+      for (const candidate of candidates) {
+        const ratingDiff = Math.abs(candidate.rating - playerEntry.rating);
         
-        // Skip self
-        if (candidate.playerId === playerEntry.playerId) {
-          continue;
+        // Check if within threshold
+        if (ratingDiff <= ratingThreshold) {
+          // Prefer closest rating match
+          if (ratingDiff < bestRatingDiff) {
+            bestMatch = candidate;
+            bestRatingDiff = ratingDiff;
+          }
         }
+      }
+      
+      // OPTIMIZATION 5: If no match within rating, just match with longest waiting player
+      if (!bestMatch && timeInQueue > 3) { // After 3 seconds, ignore rating
+        bestMatch = candidates[0]; // Longest waiting player
+        logger.info(`Quick match after ${timeInQueue}s wait: ${playerEntry.playerId} vs ${bestMatch.playerId} (rating diff: ${Math.abs(bestMatch.rating - playerEntry.rating)})`);
+      }
+      
+      if (bestMatch) {
+        logger.info(`Found match! ${playerEntry.playerId} (${playerEntry.rating}) vs ${bestMatch.playerId} (${bestMatch.rating}), rating diff: ${bestRatingDiff}`);
         
-        // Found a match!
-        const matchData = await this.createMatch(playerEntry, candidate);
+        // Create match
+        const matchData = await this.createMatch(playerEntry, bestMatch);
         
         // Remove both players from queue
         await this.leaveQueue(playerEntry.playerId);
-        await this.leaveQueue(candidate.playerId);
+        await this.leaveQueue(bestMatch.playerId);
         
         return matchData;
       }
       
+      logger.info(`No suitable match found for ${playerEntry.playerId} after ${timeInQueue}s`);
       return null;
     } catch (error) {
       logger.error('Error finding match:', error);
@@ -397,12 +443,10 @@ export class MatchmakingService {
           );
           
           if (initialized) {
-            logger.info(`✅ Game state initialized for match ${matchId}`);
             
             // Start the game loop immediately
             const started = await gameStateService.startGameLoop(matchId);
             if (started) {
-              logger.info(`🎮 Game loop started for match ${matchId}`);
             } else {
               logger.error(`❌ Failed to start game loop for match ${matchId}`);
             }
@@ -522,16 +566,55 @@ export class MatchmakingService {
   }
   
   /**
-   * Process queue periodically to find matches
+   * Get all players currently in queue
+   */
+  async getAllQueuedPlayers(): Promise<QueueEntry[]> {
+    try {
+      const members = await redis.zrange(this.QUEUE_KEY, 0, -1) as string[];
+      return members.map(member => JSON.parse(member) as QueueEntry);
+    } catch (error) {
+      logger.error('Error getting all queued players:', error);
+      return [];
+    }
+  }
+  
+  /**
+   * Process queue periodically to find matches - OPTIMIZED
    */
   async processQueue(): Promise<void> {
     try {
       const members = await redis.zrange(this.QUEUE_KEY, 0, -1) as string[];
       
-      for (const memberData of members) {
-        const member = JSON.parse(memberData) as QueueEntry;
-        await this.findMatch(member);
+      if (members.length < 2) {
+        return; // Need at least 2 players
       }
+      
+      // Parse all entries once
+      const entries = members.map(member => JSON.parse(member) as QueueEntry);
+      
+      // Sort by join time to process oldest first
+      entries.sort((a, b) => a.joinedAt - b.joinedAt);
+      
+      // Track who has been matched to avoid double processing
+      const matchedPlayers = new Set<string>();
+      
+      for (const entry of entries) {
+        // Skip if already matched in this cycle
+        if (matchedPlayers.has(entry.playerId)) {
+          continue;
+        }
+        
+        // Try to find match
+        const match = await this.findMatch(entry);
+        
+        // If matched, mark both players as matched
+        if (match) {
+          matchedPlayers.add(match.player1.playerId);
+          matchedPlayers.add(match.player2.playerId);
+        }
+      }
+      
+      logger.info(`Queue processed: ${entries.length} players, ${matchedPlayers.size / 2} matches made`);
     } catch (error) {
       logger.error('Error processing queue:', error);
     }

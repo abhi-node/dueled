@@ -58,6 +58,14 @@ export class CombatManager {
   public registerPlayer(playerId: string, position: Vector2, classType: ClassType): void {
     const classConfig = getClassConfig(classType);
     
+    // Check if player is already registered
+    const existingPlayer = this.playerHitboxes.get(playerId);
+    if (existingPlayer) {
+      console.log(`🎯 Combat: Player ${playerId} already registered, updating position`);
+      existingPlayer.position = { ...position };
+      return;
+    }
+    
     this.playerHitboxes.set(playerId, {
       playerId,
       position: { ...position },
@@ -70,6 +78,7 @@ export class CombatManager {
     });
     
     console.log(`🎯 Combat: Registered player ${playerId} as ${classType}`);
+    console.log(`🎯 Combat: Current playerHitboxes count: ${this.playerHitboxes.size}`);
   }
 
   /**
@@ -114,8 +123,15 @@ export class CombatManager {
    * Handle archer basic attack (piercing arrow)
    */
   public archerBasicAttack(attackData: AttackData): Projectile | null {
+    console.log(`🏹 CombatManager.archerBasicAttack called for attackerId: ${attackData.attackerId}`);
+    console.log(`🏹 Current playerHitboxes count: ${this.playerHitboxes.size}`);
+    console.log(`🏹 PlayerHitboxes keys:`, Array.from(this.playerHitboxes.keys()));
+    
     const attacker = this.playerHitboxes.get(attackData.attackerId);
-    if (!attacker || !attacker.isAlive) return null;
+    if (!attacker || !attacker.isAlive) {
+      console.warn(`🏹 No attacker hitbox found for attackerId: ${attackData.attackerId} or attacker is not alive`);
+      return null;
+    }
     
     const classConfig = getClassConfig(attackData.classType);
     const weapon = classConfig.weapon;
@@ -129,14 +145,15 @@ export class CombatManager {
     
     // Normalize direction and set projectile speed
     const direction = { x: dx / distance, y: dy / distance };
-    const projectileSpeed = 150; // SLOWED DOWN from 400 for debugging visibility
+    const projectileSpeed = 1; // DEBUG: Set to 1 tile per second for easier visibility
     
     // Create arrow projectile configuration
     const projectileConfig: ProjectileConfig = {
       id: `arrow_${++this.lastProjectileId}`,
       type: 'arrow',
       damage: calculateEffectiveDamage(weapon.damage, attacker.classType === 'archer' ? 80 : 70), // Use strength stat
-      speed: projectileSpeed,
+      // Velocity already encodes magnitude; use unit speed scalar
+      speed: 1,
       range: weapon.range,
       size: { width: 32, height: 12 }, // Made larger for visibility
       piercing: true, // Archer inherent ability
@@ -158,7 +175,7 @@ export class CombatManager {
         x: attacker.position.x + direction.x * CombatManager.PLAYER_RADIUS, 
         y: attacker.position.y + direction.y * CombatManager.PLAYER_RADIUS 
       },
-      velocity: direction,
+      velocity: { x: direction.x * projectileSpeed, y: direction.y * projectileSpeed },
       rotation: Math.atan2(direction.y, direction.x),
       distanceTraveled: 0,
       isActive: true,
@@ -172,6 +189,7 @@ export class CombatManager {
     this.projectiles.set(projectileConfig.id, projectile);
     
     console.log(`🏹 Archer basic attack: ${attackData.attackerId} fired arrow at (${attackData.targetPosition.x.toFixed(1)}, ${attackData.targetPosition.y.toFixed(1)}) with speed ${projectileSpeed}`);
+    console.log(`🏹 Projectile created: ${projectileConfig.id} at (${projectileState.position.x.toFixed(1)}, ${projectileState.position.y.toFixed(1)}) velocity: (${projectileState.velocity.x.toFixed(2)}, ${projectileState.velocity.y.toFixed(2)})`);
     
     return projectile;
   }
@@ -219,7 +237,8 @@ export class CombatManager {
       id: `homing_arrow_${++this.lastProjectileId}`,
       type: 'arrow',
       damage: calculateEffectiveDamage(weapon.damage * 1.2, 80), // 120% damage + strength scaling
-      speed: 120, // Even slower for homing arrow to be visible
+      // Use unit speed scalar
+      speed: 1,
       range: weapon.range * 1.5, // Extended range
       size: { width: 36, height: 14 }, // Slightly larger for special arrow
       piercing: true,
@@ -234,14 +253,14 @@ export class CombatManager {
       }
     };
     
-    // Create homing projectile state
+    const homingSpeed = 1; // DEBUG: Set to 1 tile per second for easier visibility
     const projectileState: ProjectileState = {
       id: projectileConfig.id,
       position: { 
         x: attacker.position.x + direction.x * CombatManager.PLAYER_RADIUS, 
         y: attacker.position.y + direction.y * CombatManager.PLAYER_RADIUS 
       },
-      velocity: direction,
+      velocity: { x: direction.x * homingSpeed, y: direction.y * homingSpeed },
       rotation: Math.atan2(direction.y, direction.x),
       distanceTraveled: 0,
       isActive: true,
@@ -281,6 +300,7 @@ export class CombatManager {
       const stillActive = projectile.update(deltaTime, targetMap, walls);
       
       if (!stillActive) {
+        console.log(`🏹 Projectile ${projectileId} marked for removal (inactive)`);
         projectilesToRemove.push(projectileId);
         continue;
       }

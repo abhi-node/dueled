@@ -15,6 +15,7 @@ import { ArcherCombat } from '../combat/ArcherCombat.js';
 import { Projectile } from '../combat/Projectile.js';
 import type { Vector2, ClassType, ClassConfig } from '@dueled/shared';
 import { getClassConfig, calculateDashCooldown, ClassType as CT } from '@dueled/shared';
+import { projectileSpriteManager } from '../renderer/ProjectileSpriteManager';
 
 export class MainGameScene {
   private canvas: HTMLCanvasElement;
@@ -27,6 +28,18 @@ export class MainGameScene {
   // Combat system
   private combatManager: CombatManager;
   private archerCombat: ArcherCombat;
+  
+  // Direct projectile management for rendering (bypasses CombatManager)
+  private renderProjectiles: Map<string, {
+    id: string;
+    position: { x: number; y: number };
+    velocity: { x: number; y: number };
+    rotation: number;
+    type: string;
+    ownerId: string;
+    createdAt: number;
+    lastUpdate: number;
+  }> = new Map();
   
   // UI elements
   private minimapCanvas!: HTMLCanvasElement;
@@ -72,9 +85,14 @@ export class MainGameScene {
   private frameCount: number = 0;
   private lastFpsUpdate: number = 0;
   
+  // Debug overlay
+  private debugOverlayEnabled: boolean = false;
+  private debugOverlayDiv!: HTMLDivElement;
+  
   // Game loop
   private running: boolean = false;
   private lastTime: number = 0;
+  private debugFrameCount: number = 0;
   
   // Input state
   private mouseX: number = 0;
@@ -112,10 +130,20 @@ export class MainGameScene {
       classConfig: this.classConfig
     });
     
-    // Set local player ID from match data
+    // Set local player ID from match data with fallbacks
     if (matchData?.yourPlayerId) {
       this.localPlayerId = matchData.yourPlayerId;
       console.log(`🎮 MainGameScene: Local player ID set to ${this.localPlayerId}`);
+    } else {
+      // Fallback 1: Try to get from socket connection
+      if (this.socket?.id) {
+        this.localPlayerId = this.socket.id;
+        console.log(`🎮 MainGameScene: Using socket ID as local player ID: ${this.localPlayerId}`);
+      } else {
+        // Fallback 2: Generate a temporary ID (will be updated later from network manager)
+        this.localPlayerId = `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        console.log(`🎮 MainGameScene: Generated temporary local player ID: ${this.localPlayerId}`);
+      }
     }
     
     // Create main canvas
@@ -137,7 +165,13 @@ export class MainGameScene {
     
     // Initialize systems
     this.raycaster = new Raycaster(this.canvas);
-    this.gameMap = new GameMap(30, 30, 'Simple Arena');
+    
+    // Set local player ID in raycaster if we have it
+    if (this.localPlayerId) {
+      this.raycaster.setLocalPlayerId(this.localPlayerId);
+    }
+    
+    this.gameMap = new GameMap();
     this.networkManager = new MainNetworkManager(this, this.socket);
     this.spriteRenderer = new SpriteRenderer();
     this.textureManager = new TextureManager();
@@ -243,9 +277,28 @@ export class MainGameScene {
       WASD: Move • Mouse: Look & Pitch<br>
       Q: Dash Left • E: Dash Right<br>
       Left Click/Space: Attack • F: Special Ability<br>
-      Click: Lock Pointer • ESC: Unlock/Leave
+      Click: Lock Pointer • ESC: Unlock/Leave<br>
+      <em>Debug: G: Combat Debug • D: Entity Debug</em>
     `;
     container.appendChild(instructions);
+    
+    // Create debug overlay
+    this.debugOverlayDiv = document.createElement('div');
+    this.debugOverlayDiv.style.position = 'absolute';
+    this.debugOverlayDiv.style.top = '50%';
+    this.debugOverlayDiv.style.left = '10px';
+    this.debugOverlayDiv.style.transform = 'translateY(-50%)';
+    this.debugOverlayDiv.style.color = '#00ff00';
+    this.debugOverlayDiv.style.fontFamily = 'monospace';
+    this.debugOverlayDiv.style.fontSize = '11px';
+    this.debugOverlayDiv.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
+    this.debugOverlayDiv.style.padding = '8px';
+    this.debugOverlayDiv.style.borderRadius = '4px';
+    this.debugOverlayDiv.style.border = '1px solid #00ff00';
+    this.debugOverlayDiv.style.display = 'none';
+    this.debugOverlayDiv.style.maxWidth = '300px';
+    this.debugOverlayDiv.style.lineHeight = '1.2';
+    container.appendChild(this.debugOverlayDiv);
   }
 
   /**
@@ -398,7 +451,10 @@ export class MainGameScene {
     
     // DEBUG: Add 'L' key for testing arrow firing
     if (event.key.toLowerCase() === 'l') {
-      console.log('🎯 DEBUG: L key pressed - firing arrow');
+      console.log('🎯 [STEP 1] DEBUG: L key pressed - initiating arrow firing sequence');
+      console.log('🎯 [STEP 1] Local player ID:', this.localPlayerId);
+      console.log('🎯 [STEP 1] Local player class:', this.localPlayerClass);
+      console.log('🎯 [STEP 1] Network connected:', this.networkManager?.isConnectedToServer());
       this.handleBasicAttack();
       event.preventDefault();
       return;
@@ -410,6 +466,56 @@ export class MainGameScene {
       if (this.socket && this.socket.connected) {
         this.socket.emit('debug:test_projectile');
       }
+      event.preventDefault();
+      return;
+    }
+    
+    // DEBUG: Add 'R' key to check rendering status
+    if (event.key.toLowerCase() === 'r') {
+      console.log('🎨 Rendering status:', {
+        gameMapExists: !!this.gameMap,
+        gameMapSize: this.gameMap ? `${this.gameMap.getGrid().length}x${this.gameMap.getGrid()[0]?.length}` : 'N/A',
+        raycasterExists: !!this.raycaster,
+        combatManagerExists: !!this.combatManager,
+        projectileCount: this.combatManager ? this.combatManager.getProjectiles().size : 0,
+        canvasSize: `${this.canvas.width}x${this.canvas.height}`,
+        isRunning: this.running,
+        fps: this.fps.toFixed(1),
+        debugFrameCount: this.debugFrameCount
+      });
+      event.preventDefault();
+      return;
+    }
+    
+    // DEBUG: Add 'C' key to check connection status
+    if (event.key.toLowerCase() === 'c') {
+      if (this.networkManager) {
+        const diagnostics = this.networkManager.getDiagnosticInfo();
+        console.log('🔍 Network diagnostics:', diagnostics);
+      }
+      event.preventDefault();
+      return;
+    }
+    
+    // DEBUG: Add 'C' key to test connection status
+    if (event.key.toLowerCase() === 'c') {
+      console.log('🔌 DEBUG: C key pressed - checking connection status');
+      const diagnostic = this.networkManager.getDiagnosticInfo();
+      console.log('🔌 Connection diagnostic:', diagnostic);
+      this.showNotification(`Connection: ${diagnostic.socketConnected ? 'Connected' : 'Disconnected'}`, 'info');
+      event.preventDefault();
+      return;
+    }
+    
+    // DEBUG: Add 'R' key to test rendering status
+    if (event.key.toLowerCase() === 'r') {
+      console.log('🎨 DEBUG: R key pressed - checking rendering status');
+      const viewerState = this.raycaster.getPlayerState();
+      console.log('🎨 Player state:', viewerState);
+      console.log('🎨 Remote players:', this.remotePlayers.size);
+      console.log('🎨 Projectiles in combat manager:', this.combatManager?.getProjectiles().size || 0);
+      console.log('🎨 Running:', this.running);
+      this.showNotification(`Rendering: ${this.running ? 'Active' : 'Inactive'}`, 'info');
       event.preventDefault();
       return;
     }
@@ -439,6 +545,41 @@ export class MainGameScene {
       event.preventDefault();
       return;
     }
+    
+    // DEBUG: Add 'M' key to check map integrity
+    if (event.key.toLowerCase() === 'm') {
+      console.log('🗺️ DEBUG: M key pressed - checking map integrity');
+      const mapGrid = this.gameMap.getGrid();
+      console.log('🗺️ Map dimensions:', mapGrid?.length, 'x', mapGrid?.[0]?.length);
+      console.log('🗺️ Map corners:', {
+        topLeft: mapGrid?.[0]?.[0],
+        topRight: mapGrid?.[0]?.[19],
+        bottomLeft: mapGrid?.[19]?.[0],
+        bottomRight: mapGrid?.[19]?.[19]
+      });
+      
+      // Count walls vs empty spaces
+      let walls = 0;
+      let empty = 0;
+      if (mapGrid) {
+        for (let y = 0; y < mapGrid.length; y++) {
+          for (let x = 0; x < mapGrid[y].length; x++) {
+            if (mapGrid[y][x] === 0) empty++;
+            else walls++;
+          }
+        }
+      }
+      console.log('🗺️ Map composition:', { walls, empty, total: walls + empty });
+      
+      // If map seems corrupted, reinitialize it
+      if (!mapGrid || mapGrid.length !== 20 || walls === 0) {
+        console.log('🗺️ Map appears corrupted, reinitializing...');
+        this.gameMap = new GameMap(20, 20, 'Simple Arena');
+        this.showNotification('Map reinitialized', 'info');
+      }
+      event.preventDefault();
+      return;
+    }
 
     // Handle special ability
     if (event.key.toLowerCase() === 'f') {
@@ -451,6 +592,42 @@ export class MainGameScene {
     if (event.key.toLowerCase() === 'g') {
       this.debugCombat = !this.debugCombat;
       this.showNotification(`Debug mode: ${this.debugCombat ? 'ON' : 'OFF'}`, 'info');
+      event.preventDefault();
+      return;
+    }
+    
+    // Toggle debug overlay
+    if (event.key.toLowerCase() === 'd') {
+      this.debugOverlayEnabled = !this.debugOverlayEnabled;
+      this.debugOverlayDiv.style.display = this.debugOverlayEnabled ? 'block' : 'none';
+      this.showNotification(`Entity Debug: ${this.debugOverlayEnabled ? 'ON' : 'OFF'}`, 'info');
+      event.preventDefault();
+      return;
+    }
+    
+    // DEBUG: Add 'H' key to check game state status
+    if (event.key.toLowerCase() === 'h') {
+      console.log('🔍 DEBUG: H key pressed - checking game state status');
+      if (this.socket && this.socket.connected) {
+        // Listen for the response first
+        this.socket.once('debug:status', (status) => {
+          console.log('📊 Game State Status:', status);
+          if (status.error) {
+            this.showNotification(`Error: ${status.error}`, 'warning');
+          } else {
+            this.showNotification(
+              `Game: ${status.status}, Loop: ${status.gameLoopRunning ? 'Running' : 'Stopped'}, Projectiles: ${status.projectiles}`, 
+              'info'
+            );
+          }
+        });
+        
+        // Request the status
+        this.socket.emit('debug:game_status');
+      } else {
+        console.error('🔌 Socket not connected');
+        this.showNotification('Socket not connected', 'warning');
+      }
       event.preventDefault();
       return;
     }
@@ -519,14 +696,32 @@ export class MainGameScene {
    * Handle basic attack input
    */
   private handleBasicAttack(): void {
-    // First try to get localPlayerId from match data if not set
-    if (!this.localPlayerId && this.matchData?.yourPlayerId) {
-      this.localPlayerId = this.matchData.yourPlayerId;
-      console.log('🔧 Fixed local player ID from match data:', this.localPlayerId);
+    // Try multiple ways to get local player ID
+    if (!this.localPlayerId) {
+      // First try to get from match data
+      if (this.matchData?.yourPlayerId) {
+        this.localPlayerId = this.matchData.yourPlayerId;
+        console.log('🔧 Fixed local player ID from match data:', this.localPlayerId);
+      }
+      // Then try network manager's player ID
+      else if (this.networkManager?.getPlayerId()) {
+        this.localPlayerId = this.networkManager.getPlayerId();
+        console.log('🔧 Using network manager player ID:', this.localPlayerId);
+      }
+      // Then try socket ID
+      else if (this.socket?.id) {
+        this.localPlayerId = this.socket.id;
+        console.log('🔧 Using socket ID as local player ID:', this.localPlayerId);
+      }
+      // Finally, generate a temporary ID
+      else {
+        this.localPlayerId = `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        console.log('🔧 Generated temporary local player ID:', this.localPlayerId);
+      }
     }
     
     if (!this.localPlayerId) {
-      console.warn('🚫 Cannot attack: No local player ID');
+      console.warn('🚫 Cannot attack: No local player ID available');
       return;
     }
 
@@ -541,9 +736,18 @@ export class MainGameScene {
       // Calculate target position (shoot forward)
       const playerState = this.raycaster.getPlayerState();
       const range = getClassConfig(CT.ARCHER).weapon.range;
+      
+      // 🔒 CLIENT-SIDE VALIDATION: Ensure playerState.angle is valid
+      if (!playerState || typeof playerState.angle !== 'number' || Number.isNaN(playerState.angle)) {
+        console.error('🚨 Invalid player angle, cannot attack:', { playerState, angle: playerState?.angle });
+        this.showNotification('Attack failed - invalid camera angle', 'warning');
+        return;
+      }
+      
+      // Server expects tile coordinates, not pixels - so just use range directly
       const targetPosition = {
-        x: playerState.x + Math.cos(playerState.angle) * range * 32,
-        y: playerState.y + Math.sin(playerState.angle) * range * 32
+        x: playerState.x + Math.cos(playerState.angle) * range,
+        y: playerState.y + Math.sin(playerState.angle) * range
       };
       
       const direction = {
@@ -551,27 +755,78 @@ export class MainGameScene {
         y: Math.sin(playerState.angle)
       };
       
-      console.log(`📤 Sending attack to server:`, {
+      // 🔒 CLIENT-SIDE VALIDATION: Ensure direction components are valid
+      if (Number.isNaN(direction.x) || Number.isNaN(direction.y)) {
+        console.error('🚨 Invalid direction calculated, cannot attack:', { direction, angle: playerState.angle });
+        this.showNotification('Attack failed - invalid direction', 'warning');
+        return;
+      }
+      
+      console.log(`📤 [STEP 2] Sending attack to server:`, {
         playerId: this.localPlayerId,
+        playerClass: this.localPlayerClass,
         position: { x: playerState.x, y: playerState.y },
         direction,
         targetPosition,
-        attackType: 'basic'
+        attackType: 'basic',
+        networkDiagnostic: this.networkManager.getDiagnosticInfo()
       });
       
+      // Check connection before sending attack
+      if (!this.networkManager.isConnectedToServer()) {
+        console.warn('🔌 Network not connected - creating local debug projectile instead');
+        
+        // QUICK DEBUG FIX: Create local projectile when offline
+        const now = Date.now();
+        const projectileId = `debug_arrow_${now}_${Math.random().toString(36).substr(2, 9)}`;
+        
+        // Create local projectile directly in renderProjectiles map
+        this.renderProjectiles.set(projectileId, {
+          id: projectileId,
+          position: { x: playerState.x, y: playerState.y },
+          velocity: {
+            x: Math.cos(playerState.angle) * 8, // Arrow speed
+            y: Math.sin(playerState.angle) * 8
+          },
+          rotation: playerState.angle,
+          type: 'arrow',
+          ownerId: this.localPlayerId,
+          createdAt: now,
+          lastUpdate: now
+        });
+        
+        console.log(`🏹 Created local debug projectile ${projectileId} at (${playerState.x.toFixed(1)}, ${playerState.y.toFixed(1)})`);
+        this.showNotification('Local debug arrow fired!', 'info');
+        
+        // Start simple animation for the debug projectile
+        this.animateLocalProjectile(projectileId);
+        return;
+      }
+      
       // Send attack to server for authoritative processing
+      console.log(`🏹 [STEP 2.5] Calling NetworkManager.sendAttack...`);
       this.networkManager.sendAttack({
         direction: direction,
         targetPosition: targetPosition,
         attackType: 'basic'
       });
       
-      // Still do local attack for immediate feedback (will be overridden by server)
-      const success = this.archerCombat.tryBasicAttack(this.localPlayerId, targetPosition);
-      if (success) {
-        console.log(`🏹 Local basic attack executed, sent to server for authority`);
-      } else {
-        console.log(`❌ Local basic attack failed`);
+      // DO NOT create local projectile - wait for server authority
+      // This prevents duplicate projectiles and ensures all players see the same thing
+      console.log(`🏹 [STEP 2.6] Basic attack sent to server for authority - waiting for server projectile...`);
+      
+      // Just update archer state for cooldown tracking locally
+      const archerState = this.archerCombat.getArcherState(this.localPlayerId);
+      if (archerState && this.archerCombat.canBasicAttack(this.localPlayerId)) {
+        // Manually update last attack time for cooldown display
+        const currentTime = Date.now() / 1000;
+        archerState.lastBasicAttack = currentTime;
+        archerState.isAttacking = true;
+        
+        // Reset attacking flag after short delay
+        setTimeout(() => {
+          archerState.isAttacking = false;
+        }, 200);
       }
     }
     // TODO: Add other class basic attacks
@@ -607,10 +862,29 @@ export class MainGameScene {
         attackType: 'special'
       });
       
-      // Still do local attack for immediate feedback
-      const success = this.archerCombat.trySpecialAttack(this.localPlayerId);
-      if (success) {
-        console.log(`⚡ Local special attack (Dispatcher) executed, sent to server for authority`);
+      // DO NOT create local projectile - wait for server authority
+      console.log(`⚡ Special attack (Dispatcher) sent to server for authority`);
+      
+      // Just update archer state for cooldown tracking locally
+      const archerState = this.archerCombat.getArcherState(this.localPlayerId);
+      if (archerState && this.archerCombat.canSpecialAttack(this.localPlayerId)) {
+        // Manually update last attack time and charges for cooldown display
+        const currentTime = Date.now() / 1000;
+        archerState.lastSpecialAttack = currentTime;
+        archerState.specialCharges--;
+        archerState.isAttacking = true;
+        
+        // Reset attacking flag after short delay
+        setTimeout(() => {
+          archerState.isAttacking = false;
+        }, 300);
+        
+        // Recharge special after cooldown
+        setTimeout(() => {
+          if (archerState.specialCharges < archerState.maxSpecialCharges) {
+            archerState.specialCharges++;
+          }
+        }, archerState.specialAttackCooldown * 1000);
       }
     }
     // TODO: Add other class special abilities
@@ -637,11 +911,30 @@ export class MainGameScene {
     const container = this.canvas.parentElement;
     if (!container) return;
     
-    const rect = container.getBoundingClientRect();
-    this.canvas.width = rect.width;
-    this.canvas.height = rect.height;
-    
-    this.raycaster.resize(rect.width, rect.height);
+    // Get container dimensions – if the element doesn't have a layout yet
+    // (width / height === 0) fall back to the viewport size.  If that is also
+    // zero (very unlikely) schedule another attempt on the next animation
+    // frame instead of applying an invalid size that would blank the render.
+    let { width, height } = container.getBoundingClientRect();
+
+    // Fallback to viewport if container has no size yet
+    if (width === 0 || height === 0) {
+      width = window.innerWidth;
+      height = window.innerHeight;
+      // If we *still* have no dimensions, try again next frame.
+      if (width === 0 || height === 0) {
+        requestAnimationFrame(() => this.handleResize());
+        return;
+      }
+    }
+
+    // Apply the calculated dimensions to both the element's *drawing* buffer
+    // (width/height properties) and its CSS size (handled via 100% style).
+    this.canvas.width = width;
+    this.canvas.height = height;
+
+    // Inform the ray-caster so it can recalculate internal parameters.
+    this.raycaster.resize(width, height);
   }
 
   /**
@@ -748,6 +1041,48 @@ export class MainGameScene {
   }
   
   /**
+   * Update debug overlay with entity counts and system status
+   */
+  private updateDebugOverlay(): void {
+    if (!this.debugOverlayEnabled) return;
+    
+    const projectileCountCombatManager = this.combatManager ? this.combatManager.getProjectiles().size : 0;
+    const projectileCountRenderDirect = this.renderProjectiles.size;
+    const projectileCountRaycaster = this.raycaster.getProjectileCount();
+    const playerCount = this.remotePlayers.size;
+    const spriteCount = this.spriteRenderer ? 'N/A' : 'No SpriteRenderer';
+    
+    this.debugOverlayDiv.innerHTML = `
+      <strong>🔍 ENTITY DEBUG OVERLAY</strong><br><br>
+      
+      <strong>PROJECTILES:</strong><br>
+      • CombatManager: ${projectileCountCombatManager}<br>
+      • Direct Render: ${projectileCountRenderDirect}<br>
+      • Raycaster: ${projectileCountRaycaster}<br><br>
+      
+      <strong>PLAYERS:</strong><br>
+      • Remote Players: ${playerCount}<br>
+      • Local Player: ${this.localPlayerId ? '✓' : '✗'}<br><br>
+      
+      <strong>SYSTEMS:</strong><br>
+      • Game Running: ${this.running ? '✓' : '✗'}<br>
+      • Network Connected: ${this.networkManager?.isConnectedToServer() ? '✅ CONNECTED' : '❌ OFFLINE'}<br>
+      • Socket Status: ${this.networkManager?.getSocket()?.connected ? '✅ ACTIVE' : '❌ DISCONNECTED'}<br>
+      • Player ID: ${this.localPlayerId ? this.localPlayerId.substr(0, 12) + '...' : 'None'}<br>
+      • Combat Manager: ${this.combatManager ? '✓' : '✗'}<br>
+      • Sprite Renderer: ${this.spriteRenderer ? '✓' : '✗'}<br>
+      • Texture Manager: ${this.textureManager ? '✓' : '✗'}<br><br>
+      
+      <strong>PERFORMANCE:</strong><br>
+      • FPS: ${this.fps.toFixed(1)}<br>
+      • Frame: ${this.debugFrameCount}<br>
+      • Map Grid: ${this.gameMap ? this.gameMap.getGrid().length + 'x' + this.gameMap.getGrid()[0]?.length : 'N/A'}<br><br>
+      
+      <em>Press D to toggle this overlay</em>
+    `;
+  }
+
+  /**
    * Enhanced update stats display with combat cooldowns
    */
   private updateStats(): void {
@@ -810,17 +1145,8 @@ export class MainGameScene {
       const viewerState = this.raycaster.getPlayerState();
       if (!viewerState || !this.spriteRenderer) return;
       
-      // Update local player sprite (if it exists and we have the necessary data)
-      if (this.localPlayerId && this.localPlayerClass) {
-        this.spriteRenderer.updatePlayerSprite(
-          this.localPlayerId,
-          this.localPlayerClass,
-          { x: viewerState.x, y: viewerState.y },
-          viewerState.angle,
-          { x: viewerState.x, y: viewerState.y },
-          viewerState.angle
-        );
-      }
+      // Remove local player sprite updates - we don't render our own sprite in first-person view
+      // The local player should not see their own sprite
       
       // Update all remote player sprites with current viewer perspective
       for (const [playerId, playerData] of this.remotePlayers) {
@@ -925,6 +1251,7 @@ export class MainGameScene {
       const deltaTime = currentTime - this.lastTime;
       this.fps = 1000 / deltaTime;
       this.lastTime = currentTime;
+      this.debugFrameCount++;
     
       // Process input
       this.processInput();
@@ -955,6 +1282,9 @@ export class MainGameScene {
       // Update stats display
       this.updateStats();
       
+      // Update debug overlay
+      this.updateDebugOverlay();
+      
       // Update minimap
       this.updateMinimap();
       
@@ -973,56 +1303,121 @@ export class MainGameScene {
    * Enhanced render method with combat visuals
    */
   private render(): void {
-    // Update projectiles in raycaster for 3D rendering
-    this.updateProjectilesInRaycaster();
-    
-    // Clear canvas and render 3D scene (now includes projectiles)
-    this.raycaster.render(this.gameMap.getGrid());
-    
-    // Update sprite animations
-    this.spriteRenderer.update(Date.now());
-    
-    // Render debug hitboxes on top if needed
-    if (this.debugCombat && this.combatManager) {
-      const ctx = this.canvas.getContext('2d');
-      if (ctx) {
-        const cameraOffset = { x: 0, y: 0 }; // TODO: Calculate proper camera offset
-        this.combatManager.renderHitboxes(ctx, cameraOffset, true);
+    try {
+      // Update projectiles in raycaster for 3D rendering
+      this.updateProjectilesInRaycaster();
+      
+      // Check if gameMap exists and has valid grid
+      if (!this.gameMap) {
+        console.error('🚨 GameMap is null in render()');
+        return;
       }
+      
+      const mapGrid = this.gameMap.getGrid();
+      if (!mapGrid || mapGrid.length === 0) {
+        console.error('🚨 GameMap grid is empty or null:', mapGrid);
+        return;
+      }
+      
+      // Add validation to check if grid has valid dimensions
+      if (mapGrid.length !== 20 || mapGrid[0]?.length !== 20) {
+        console.error('🚨 GameMap grid has invalid dimensions:', mapGrid.length, 'x', mapGrid[0]?.length);
+      }
+      
+      
+      // Clear canvas and render 3D scene (now includes projectiles)
+      this.raycaster.render(mapGrid);
+      
+      // Update sprite directions based on camera view
+      this.updateSpriteDirections();
+      
+      // Ensure all sprites are being rendered
+      this.ensureAllSpritesRendered();
+      
+      // Update sprite animations
+      this.spriteRenderer.update(Date.now());
+      
+      // Render debug hitboxes on top if needed
+      if (this.debugCombat && this.combatManager) {
+        const ctx = this.canvas.getContext('2d');
+        if (ctx) {
+          const cameraOffset = { x: 0, y: 0 }; // TODO: Calculate proper camera offset
+          this.combatManager.renderHitboxes(ctx, cameraOffset, true);
+        }
+      }
+    } catch (error) {
+      console.error('🚨 Error in render method:', error);
     }
   }
 
   /**
    * Update projectiles in raycaster for 3D rendering
+   * Uses direct projectile management bypassing CombatManager for better performance
    */
   private updateProjectilesInRaycaster(): void {
-    if (!this.combatManager) return;
-    
-    // Clear existing projectiles
-    this.raycaster.clearProjectiles();
-    
-    // Get all active projectiles from combat manager
-    const projectilesMap = this.combatManager.getProjectiles();
-    
-    console.log(`🎯 Updating ${projectilesMap.size} projectiles in raycaster`);
-    
-    // Add each projectile to raycaster for 3D rendering
-    for (const projectile of projectilesMap.values()) {
-      if (projectile.isActive()) {
-        const state = projectile.getState();
-        const config = projectile.getConfig();
+    try {
+      // Use direct render projectiles map for better control
+      console.log(`[MainGameScene] Updating projectiles in Raycaster (direct):`, {
+        count: this.renderProjectiles.size,
+        projectileIds: Array.from(this.renderProjectiles.keys())
+      });
+
+      // First, collect all active projectile IDs
+      const activeProjectileIds = new Set<string>();
+      
+      // Update or add active projectiles from direct management
+      for (const [id, projectile] of this.renderProjectiles) {
+        // Validate position is within map bounds
+        if (projectile.position.x < 0 || projectile.position.x > 20 || 
+            projectile.position.y < 0 || projectile.position.y > 20) {
+          console.warn(`🚨 Projectile ${id} outside map bounds at (${projectile.position.x}, ${projectile.position.y})`);
+          continue;
+        }
         
-        console.log(`🏹 Adding projectile ${state.id} at (${state.position.x.toFixed(1)}, ${state.position.y.toFixed(1)}) to raycaster`);
+        // Track this as an active projectile
+        activeProjectileIds.add(id);
         
-        this.raycaster.updateProjectile(
-          state.id,
-          state.position.x,
-          state.position.y,
-          config.type,
-          state.rotation,
-          0.5 // Size for 3D rendering
+        // Update raycaster with projectile position and color
+        const projectileColor = this.getProjectileColor(projectile.type);
+        this.raycaster.persistProjectile(
+          id,
+          projectile.position.x,
+          projectile.position.y,
+          projectile.type,
+          projectile.rotation,
+          0.5, // size
+          projectileColor
         );
+        
+        console.log(`[MainGameScene] Added/Updated projectile in Raycaster:`, {
+          id,
+          position: { x: projectile.position.x, y: projectile.position.y },
+          angle: projectile.rotation,
+          type: projectile.type
+        });
       }
+      
+      // Remove stale projectiles from Raycaster
+      const raycasterProjectileIds = this.raycaster.getProjectileIds();
+      console.log(`[MainGameScene] Before cleanup - Raycaster has ${raycasterProjectileIds.length} projectiles`);
+      
+      let removedCount = 0;
+      for (const projectileId of raycasterProjectileIds) {
+        if (!activeProjectileIds.has(projectileId)) {
+          this.raycaster.removeProjectile(projectileId);
+          removedCount++;
+          console.log(`[MainGameScene] Removed stale projectile ${projectileId} from Raycaster`);
+        }
+      }
+      
+      console.log(`[MainGameScene] Cleanup complete:`, {
+        activeProjectiles: activeProjectileIds.size,
+        removedProjectiles: removedCount,
+        finalRaycasterCount: this.raycaster.getProjectileCount()
+      });
+    } catch (error) {
+      console.error('🚨 Error updating projectiles in raycaster:', error);
+      // Don't crash the render loop
     }
   }
 
@@ -1030,10 +1425,23 @@ export class MainGameScene {
    * Initialize combat system when game starts
    */
   private initializeCombat(): void {
-    // Ensure we have local player ID
-    if (!this.localPlayerId && this.matchData?.yourPlayerId) {
-      this.localPlayerId = this.matchData.yourPlayerId;
-      console.log('🔧 Setting local player ID from match data in combat init:', this.localPlayerId);
+    console.log(`⚔️ initializeCombat called with localPlayerId: ${this.localPlayerId}`);
+    
+    // Ensure we have local player ID using all available methods
+    if (!this.localPlayerId) {
+      if (this.matchData?.yourPlayerId) {
+        this.localPlayerId = this.matchData.yourPlayerId;
+        console.log('🔧 Setting local player ID from match data in combat init:', this.localPlayerId);
+      } else if (this.networkManager?.getPlayerId()) {
+        this.localPlayerId = this.networkManager.getPlayerId();
+        console.log('🔧 Using network manager player ID in combat init:', this.localPlayerId);
+      } else if (this.socket?.id) {
+        this.localPlayerId = this.socket.id;
+        console.log('🔧 Using socket ID as local player ID in combat init:', this.localPlayerId);
+      } else {
+        this.localPlayerId = `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        console.log('🔧 Generated temporary local player ID in combat init:', this.localPlayerId);
+      }
     }
     
     if (!this.localPlayerId) {
@@ -1044,11 +1452,14 @@ export class MainGameScene {
     const playerState = this.raycaster.getPlayerState();
     const position = { x: playerState.x, y: playerState.y };
     
+    console.log(`⚔️ Registering player ${this.localPlayerId} at position:`, position);
+    
     // Register local player for combat
     this.combatManager.registerPlayer(this.localPlayerId, position, this.localPlayerClass);
     
     // Initialize class-specific combat
     if (this.localPlayerClass === CT.ARCHER) {
+      console.log(`🏹 Registering archer ${this.localPlayerId} at position:`, position, 'angle:', playerState.angle);
       this.archerCombat.registerArcher(this.localPlayerId, position, playerState.angle);
       console.log(`🏹 Archer combat initialized for ${this.localPlayerId}`);
     }
@@ -1073,6 +1484,9 @@ export class MainGameScene {
       this.archerCombat.updateArcherPosition(this.localPlayerId, position, playerState.angle);
     }
   }
+  
+
+  
   public async start(): Promise<void> {
     if (this.running) return;
     
@@ -1110,6 +1524,15 @@ export class MainGameScene {
       console.error('🎮 MainGameScene: Failed to initialize sprite renderer:', error);
     }
     
+    // Initialize projectile sprite manager
+    try {
+      console.log('🚀 MainGameScene: Initializing projectile sprite manager...');
+      await projectileSpriteManager.initialize();
+      console.log('✅ MainGameScene: Projectile sprite manager initialized successfully');
+    } catch (error) {
+      console.error('❌ MainGameScene: Failed to initialize projectile sprite manager:', error);
+    }
+    
     // Set initial player position - use server spawn if available, otherwise random
     let spawnPoint: Vector2;
     if (this.initialPosition) {
@@ -1123,18 +1546,9 @@ export class MainGameScene {
     
     this.raycaster.setPlayerPosition(spawnPoint.x, spawnPoint.y);
     
-    // Register local player sprite for direction tracking
-    // This ensures the local player's sprite direction updates with camera movement
-    if (this.spriteRenderer && this.localPlayerId && this.localPlayerClass) {
-      const playerState = this.raycaster.getPlayerState();
-      this.spriteRenderer.updatePlayerSprite(
-        this.localPlayerId,
-        this.localPlayerClass,
-        spawnPoint,
-        playerState.angle
-      );
-      console.log(`🎯 MainGameScene: Registered local player sprite - ID: ${this.localPlayerId}, Class: ${this.localPlayerClass}`);
-      
+    // Don't register local player sprite - we don't see our own sprite in first-person
+    // Just send initial position with class info
+    if (this.networkManager && this.localPlayerId && this.localPlayerClass) {
       // Send initial position with class info
       this.sendMovementUpdate();
     }
@@ -1142,9 +1556,19 @@ export class MainGameScene {
     // Start network connection
     this.networkManager.connect();
     
-    // If we have a match ID, join it
+    // If we have a match ID, join it (with retry logic)
     if (this.matchId) {
-      this.networkManager.joinMatch(this.matchId, this.localPlayerClass);
+      const attemptJoin = () => {
+        if (this.networkManager.isConnectedToServer() && this.matchId) {
+          this.networkManager.joinMatch(this.matchId, this.localPlayerClass);
+        } else {
+          console.log('🔌 Waiting for connection before joining match...');
+          setTimeout(attemptJoin, 1000);
+        }
+      };
+      
+      // Try to join immediately if connected, otherwise wait
+      attemptJoin();
     }
     
     // Wait for network readiness before starting game loop
@@ -1199,6 +1623,12 @@ export class MainGameScene {
    * Handle network events
    */
   public onPlayerJoined(playerId: string, data: any): void {
+    // SAFETY CHECK: Never add ourselves as a remote player
+    if (playerId === this.localPlayerId) {
+      console.warn(`⚠️ MainGameScene: Attempted to add local player ${playerId} as remote player. Ignoring.`);
+      return;
+    }
+    
     // Get proper spawn position - use server spawn points if available
     const spawnPoints = this.gameMap.getSpawnPoints();
     const defaultPosition = spawnPoints.length > 1 ? spawnPoints[1] : { x: 17, y: 17 }; // Use second spawn point
@@ -1250,6 +1680,30 @@ export class MainGameScene {
     this.showNotification(`${username} has joined the game`, 'info');
     
     console.log(`Player ${username} joined at position (${playerData.position.x}, ${playerData.position.y})`);
+    
+    // DON'T create any local player state - only store minimal data for rendering
+    console.log(`🎯 MainGameScene: Remote player ${playerId} added for rendering only`);
+    
+    // Store minimal data for rendering purposes only
+    this.remotePlayers.set(playerId, {
+      position: data.position || defaultPosition,
+      angle: data.angle || 0,
+      classType: data.classType as ClassType,
+      // No local state, health, armor, etc - server handles all that
+    });
+    
+    // Update renderer immediately
+    this.raycaster.updateOtherPlayer(playerId, playerData.position.x, playerData.position.y, color);
+    
+    // Update sprite renderer
+    this.spriteRenderer.updatePlayerSprite(
+      playerId,
+      playerData.classType as ClassType,
+      playerData.position,
+      playerData.angle,
+      { x: viewerState.x, y: viewerState.y },
+      viewerState.angle
+    );
   }
   
   public onPlayerLeft(playerId: string, data?: any): void {
@@ -1462,15 +1916,55 @@ export class MainGameScene {
   }
   
   /**
+   * Update player ID when received from network manager
+   */
+  public updatePlayerIdFromNetwork(playerId: string): void {
+    if (!this.localPlayerId || this.localPlayerId.startsWith('temp_')) {
+      const oldPlayerId = this.localPlayerId;
+      this.localPlayerId = playerId;
+      console.log(`🔧 MainGameScene: Updated local player ID from network: ${oldPlayerId} -> ${this.localPlayerId}`);
+      
+      // CRITICAL: Tell raycaster about local player ID
+      if (this.raycaster) {
+        this.raycaster.setLocalPlayerId(this.localPlayerId);
+      }
+      
+      // CRITICAL: Remove any sprite registered for local player
+      if (this.spriteRenderer) {
+        this.spriteRenderer.removePlayerSprite(this.localPlayerId);
+        console.log(`🔧 MainGameScene: Removed any sprite for local player ${this.localPlayerId}`);
+      }
+      
+      // Re-initialize combat if needed
+      if (this.combatManager && this.archerCombat) {
+        console.log(`🔧 MainGameScene: Re-initializing combat after player ID update`);
+        this.initializeCombat();
+      }
+    }
+  }
+  
+  /**
    * Handle match joined event from server
    */
   public onMatchJoined(data: any): void {
     console.log('🎮 MainGameScene: Match joined, received data:', data);
     
-    // Set local player ID if provided
-    if (data.yourPlayerId && !this.localPlayerId) {
+    // CRITICAL: Set local player ID from server's yourPlayerId FIRST
+    if (data.yourPlayerId) {
       this.localPlayerId = data.yourPlayerId;
-      console.log(`🎮 MainGameScene: Local player ID set to ${this.localPlayerId}`);
+      console.log(`🎮 MainGameScene: Local player ID set to ${this.localPlayerId} from yourPlayerId`);
+      
+      // CRITICAL: Tell raycaster about local player ID
+      if (this.raycaster) {
+        this.raycaster.setLocalPlayerId(this.localPlayerId);
+      }
+      
+      // Update network manager's player ID too
+      if (this.networkManager && 'updatePlayerIdFromNetwork' in this.networkManager) {
+        (this.networkManager as any).updatePlayerIdFromNetwork(this.localPlayerId);
+      }
+    } else {
+      console.error('⚠️ MainGameScene: No yourPlayerId in match_joined data!');
     }
     
     // Set initial spawn position from server
@@ -1485,12 +1979,13 @@ export class MainGameScene {
       }
     }
     
-    // Handle existing players in the match
+    // Handle existing players in the match - MUST filter out local player
     if (data.players) {
       console.log('🎮 MainGameScene: Processing players from match_joined:', data.players);
+      console.log(`🎮 MainGameScene: Local player ID is: ${this.localPlayerId}`);
+      
       data.players.forEach((player: any) => {
         console.log(`🎮 MainGameScene: Processing player:`, player);
-        // The server sends player1 and player2 objects with playerId, username, rating, classType
         const playerId = player.playerId;
         const classType = player.classType;
         
@@ -1505,9 +2000,9 @@ export class MainGameScene {
           return;
         }
         
+        // CRITICAL: Only add OTHER players, not ourselves
         if (playerId !== this.localPlayerId) {
-          // Log what we're about to process
-          console.log(`🎮 MainGameScene: Adding remote player ${playerId} with class ${classType}`);
+          console.log(`🎮 MainGameScene: Adding REMOTE player ${playerId} with class ${classType}`);
           
           // Add position data for immediate visibility
           const playerData = {
@@ -1522,7 +2017,7 @@ export class MainGameScene {
           // Ensure sprite is immediately visible (not just on movement)
           console.log(`🎯 Setting up sprite for existing player ${playerId} at position (${playerData.position.x}, ${playerData.position.y}) with class ${playerData.classType}`);
         } else {
-          console.log(`🎮 MainGameScene: Skipping local player ${playerId} with class ${classType}`);
+          console.log(`🎮 MainGameScene: Skipping LOCAL player ${playerId} with class ${classType} - we don't render our own sprite`);
         }
       });
     }
@@ -1541,109 +2036,158 @@ export class MainGameScene {
    * Handle game state update from server
    */
   public handleGameUpdate(gameUpdate: any) {
-    console.log(`📨 Received game:update event:`, {
-      matchId: gameUpdate?.matchId,
-      tick: gameUpdate?.tick,
-      playerCount: gameUpdate?.players?.length,
-      projectileCount: gameUpdate?.projectiles?.length,
-      eventCount: gameUpdate?.events?.length
-    });
-    
     if (!gameUpdate || !gameUpdate.players) return;
     
-    // Update all player positions
+    
+    // Update all player positions EXCEPT our own
     for (const playerData of gameUpdate.players) {
-      if (playerData.id !== this.localPlayerId) {
+      // CRITICAL: Filter out local player - we control our own position
+      if (playerData.id && playerData.id !== this.localPlayerId) {
         this.onPlayerMoved(playerData.id, playerData.position, playerData.angle || 0);
       }
     }
     
     // Handle projectile updates if present
-    if (gameUpdate.projectiles && this.onProjectileUpdate) {
-      console.log(`🎯 Processing ${gameUpdate.projectiles.length} projectiles from game update`);
+    if (gameUpdate.projectiles) {
+      console.log(`🎯 [STEP 21] Processing ${gameUpdate.projectiles.length} projectiles from game update:`, gameUpdate.projectiles);
       this.onProjectileUpdate(gameUpdate.projectiles);
     }
     
-    // Handle game events if present
-    if (gameUpdate.events && this.onGameEvents) {
-      console.log(`📋 Processing ${gameUpdate.events.length} game events`);
-      this.onGameEvents(gameUpdate.events);
+    // ... existing code ...
+    // UPDATE: Process ALL server state, not just positions
+    for (const playerData of gameUpdate.players) {
+      if (playerData.id === this.localPlayerId) {
+        // Update our own health/armor from server (authoritative)
+        if (playerData.health !== undefined) {
+          this.playerHealth = playerData.health;
+        }
+        if (playerData.armor !== undefined) {
+          this.playerArmor = playerData.armor;
+        }
+        // But skip position update - we control our own movement
+        continue;
+      }
+      
+      // For other players, update everything
+      this.onPlayerMoved(playerData.id, playerData.position, playerData.angle || 0, playerData.classType);
+      
+      // Store their health/armor for UI display if needed
+      let remotePlayer = this.remotePlayers.get(playerData.id);
+      if (remotePlayer) {
+        remotePlayer.health = playerData.health;
+        remotePlayer.armor = playerData.armor;
+        remotePlayer.isAlive = playerData.isAlive;
+      }
+    }
+    
+    // Process game events (kills, damage, etc)
+    if (gameUpdate.events) {
+      for (const event of gameUpdate.events) {
+        this.processGameEvent(event);
+      }
     }
   }
 
   /**
-   * Handle projectile updates from server (authoritative)
+   * Process game events from server (damage, deaths, etc)
+   */
+  private processGameEvent(event: any): void {
+    switch (event.type) {
+      case 'damage_dealt':
+        // Visual feedback for damage
+        if (event.data.targetId === this.localPlayerId) {
+          // Flash screen red or similar effect
+          console.log(`💥 Took ${event.data.damage} damage`);
+        }
+        break;
+        
+      case 'player_death':
+        if (event.playerId === this.localPlayerId) {
+          console.log(`☠️ You died!`);
+          this.showNotification('You have been eliminated!', 'warning');
+        } else {
+          const killer = event.data.killerId === this.localPlayerId ? 'You' : 'Someone';
+          console.log(`☠️ ${killer} eliminated a player`);
+        }
+        break;
+        
+      case 'projectile_hit':
+        // Visual/audio feedback for hits
+        console.log(`🎯 Projectile hit at (${event.data.position.x}, ${event.data.position.y})`);
+        break;
+        
+      case 'game_end':
+        if (event.data.winnerId === this.localPlayerId) {
+          this.showNotification('Victory!', 'success');
+        } else {
+          this.showNotification('Defeat!', 'warning');
+        }
+        break;
+    }
+  }
+
+  /**
+   * Handle projectile updates from server
+   * Now updates direct projectile management instead of CombatManager
    */
   public onProjectileUpdate(serverProjectiles: any[]): void {
-    if (!this.combatManager) return;
+    console.log(`🎯 [STEP 22] Processing ${serverProjectiles.length} projectiles from server (direct management)`);
     
-    console.log(`📦 Received projectile update with ${serverProjectiles.length} projectiles`);
-    
-    // Get current projectiles map
-    const currentProjectiles = this.combatManager.getProjectiles();
+    // Get current projectiles for comparison
+    const currentProjectileIds = new Set(this.renderProjectiles.keys());
     const serverProjectileIds = new Set(serverProjectiles.map(p => p.id));
     
-    // Remove projectiles that no longer exist on server
-    for (const [projectileId, projectile] of currentProjectiles) {
-      if (!serverProjectileIds.has(projectileId)) {
-        currentProjectiles.delete(projectileId);
-        console.log(`🗑️ Removed projectile ${projectileId} (no longer on server)`);
+    // Remove projectiles that are no longer on the server
+    for (const id of currentProjectileIds) {
+      if (!serverProjectileIds.has(id)) {
+        console.log(`🗑️ Removing local projectile ${id} - not in server state`);
+        this.renderProjectiles.delete(id);
+        this.raycaster.removeProjectile(id);
       }
     }
     
-    // Create/update projectiles from server data
+    // Add or update projectiles from server
     for (const serverProjectile of serverProjectiles) {
-      // Check if we already have this projectile
-      let existingProjectile = currentProjectiles.get(serverProjectile.id);
+      const existing = this.renderProjectiles.get(serverProjectile.id);
       
-      if (existingProjectile) {
-        // Update existing projectile position from server
-        const state = existingProjectile.getState();
-        state.position = { ...serverProjectile.position };
-        state.velocity = { ...serverProjectile.velocity };
-        state.rotation = serverProjectile.rotation;
-        state.isActive = true;
-        console.log(`📍 Updated projectile ${serverProjectile.id} position`);
-      } else {
-        // Create new projectile from server data
-        const projectileConfig = {
-          id: serverProjectile.id,
-          type: serverProjectile.type,
-          damage: serverProjectile.damage,
-          speed: 200, // Slower speed for debugging visibility
-          range: 13,
-          size: { width: 32, height: 12 }, // Larger size for visibility
-          piercing: serverProjectile.piercing || false,
-          homing: serverProjectile.homing || false,
-          armorPenetration: 50,
-          effects: [],
-          spriteSheet: {
-            path: '/assets/projectiles/arrow_sheet.png',
-            frameWidth: 48,
-            frameHeight: 48,
-            totalFrames: 16
-          }
-        };
+      if (existing) {
+        // Update existing projectile
+        existing.position = { ...serverProjectile.position };
+        existing.velocity = { ...serverProjectile.velocity };
+        existing.rotation = serverProjectile.rotation;
+        existing.lastUpdate = Date.now();
         
-        const projectileState = {
+        console.log(`📍 Updated projectile ${serverProjectile.id} to pos(${serverProjectile.position.x.toFixed(1)}, ${serverProjectile.position.y.toFixed(1)})`);
+      } else {
+        // Create new projectile
+        this.renderProjectiles.set(serverProjectile.id, {
           id: serverProjectile.id,
           position: { ...serverProjectile.position },
           velocity: { ...serverProjectile.velocity },
           rotation: serverProjectile.rotation,
-          distanceTraveled: 0,
-          isActive: true,
+          type: serverProjectile.type,
           ownerId: serverProjectile.ownerId,
-          targetId: serverProjectile.targetId,
           createdAt: Date.now(),
           lastUpdate: Date.now()
-        };
+        });
         
-        // Import Projectile class and create instance
-        const projectile = new Projectile(projectileConfig, projectileState);
-        currentProjectiles.set(serverProjectile.id, projectile);
-        
-        console.log(`🆕 Created projectile ${serverProjectile.id} from server (owner: ${serverProjectile.ownerId})`);
+        console.log(`✅ [STEP 23] Created new projectile ${serverProjectile.id} at (${serverProjectile.position.x.toFixed(1)}, ${serverProjectile.position.y.toFixed(1)})`);
       }
+    }
+    
+    console.log(`📊 Total projectiles after sync: ${this.renderProjectiles.size}`);
+  }
+
+  /**
+   * Get projectile color for raycaster rendering
+   */
+  private getProjectileColor(type: string): string {
+    switch (type) {
+      case 'arrow': return '#ffd700'; // Gold
+      case 'ice_shard': return '#60a5fa'; // Light blue
+      case 'fire_bomb': return '#ef4444'; // Red
+      case 'magic_missile': return '#8b5cf6'; // Purple
+      default: return '#ffffff'; // White
     }
   }
 
@@ -1723,6 +2267,9 @@ export class MainGameScene {
       this.combatManager.getProjectiles().delete(data.projectileId);
     }
     
+    // Remove from raycaster
+    this.raycaster.removeProjectile(data.projectileId);
+    
     console.log(`🗑️ Server destroyed projectile: ${data.projectileId}`);
   }
 
@@ -1749,6 +2296,53 @@ export class MainGameScene {
   private createHitEffect(position: Vector2, effects: string[]): void {
     // TODO: Implement visual hit effects based on position and effects
     console.log(`✨ Creating hit effect at (${position.x}, ${position.y}) with effects: ${effects.join(', ')}`);
+  }
+
+  /**
+   * Animate a local debug projectile (simple movement simulation)
+   */
+  private animateLocalProjectile(projectileId: string): void {
+    const projectile = this.renderProjectiles.get(projectileId);
+    if (!projectile) return;
+    
+    const startTime = Date.now();
+    const maxLifetime = 3000; // 3 seconds
+    const frameInterval = 16; // ~60fps
+    
+    const animate = () => {
+      const now = Date.now();
+      const elapsed = now - startTime;
+      
+      if (elapsed > maxLifetime || !this.renderProjectiles.has(projectileId)) {
+        // Remove projectile after max lifetime
+        this.renderProjectiles.delete(projectileId);
+        console.log(`🗑️ Local debug projectile ${projectileId} expired`);
+        return;
+      }
+      
+      const currentProjectile = this.renderProjectiles.get(projectileId);
+      if (currentProjectile) {
+        // Simple physics: move projectile based on velocity
+        const deltaTime = frameInterval / 1000; // Convert to seconds
+        currentProjectile.position.x += currentProjectile.velocity.x * deltaTime;
+        currentProjectile.position.y += currentProjectile.velocity.y * deltaTime;
+        currentProjectile.lastUpdate = now;
+        
+        // Check bounds (remove if out of map)
+        if (currentProjectile.position.x < 0 || currentProjectile.position.x > 20 ||
+            currentProjectile.position.y < 0 || currentProjectile.position.y > 20) {
+          this.renderProjectiles.delete(projectileId);
+          console.log(`🗑️ Local debug projectile ${projectileId} left map bounds`);
+          return;
+        }
+      }
+      
+      // Continue animation
+      setTimeout(animate, frameInterval);
+    };
+    
+    // Start animation
+    animate();
   }
 
   /**
@@ -1823,5 +2417,27 @@ export class MainGameScene {
     });
     
     console.log(`📡 Sent dash update: ${direction} to ${newPosition.x.toFixed(1)}, ${newPosition.y.toFixed(1)}`);
+  }
+  
+  /**
+   * Handle initial game state from server
+   */
+  public onInitialGameState(data: any): void {
+    console.log('🎮 MainGameScene: Received initial game state:', data);
+    
+    // Set our health/armor from server
+    const ourPlayer = data.players?.find((p: any) => p.id === this.localPlayerId);
+    if (ourPlayer) {
+      this.playerHealth = ourPlayer.health;
+      this.playerMaxHealth = ourPlayer.maxHealth || 100;
+      this.playerArmor = ourPlayer.armor;
+      this.playerMaxArmor = ourPlayer.maxArmor || 50;
+    }
+    
+    // Start the game if ready
+    if (data.status === 'IN_PROGRESS' && !this.running) {
+      console.log('🎮 Game is in progress, starting game loop');
+      this.start();
+    }
   }
 } 

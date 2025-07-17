@@ -46,6 +46,15 @@ export class ArcherCombat {
     const basicCooldown = 1.0 / weapon.attackSpeed; // Convert attacks per second to cooldown
     const specialCooldown = calculateEffectiveCooldown(special.baseCooldown, classConfig.stats.intelligence);
     
+    // Check if archer is already registered
+    const existingArcher = this.archerStates.get(playerId);
+    if (existingArcher) {
+      console.log(`🏹 Archer ${playerId} already registered, updating position and angle`);
+      existingArcher.position = { ...position };
+      existingArcher.facingAngle = facingAngle;
+      return;
+    }
+    
     const archerState: ArcherState = {
       playerId,
       position: { ...position },
@@ -65,6 +74,8 @@ export class ArcherCombat {
     this.combatManager.registerPlayer(playerId, position, ClassType.ARCHER);
     
     console.log(`🏹 Archer registered: ${playerId} (Basic: ${basicCooldown.toFixed(2)}s, Special: ${specialCooldown.toFixed(1)}s)`);
+    console.log(`🏹 Current archer states count: ${this.archerStates.size}`);
+    console.log(`🏹 Archer states keys:`, Array.from(this.archerStates.keys()));
   }
 
   /**
@@ -85,8 +96,15 @@ export class ArcherCombat {
    * Attempt basic attack (piercing arrow)
    */
   public tryBasicAttack(playerId: string, targetPosition?: Vector2): boolean {
+    console.log(`🏹 tryBasicAttack called for playerId: ${playerId}`);
+    console.log(`🏹 Current archer states count: ${this.archerStates.size}`);
+    console.log(`🏹 Archer states keys:`, Array.from(this.archerStates.keys()));
+    
     const archer = this.archerStates.get(playerId);
-    if (!archer) return false;
+    if (!archer) {
+      console.warn(`🏹 No archer state found for playerId: ${playerId}`);
+      return false;
+    }
     
     const currentTime = Date.now() / 1000;
     

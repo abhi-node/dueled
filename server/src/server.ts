@@ -19,6 +19,7 @@ import { db } from './services/database.js';
 import { redis } from './services/redis.js';
 import { matchmakingService, setGameHandler } from './services/matchmakingService.js';
 import { gameStateService } from './services/gameStateService.js';
+import { migrationService } from './services/migrations.js';
 
 dotenv.config();
 
@@ -37,6 +38,17 @@ const PORT = process.env.PORT || 3000;
 async function initializeServices() {
   await db.connect();
   await redis.connect();
+  
+  // Run database migrations if connected
+  if (db.isConnected()) {
+    try {
+      logger.info('Running database migrations...');
+      await migrationService.runMigrations();
+    } catch (error) {
+      logger.error('Migration error (non-fatal):', error);
+      // Continue even if migrations fail - the app can work with base schema
+    }
+  }
 }
 
 // Security middleware
@@ -350,6 +362,15 @@ async function startServer() {
         }
       }
     }, 30000); // Check every 30 seconds
+    
+    // Setup periodic matchmaking queue processing
+    setInterval(async () => {
+      try {
+        await matchmakingService.processQueue();
+      } catch (error) {
+        logger.error('Error processing matchmaking queue:', error);
+      }
+    }, 500); // Process queue every 500ms for faster matching
     
   } catch (error) {
     logger.error('Failed to start server:', error);

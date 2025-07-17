@@ -424,16 +424,16 @@ export class PlayerService {
     }
 
     try {
+      // Use only columns from base schema to avoid migration dependency
       const result = await db.query(
         `SELECT 
           p.id, p.username, p.email, p.is_anonymous, p.created_at, p.last_login, p.is_active,
-          ps.rating, ps.rating_deviation, ps.rating_volatility, ps.matches_played, 
-          ps.wins, ps.losses, ps.draws, ps.favorite_class, ps.total_damage_dealt, 
-          ps.total_damage_taken, ps.total_playtime_seconds, ps.highest_rating, 
-          ps.win_streak, ps.current_streak, ps.last_match_date, ps.average_match_duration,
-          ps.damage_per_match, ps.accuracy_percentage, ps.preferred_play_style, ps.class_stats
+          ps.rating, ps.matches_played, ps.wins, ps.losses, ps.draws, 
+          ps.favorite_class, ps.total_damage_dealt, ps.total_damage_taken, 
+          ps.total_playtime_seconds, ps.highest_rating, ps.win_streak, 
+          ps.current_streak, ps.updated_at
         FROM players p
-        JOIN player_stats ps ON p.id = ps.player_id
+        LEFT JOIN player_stats ps ON p.id = ps.player_id
         WHERE p.id = $1 AND p.is_active = true`,
         [playerId]
       );
@@ -443,6 +443,57 @@ export class PlayerService {
       }
 
       const row = result.rows[0];
+      
+      // If player_stats doesn't exist, provide defaults
+      const stats = row.rating !== null ? {
+        playerId: row.id,
+        rating: row.rating || 1000,
+        ratingDeviation: 350, // Default Glicko-2 value
+        ratingVolatility: 0.06, // Default Glicko-2 value
+        matchesPlayed: row.matches_played || 0,
+        wins: row.wins || 0,
+        losses: row.losses || 0,
+        draws: row.draws || 0,
+        winRate: (row.matches_played || 0) > 0 ? ((row.wins || 0) / (row.matches_played || 0)) * 100 : 0,
+        favoriteClass: row.favorite_class,
+        totalDamageDealt: row.total_damage_dealt || 0,
+        totalDamageTaken: row.total_damage_taken || 0,
+        totalPlaytime: row.total_playtime_seconds || 0,
+        highestRating: row.highest_rating || 1000,
+        winStreak: row.win_streak || 0,
+        currentStreak: row.current_streak || 0,
+        lastMatchDate: row.updated_at, // Use updated_at as proxy for last match
+        averageMatchDuration: 300, // Default 5 minutes
+        damagePerMatch: 0,
+        accuracyPercentage: 0,
+        preferredPlayStyle: undefined,
+        classStats: {}
+      } : {
+        // Default stats if player_stats row doesn't exist
+        playerId: row.id,
+        rating: 1000,
+        ratingDeviation: 350,
+        ratingVolatility: 0.06,
+        matchesPlayed: 0,
+        wins: 0,
+        losses: 0,
+        draws: 0,
+        winRate: 0,
+        favoriteClass: undefined,
+        totalDamageDealt: 0,
+        totalDamageTaken: 0,
+        totalPlaytime: 0,
+        highestRating: 1000,
+        winStreak: 0,
+        currentStreak: 0,
+        lastMatchDate: null,
+        averageMatchDuration: 300,
+        damagePerMatch: 0,
+        accuracyPercentage: 0,
+        preferredPlayStyle: undefined,
+        classStats: {}
+      };
+      
       return {
         id: row.id,
         username: row.username,
@@ -451,30 +502,7 @@ export class PlayerService {
         createdAt: row.created_at,
         lastLogin: row.last_login,
         isActive: row.is_active,
-        stats: {
-          playerId: row.id,
-          rating: row.rating,
-          ratingDeviation: row.rating_deviation,
-          ratingVolatility: row.rating_volatility,
-          matchesPlayed: row.matches_played,
-          wins: row.wins,
-          losses: row.losses,
-          draws: row.draws,
-          winRate: row.matches_played > 0 ? (row.wins / row.matches_played) * 100 : 0,
-          favoriteClass: row.favorite_class,
-          totalDamageDealt: row.total_damage_dealt,
-          totalDamageTaken: row.total_damage_taken,
-          totalPlaytime: row.total_playtime_seconds,
-          highestRating: row.highest_rating,
-          winStreak: row.win_streak,
-          currentStreak: row.current_streak,
-          lastMatchDate: row.last_match_date,
-          averageMatchDuration: row.average_match_duration,
-          damagePerMatch: row.damage_per_match,
-          accuracyPercentage: row.accuracy_percentage,
-          preferredPlayStyle: row.preferred_play_style,
-          classStats: row.class_stats || {}
-        }
+        stats
       };
     } catch (error) {
       logger.error('Database error getting player profile:', error);

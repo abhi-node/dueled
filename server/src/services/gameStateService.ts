@@ -158,6 +158,9 @@ export class GameStateService {
   // Game loop timers
   private gameLoops: Map<string, NodeJS.Timeout> = new Map();
   
+  // Game loop registry to track running loops
+  private runningLoops: Set<string> = new Set();
+  
   // Game handler for broadcasting
   private gameHandler: any = null;
   
@@ -257,7 +260,7 @@ export class GameStateService {
       logger.info(`🚀 Attempting to start game loop for match ${matchId}`);
       
       // Check if game loop is already running
-      if (this.gameLoops.has(matchId)) {
+      if (this.gameLoops.has(matchId) || this.runningLoops.has(matchId)) {
         logger.warn(`⚠️ Game loop already running for match ${matchId}`);
         return true; // Already running is considered success
       }
@@ -268,35 +271,46 @@ export class GameStateService {
         return false;
       }
       
-      logger.info(`📊 Game state status before start: ${gameState.status}`);
-      
       // Update status to in progress
       gameState.status = MatchStatus.IN_PROGRESS;
       await this.updateGameState(matchId, gameState);
       
-      logger.info(`✅ Game state status updated to: ${gameState.status}`);
+      // Mark loop as running before creating interval
+      this.runningLoops.add(matchId);
       
-      // Start fixed timestep game loop
+      // Start fixed timestep game loop with defensive programming
       const gameLoop = setInterval(() => {
-        this.processGameTick(matchId).catch(error => {
-          logger.error(`Game loop error for match ${matchId}:`, error);
-        });
+        this.safeProcessGameTick(matchId);
       }, this.TICK_INTERVAL);
       
       this.gameLoops.set(matchId, gameLoop);
       
-      logger.info(`🎮 Game loop started for match ${matchId} at ${this.TICK_RATE} TPS (tick every ${this.TICK_INTERVAL}ms)`);
+      logger.info(`✅ Game loop started successfully for match ${matchId}`);
       
       // Do an immediate tick to test
-      this.processGameTick(matchId).catch(error => {
-        logger.error(`Initial game tick error for match ${matchId}:`, error);
-      });
+      this.safeProcessGameTick(matchId);
       
       return true;
     } catch (error) {
       logger.error('Error starting game loop:', error);
+      // Clean up if we failed to start
+      this.runningLoops.delete(matchId);
       return false;
     }
+  }
+
+  /**
+   * Safely process game tick with error handling
+   */
+  private safeProcessGameTick(matchId: string): void {
+    this.processGameTick(matchId).catch(error => {
+      logger.error(`Game loop error for match ${matchId}:`, error);
+      // If we get repeated errors, stop the game loop
+      if (error.message && error.message.includes('Game state not found')) {
+        logger.warn(`Stopping orphaned game loop for match ${matchId}`);
+        this.stopGameLoop(matchId);
+      }
+    });
   }
 
   /**
@@ -307,8 +321,20 @@ export class GameStateService {
     if (gameLoop) {
       clearInterval(gameLoop);
       this.gameLoops.delete(matchId);
+      this.runningLoops.delete(matchId);
       logger.info(`Game loop stopped for match ${matchId}`);
+    } else if (this.runningLoops.has(matchId)) {
+      // Loop was marked as running but interval was lost
+      this.runningLoops.delete(matchId);
+      logger.warn(`Cleaned up orphaned running loop marker for match ${matchId}`);
     }
+  }
+
+  /**
+   * Check if game loop is running for a match
+   */
+  async isGameLoopRunning(matchId: string): Promise<boolean> {
+    return this.gameLoops.has(matchId) || this.runningLoops.has(matchId);
   }
 
   /**
@@ -317,18 +343,21 @@ export class GameStateService {
   private async processGameTick(matchId: string): Promise<void> {
     try {
       const gameState = await this.getGameState(matchId);
-      if (!gameState || gameState.status !== MatchStatus.IN_PROGRESS) {
-        logger.warn(`⏸️ Skipping tick for match ${matchId}: status=${gameState?.status}`);
+      if (!gameState) {
+        // Stop the loop if state doesn't exist
+        logger.error(`Game state not found for match ${matchId} during tick processing`);
+        await this.stopGameLoop(matchId);
+        return;
+      }
+      
+      if (gameState.status !== MatchStatus.IN_PROGRESS) {
+        logger.warn(`⏸️ Skipping tick for match ${matchId}: status=${gameState.status}`);
         return;
       }
       
       const now = Date.now();
       const deltaTime = now - gameState.lastUpdate;
       
-      // Log tick info periodically
-      if (Math.floor(gameState.gameTime / 1000) % 5 === 0 && deltaTime < 100) {
-        logger.debug(`🎮 Game tick ${Math.floor(gameState.gameTime / this.TICK_INTERVAL)} for match ${matchId}`);
-      }
       
       // Process player inputs
       await this.processPlayerInputs(gameState, deltaTime);
@@ -372,6 +401,13 @@ export class GameStateService {
   private async processPlayerInputs(gameState: ServerGameState, deltaTime: number): Promise<void> {
     let totalInputsProcessed = 0;
     
+    // Log input queue state
+    logger.info(`🔍 [INPUT CHECK] Processing inputs for match ${gameState.matchId}:`);
+    for (const [playerId, inputs] of gameState.playerInputs) {
+      const unprocessed = inputs.filter(input => !input.processed).length;
+      logger.info(`  - Player ${playerId}: ${inputs.length} total inputs, ${unprocessed} unprocessed`);
+    }
+    
     for (const [playerId, inputs] of gameState.playerInputs) {
       const player = gameState.players.get(playerId);
       if (!player || !player.isAlive) continue;
@@ -380,7 +416,7 @@ export class GameStateService {
       const unprocessedInputs = inputs.filter(input => !input.processed);
       
       if (unprocessedInputs.length > 0) {
-        logger.info(`📥 Processing ${unprocessedInputs.length} inputs for player ${playerId}`);
+        logger.info(`📥 [STEP 7] Processing ${unprocessedInputs.length} inputs for player ${playerId}`);
       }
       
       const inputsToProcess = unprocessedInputs.slice(0, this.MAX_EVENTS_PER_TICK);
@@ -392,8 +428,19 @@ export class GameStateService {
       }
       
       // Remove processed inputs (keep recent ones for validation)
+      // IMPORTANT: Keep unprocessed inputs regardless of age!
       const cutoffTime = Date.now() - this.INTERPOLATION_BUFFER;
-      gameState.playerInputs.set(playerId, inputs.filter(input => input.timestamp > cutoffTime));
+      const beforeCount = inputs.length;
+      const filteredInputs = inputs.filter(input => {
+        // Keep if: unprocessed OR recent (for validation)
+        return !input.processed || input.timestamp > cutoffTime;
+      });
+      gameState.playerInputs.set(playerId, filteredInputs);
+      const afterCount = filteredInputs.length;
+      
+      if (beforeCount !== afterCount) {
+        logger.info(`🧹 Cleaned up ${beforeCount - afterCount} old processed inputs for player ${playerId}`);
+      }
     }
     
     if (totalInputsProcessed > 0) {
@@ -407,7 +454,7 @@ export class GameStateService {
   private async processPlayerInput(gameState: ServerGameState, player: ServerPlayer, input: PlayerInput, deltaTime: number): Promise<void> {
     const action = input.action;
     
-    logger.info(`🎮 Processing ${action.type} action for player ${player.id}`);
+    logger.info(`🎮 [STEP 8] Processing ${action.type} action for player ${player.id}`);
     
     // Validate input timing
     if (input.timestamp < player.lastInputTime) {
@@ -424,7 +471,7 @@ export class GameStateService {
         break;
         
       case ActionType.ATTACK:
-        logger.info(`⚔️ Processing ATTACK action for player ${player.id}`);
+        logger.info(`⚔️ [STEP 8.5] Processing ATTACK action for player ${player.id}`);
         await this.processAttack(gameState, player, action.data);
         break;
         
@@ -441,7 +488,21 @@ export class GameStateService {
    * Process player movement
    */
   private processMovement(gameState: ServerGameState, player: ServerPlayer, moveData: any): void {
-    const { position, velocity, rotation } = moveData;
+    // Allow velocity to be omitted by client – default to stationary
+    const {
+      position,
+      // Some clients may not send velocity (e.g. they only transmit position & angle).
+      // Defaulting to { x: 0, y: 0 } prevents the entire game tick from crashing
+      velocity = { x: 0, y: 0 },
+      rotation
+    } = moveData;
+
+    // Guard against completely missing or malformed velocity objects
+    if (velocity === null || typeof velocity !== 'object' || velocity.x === undefined || velocity.y === undefined) {
+      logger.warn(`⚠️  Missing or invalid velocity in move action from player ${player.id}. Using zero velocity.`);
+      (velocity as any).x = 0;
+      (velocity as any).y = 0;
+    }
     
     // Validate position
     const validationResult = this.validatePosition(position, gameState.arena);
@@ -475,11 +536,11 @@ export class GameStateService {
   private async processAttack(gameState: ServerGameState, player: ServerPlayer, attackData: any): Promise<void> {
     const { direction, attackType, targetPosition } = attackData;
     
-    logger.info(`⚔️ Processing ${attackType || 'basic'} attack from player ${player.id} (${player.classType})`);
+    logger.info(`⚔️ [STEP 9] Processing ${attackType || 'basic'} attack from player ${player.id} (${player.classType})`);
     
     // Check if this is a projectile-based attack
     if (this.isProjectileClass(player.classType)) {
-      logger.info(`🏹 Player ${player.id} is projectile class, processing projectile attack`);
+      logger.info(`🏹 [STEP 9.5] Player ${player.id} is projectile class, processing projectile attack`);
       await this.processProjectileAttack(gameState, player, attackData);
     } else {
       // Handle melee/instant attacks for other classes
@@ -492,7 +553,25 @@ export class GameStateService {
    * Process projectile-based attack (Archer, Mage with projectiles)
    */
   private async processProjectileAttack(gameState: ServerGameState, player: ServerPlayer, attackData: any): Promise<void> {
-    const { direction, attackType, targetPosition } = attackData;
+    let { direction, attackType, targetPosition } = attackData;
+    
+    logger.info(`🏹 [STEP 10] === PROJECTILE ATTACK PROCESSING START ===`);
+    logger.info(`🏹 [STEP 10] Processing projectile attack for player ${player.id} (${player.classType})`);
+    logger.info(`📊 [STEP 10] Current game state has ${gameState.projectiles.size} projectiles`);
+    logger.info(`📊 [STEP 10] Attack data received: ${JSON.stringify({ direction, attackType, targetPosition })}`);
+    
+    // 🔒 SAFETY: ensure we always have a direction object
+    if (!direction && targetPosition) {
+      const dx = targetPosition.x - player.position.x;
+      const dy = targetPosition.y - player.position.y;
+      const len = Math.hypot(dx, dy) || 1;
+      direction = { x: dx / len, y: dy / len };
+      logger.info(`🔒 [STEP 10.1] Created direction from targetPosition: ${JSON.stringify(direction)}`);
+    }
+    if (!direction) {
+      direction = { x: 1, y: 0 };   // DEFAULT: facing right
+      logger.warn(`🔒 [STEP 10.1] No direction provided, defaulting to (1, 0)`);
+    }
     
     // Calculate direction vector
     let attackDirection = direction;
@@ -503,7 +582,27 @@ export class GameStateService {
       if (distance > 0) {
         attackDirection = { x: dx / distance, y: dy / distance };
       }
+      logger.info(`📊 [STEP 10.5] Calculated direction from targetPosition: (${attackDirection.x.toFixed(2)}, ${attackDirection.y.toFixed(2)})`);
     }
+    
+    // Ensure direction is normalized
+    const dirMagnitude = Math.sqrt(attackDirection.x * attackDirection.x + attackDirection.y * attackDirection.y);
+    if (dirMagnitude > 0) {
+      attackDirection.x /= dirMagnitude;
+      attackDirection.y /= dirMagnitude;
+    } else {
+      // Default to facing right if no direction
+      attackDirection = { x: 1, y: 0 };
+      logger.warn(`⚠️ [STEP 10.5] No valid direction provided, defaulting to (1, 0)`);
+    }
+    
+    // 🔒 SAFETY: validate direction components for NaN
+    if (Number.isNaN(attackDirection.x) || Number.isNaN(attackDirection.y)) {
+      logger.warn(`🔒 [STEP 10.5] Invalid direction components (NaN) from player ${player.id}, aborting attack`);
+      return; // Don't create a projectile with NaN vectors
+    }
+    
+    logger.info(`📊 [STEP 10.6] Final normalized direction: (${attackDirection.x.toFixed(2)}, ${attackDirection.y.toFixed(2)})`);
     
     // Determine projectile type based on class
     let projectileType = 'arrow';
@@ -513,18 +612,37 @@ export class GameStateService {
       projectileType = 'magic_missile';
     }
     
+    logger.info(`🎯 [STEP 11] Creating ${projectileType} projectile for ${player.id} at position (${player.position.x.toFixed(1)}, ${player.position.y.toFixed(1)}) with direction (${attackDirection.x.toFixed(2)}, ${attackDirection.y.toFixed(2)})`);
+    
     // Create projectile
-    const projectile = this.createProjectile(gameState, {
+    const projectileData = {
       type: projectileType,
       ownerId: player.id,
       position: player.position,
       direction: attackDirection,
       classType: player.classType,
       attackType: attackType || 'basic'
-    });
+    };
+    
+    logger.info(`📊 [STEP 11.5] About to call createProjectile with data: ${JSON.stringify(projectileData)}`);
+    
+    const projectile = this.createProjectile(gameState, projectileData);
     
     if (projectile) {
-      logger.debug(`Player ${player.id} (${player.classType}) fired ${projectileType} projectile`);
+      logger.info(`✅ [STEP 11.6] Successfully created ${projectileType} projectile ${projectile.id} for ${player.id}`);
+      logger.info(`📊 [STEP 11.7] Projectile stats: pos(${projectile.position.x.toFixed(2)}, ${projectile.position.y.toFixed(2)}), vel(${projectile.velocity.x.toFixed(2)}, ${projectile.velocity.y.toFixed(2)})`);
+      logger.info(`📊 [STEP 11.8] Game state now has ${gameState.projectiles.size} projectiles`);
+      
+      // CRITICAL: Save the game state to persist the projectile
+      const matchId = gameState.matchId;
+      await this.updateGameState(matchId, gameState);
+      logger.info(`💾 [STEP 11.85] Game state saved after adding projectile`);
+      
+      logger.info(`🏹 [STEP 11.9] === PROJECTILE ATTACK PROCESSING END (SUCCESS) ===`);
+    } else {
+      logger.error(`❌ [STEP 11.9] Failed to create ${projectileType} projectile for ${player.id}`);
+      logger.error(`📊 [STEP 11.9] createProjectile returned null/undefined`);
+      logger.info(`🏹 [STEP 11.9] === PROJECTILE ATTACK PROCESSING END (FAILED) ===`);
     }
   }
 
@@ -756,7 +874,11 @@ export class GameStateService {
     const activeProjectiles = allProjectiles.filter(projectile => projectile.isActive);
     
     if (allProjectiles.length > 0) {
-      logger.info(`📊 Projectiles in game state: ${allProjectiles.length} total, ${activeProjectiles.length} active`);
+      logger.info(`📊 [STEP 15] Projectiles in game state: ${allProjectiles.length} total, ${activeProjectiles.length} active`);
+      // Log details of each projectile
+      for (const projectile of activeProjectiles) {
+        logger.info(`📍 [STEP 15] Projectile ${projectile.id}: pos(${projectile.position.x.toFixed(2)}, ${projectile.position.y.toFixed(2)}), vel(${projectile.velocity.x.toFixed(2)}, ${projectile.velocity.y.toFixed(2)}), active=${projectile.isActive}`);
+      }
     }
     
     const projectileUpdates = activeProjectiles.map(projectile => ({
@@ -787,7 +909,8 @@ export class GameStateService {
     };
     
     if (projectileUpdates.length > 0) {
-      logger.info(`📤 Including ${projectileUpdates.length} projectiles in game update for match ${gameState.matchId}`);
+      logger.info(`📤 [STEP 16] Including ${projectileUpdates.length} projectiles in game update for match ${gameState.matchId}`);
+      logger.info(`📤 [STEP 16] Projectile update data: ${JSON.stringify(projectileUpdates.map(p => ({id: p.id, pos: p.position, vel: p.velocity})))}`);
     }
     
     return update;
@@ -798,9 +921,9 @@ export class GameStateService {
    */
   private async broadcastGameUpdate(matchId: string, gameUpdate: GameUpdate): Promise<void> {
     try {
-      // Log projectile count for debugging
+      // Log projectile count for debugging (always log when there are projectiles)
       if (gameUpdate.projectiles && gameUpdate.projectiles.length > 0) {
-        logger.info(`📡 Broadcasting game update for match ${matchId} with ${gameUpdate.projectiles.length} projectiles`);
+        logger.info(`📡 [STEP 17] Broadcasting game update for match ${matchId} with ${gameUpdate.projectiles.length} projectiles`);
       }
       
       // Store update in Redis for WebSocket handler
@@ -815,9 +938,11 @@ export class GameStateService {
       
       await redis.lpush('websocket:broadcasts', JSON.stringify(broadcastEvent));
       
-      // Direct broadcast if gameHandler is available
+      // Direct broadcast if gameHandler is available (this is the main path)
       if (this.gameHandler) {
         this.gameHandler.broadcastGameUpdate(matchId, gameUpdate);
+      } else {
+        logger.warn(`⚠️ No game handler available for broadcasting to match ${matchId}`);
       }
     } catch (error) {
       logger.error('Error broadcasting game update:', error);
@@ -829,7 +954,7 @@ export class GameStateService {
    */
   async addPlayerInput(matchId: string, playerId: string, action: GameAction): Promise<boolean> {
     try {
-      logger.info(`➕ Adding ${action.type} input for player ${playerId} in match ${matchId}`);
+      logger.info(`➕ [STEP 6] Adding ${action.type} input for player ${playerId} in match ${matchId}`);
       
       const gameState = await this.getGameState(matchId);
       if (!gameState) {
@@ -837,7 +962,7 @@ export class GameStateService {
         return false;
       }
       
-      logger.info(`📊 Game state status: ${gameState.status}, Players: ${gameState.players.size}, Projectiles: ${gameState.projectiles.size}`);
+      logger.info(`📊 [STEP 6.5] Game state status: ${gameState.status}, Players: ${gameState.players.size}, Projectiles: ${gameState.projectiles.size}`);
       
       const input: PlayerInput = {
         playerId,
@@ -850,7 +975,10 @@ export class GameStateService {
       playerInputs.push(input);
       gameState.playerInputs.set(playerId, playerInputs);
       
-      logger.info(`✅ Input added. Player ${playerId} now has ${playerInputs.length} inputs queued`);
+      logger.info(`✅ [STEP 6.6] Input added. Player ${playerId} now has ${playerInputs.length} inputs queued`);
+      
+      // CRITICAL: Update the game state so the changes persist
+      await this.updateGameState(matchId, gameState);
       
       return true;
     } catch (error) {
@@ -867,11 +995,9 @@ export class GameStateService {
       // Always check memory cache first
       const memoryState = this.gameStates.get(matchId);
       if (memoryState) {
-        logger.debug(`🧠 Using in-memory game state for ${matchId} - Projectiles: ${memoryState.projectiles.size}`);
         return memoryState;
       }
       
-      logger.warn(`⚠️ Game state not in memory for ${matchId}, checking Redis cache...`);
       
       // Check Redis cache only if not in memory
       const cachedState = await redis.get(`gamestate:${matchId}`);
@@ -879,7 +1005,6 @@ export class GameStateService {
         const gameState = this.deserializeGameState(JSON.parse(cachedState));
         // Put it back in memory
         this.gameStates.set(matchId, gameState);
-        logger.info(`📥 Restored game state from cache for ${matchId} - Projectiles: ${gameState.projectiles.size}`);
         return gameState;
       }
       
@@ -902,7 +1027,6 @@ export class GameStateService {
       // Also update cache
       await this.cacheGameState(matchId, gameState);
       
-      logger.debug(`📝 Updated game state for match ${matchId} - Projectiles: ${gameState.projectiles.size}`);
     } catch (error) {
       logger.error('Error updating game state:', error);
     }
@@ -948,10 +1072,15 @@ export class GameStateService {
   /**
    * Helper methods
    */
+  /**
+   * Create server player with spawn position
+   */
   private createServerPlayer(player: Player, classType: ClassType, spawnIndex: number): ServerPlayer {
     const classConfig = this.getClassConfig(classType);
     const stats = classConfig.stats;
     const spawnPoint = this.ARENA_CONFIG.spawnPoints[spawnIndex];
+    
+    console.log(`🎯 Creating player ${player.id} at spawn index ${spawnIndex}: (${spawnPoint.x}, ${spawnPoint.y})`);
     
     return {
       id: player.id,
@@ -1166,9 +1295,18 @@ export class GameStateService {
    */
   async cleanup(matchId: string): Promise<void> {
     try {
+      // IMPORTANT: Stop game loop FIRST before deleting state
       await this.stopGameLoop(matchId);
+      
+      // Then clean up state
       this.gameStates.delete(matchId);
       await redis.delete(`gamestate:${matchId}`);
+      
+      // Double-check loop is stopped
+      if (this.runningLoops.has(matchId)) {
+        this.runningLoops.delete(matchId);
+        logger.warn(`Removed orphaned running loop marker during cleanup for match ${matchId}`);
+      }
       
       logger.info(`Game state cleaned up for match ${matchId}`);
     } catch (error) {
@@ -1187,14 +1325,26 @@ export class GameStateService {
     classType: ClassType;
     attackType: 'basic' | 'special';
   }): ServerProjectile | null {
+    logger.info(`🏭 [STEP 12] === PROJECTILE CREATION START ===`);
+    logger.info(`🏭 [STEP 12] Creating projectile with data: ${JSON.stringify(projectileData)}`);
+    
     const owner = gameState.players.get(projectileData.ownerId);
-    if (!owner || !owner.isAlive) return null;
+    if (!owner || !owner.isAlive) {
+      logger.error(`❌ Cannot create projectile: owner ${projectileData.ownerId} ${!owner ? 'not found' : 'not alive'}`);
+      logger.info(`🏭 === PROJECTILE CREATION END (FAILED) ===`);
+      return null;
+    }
+    
+    logger.info(`👤 Owner found: ${owner.id} at position (${owner.position.x.toFixed(2)}, ${owner.position.y.toFixed(2)})`);
 
     const classConfig = this.getClassConfig(projectileData.classType);
     const weapon = classConfig.weapon;
     
+    logger.info(`⚔️ Weapon config: damage=${weapon.damage}, range=${weapon.range}, type=${weapon.type}`);
+    
     // Generate unique projectile ID
     const projectileId = `${projectileData.type}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    logger.info(`🆔 Generated projectile ID: ${projectileId}`);
     
     // Calculate projectile properties based on class and attack type
     const isSpecial = projectileData.attackType === 'special';
@@ -1203,16 +1353,21 @@ export class GameStateService {
     const rangeMultiplier = isSpecial ? 1.5 : 1.0; // Special attacks have longer range
     
     const baseDamage = calculateEffectiveDamage(weapon.damage * damageMultiplier, owner.stats.strength);
-    const projectileSpeed = isSpecial ? 120 : 150; // Slowed down for debugging - match client speeds
+    // Fixed speed: exactly 1 tile per second (no multiplier)
+    const projectileSpeed = 1.0;
+    
+    logger.info(`📊 Projectile properties: damage=${baseDamage}, speed=${projectileSpeed}, range=${weapon.range * rangeMultiplier}`);
+    logger.info(`📊 Modifiers: isSpecial=${isSpecial}, damageMultiplier=${damageMultiplier}, rangeMultiplier=${rangeMultiplier}`);
     
     // Create projectile on server
     const projectile: ServerProjectile = {
       id: projectileId,
       type: projectileData.type as 'arrow' | 'ice_shard' | 'fire_bomb' | 'magic_missile',
       ownerId: projectileData.ownerId,
+      // Start projectile just outside the shooter hit-box (~0.5 tiles forward)
       position: {
-        x: projectileData.position.x + projectileData.direction.x * 20, // Start projectile slightly away from owner
-        y: projectileData.position.y + projectileData.direction.y * 20
+        x: projectileData.position.x + projectileData.direction.x * 0.5,
+        y: projectileData.position.y + projectileData.direction.y * 0.5
       },
       velocity: {
         x: projectileData.direction.x * projectileSpeed,
@@ -1221,9 +1376,10 @@ export class GameStateService {
       rotation: Math.atan2(projectileData.direction.y, projectileData.direction.x),
       damage: baseDamage,
       speed: projectileSpeed,
-      range: weapon.range * rangeMultiplier * 32, // Convert tiles to pixels
+      // Range expressed directly in tiles for consistency with arena bounds
+      range: weapon.range * rangeMultiplier,
       distanceTraveled: 0,
-      size: { width: 24, height: 6 }, // Standard arrow size
+      size: { width: 6, height: 3 }, // Much smaller arrow size (was 24x6)
       piercing: projectileData.type === 'arrow', // Arrows pierce
       homing: isSpecial && projectileData.classType === ClassType.ARCHER,
       targetId: undefined, // Will be set for homing projectiles
@@ -1242,11 +1398,18 @@ export class GameStateService {
     }
     
     // Add projectile to game state
+    logger.info(`📊 [STEP 13] Adding projectile to game state. Current projectiles: ${gameState.projectiles.size}`);
     gameState.projectiles.set(projectileId, projectile);
     
     // Verify it was added
     const wasAdded = gameState.projectiles.has(projectileId);
-    logger.info(`🎯 Projectile ${projectileId} ${wasAdded ? 'successfully added' : 'FAILED to add'} to game state. Total projectiles: ${gameState.projectiles.size}`);
+    logger.info(`🎯 [STEP 13.5] Projectile ${projectileId} ${wasAdded ? 'successfully added' : 'FAILED to add'} to game state. Total projectiles: ${gameState.projectiles.size}`);
+    
+    if (!wasAdded) {
+      logger.error(`❌ CRITICAL: Projectile failed to add to game state map!`);
+      logger.info(`🏭 === PROJECTILE CREATION END (FAILED) ===`);
+      return null;
+    }
     
     // Create projectile creation event
     const createEvent: GameEvent = {
@@ -1264,8 +1427,11 @@ export class GameStateService {
       processed: false
     };
     gameState.events.push(createEvent);
+    logger.info(`📋 Creation event added. Total events: ${gameState.events.length}`);
     
     logger.info(`🏹 Created ${projectileData.type} projectile ${projectileId} for ${projectileData.ownerId} at (${projectile.position.x.toFixed(1)}, ${projectile.position.y.toFixed(1)}) with velocity (${projectile.velocity.x.toFixed(1)}, ${projectile.velocity.y.toFixed(1)})`);
+    logger.info(`🎯 [STEP 13.7] Returning projectile ${projectile.id} from createProjectile`);
+    logger.info(`🏭 === PROJECTILE CREATION END (SUCCESS) ===`);
     
     return projectile;
   }
@@ -1274,6 +1440,9 @@ export class GameStateService {
    * Update all projectiles - physics and collision detection
    */
   private updateProjectiles(gameState: ServerGameState, deltaTime: number): void {
+    if (gameState.projectiles.size > 0) {
+      logger.info(`🎯 [STEP 14] Updating ${gameState.projectiles.size} projectiles`);
+    }
     const deltaSeconds = deltaTime / 1000;
     const projectilesToRemove: string[] = [];
     const hits: ProjectileHit[] = [];
@@ -1288,7 +1457,7 @@ export class GameStateService {
     
     // Log if we have projectiles to update
     if (gameState.projectiles.size > 0) {
-      logger.info(`🎯 Updating ${gameState.projectiles.size} projectiles, deltaTime: ${deltaTime}ms`);
+      logger.info(`🎯 [STEP 14] Updating ${gameState.projectiles.size} projectiles, deltaTime: ${deltaTime}ms`);
     }
     
     for (const [projectileId, projectile] of gameState.projectiles) {
@@ -1300,52 +1469,37 @@ export class GameStateService {
       // Log projectile state before update
       const beforePos = { x: projectile.position.x, y: projectile.position.y };
       
-      // Update position based on velocity
-      projectile.position.x += projectile.velocity.x * deltaSeconds;
-      projectile.position.y += projectile.velocity.y * deltaSeconds;
-      projectile.lastUpdate = Date.now();
-      
-      // Update distance traveled
-      const distanceMoved = Math.sqrt(
-        Math.pow(projectile.velocity.x * deltaSeconds, 2) + 
-        Math.pow(projectile.velocity.y * deltaSeconds, 2)
-      );
-      projectile.distanceTraveled += distanceMoved;
-      
-      logger.debug(`📍 Projectile ${projectileId} moved from (${beforePos.x.toFixed(1)}, ${beforePos.y.toFixed(1)}) to (${projectile.position.x.toFixed(1)}, ${projectile.position.y.toFixed(1)}), distance: ${distanceMoved.toFixed(1)}`);
-      
-      // Update homing behavior
+      // Update homing behavior before movement so velocity is up-to-date
       if (projectile.homing && projectile.targetId) {
         this.updateProjectileHoming(projectile, targetMap, deltaSeconds);
       }
-      
-      // Update position
+
+      // Move projectile once per tick
       const moveDistance = projectile.speed * deltaSeconds;
       const newPosition = {
-        x: projectile.position.x + projectile.velocity.x * moveDistance,
-        y: projectile.position.y + projectile.velocity.y * moveDistance
+        x: projectile.position.x + projectile.velocity.x * deltaSeconds, // velocity already includes speed
+        y: projectile.position.y + projectile.velocity.y * deltaSeconds  // velocity already includes speed
       };
-      
-      // Check arena bounds
-      if (this.isProjectileOutOfBounds(newPosition, gameState.arena)) {
-        projectilesToRemove.push(projectileId);
-        continue;
-      }
-      
-      // Check wall collisions
-      if (this.checkProjectileWallCollision(newPosition, gameState.arena)) {
-        projectilesToRemove.push(projectileId);
-        continue;
-      }
-      
-      // Update projectile state
-      projectile.position = newPosition;
+
+      // Track distance travelled (before modifying position for range checks)
       projectile.distanceTraveled += moveDistance;
+
+      // Apply movement
+      projectile.position = newPosition;
       projectile.rotation = Math.atan2(projectile.velocity.y, projectile.velocity.x);
       projectile.lastUpdate = Date.now();
+
+      logger.info(`📍 [STEP 14.5] Projectile ${projectileId} moved from (${beforePos.x.toFixed(1)}, ${beforePos.y.toFixed(1)}) to (${projectile.position.x.toFixed(1)}, ${projectile.position.y.toFixed(1)}), d=${moveDistance.toFixed(2)}`);
       
       // Check range limit
       if (projectile.distanceTraveled >= projectile.range) {
+        projectilesToRemove.push(projectileId);
+        continue;
+      }
+      
+      // Check arena bounds and wall collisions using tile coordinates
+      if (this.isProjectileOutOfBounds(newPosition, gameState.arena) ||
+          this.checkProjectileWallCollision(newPosition, gameState.arena)) {
         projectilesToRemove.push(projectileId);
         continue;
       }
@@ -1493,8 +1647,8 @@ export class GameStateService {
     const dy = projectile.position.y - player.position.y;
     const distance = Math.sqrt(dx * dx + dy * dy);
     
-    const playerRadius = 16; // Standard player hitbox radius
-    const projectileRadius = Math.max(projectile.size.width, projectile.size.height) / 2;
+    const playerRadius = 0.3; // Player hitbox radius in tiles (was 16 pixels)
+    const projectileRadius = Math.max(projectile.size.width, projectile.size.height) / 100; // Convert pixels to tiles
     
     return distance <= (playerRadius + projectileRadius);
   }

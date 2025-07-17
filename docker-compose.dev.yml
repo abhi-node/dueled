@@ -12,6 +12,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./server/database/init:/docker-entrypoint-initdb.d
+      - ./server/database/migrations:/migrations
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U dueled_user -d dueled"]
       interval: 5s

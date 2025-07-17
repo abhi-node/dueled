@@ -58,8 +58,10 @@ export class SpriteRenderer {
           failCount++;
           console.warn(`❌ SpriteRenderer: Failed to load sprite sheet for ${classType} (${failCount} failures):`, error);
           console.warn(`🔗 Expected path: ${spriteUrl}`);
-          // Remove failed sprite sheet from the map
-          this.spriteSheets.delete(classType);
+          
+          // Create a fallback sprite sheet with colored rectangles
+          console.log(`🎨 Creating fallback sprite sheet for ${classType}`);
+          this.createFallbackSpriteSheet(classType);
         })
       );
     }
@@ -72,8 +74,73 @@ export class SpriteRenderer {
     console.log(`📊 Available sprite sheets:`, Array.from(this.spriteSheets.keys()));
     
     if (successCount === 0) {
-      console.warn('⚠️ SpriteRenderer: No sprite sheets loaded successfully - will fall back to colored circles');
+      console.warn('⚠️ SpriteRenderer: No sprite sheets loaded successfully - using fallback colored sprites');
+      console.warn('💡 This usually means the development server is not serving assets properly');
+      console.warn('🔧 Try restarting the dev server or checking if files exist in client/public/assets/sprites/');
+    } else if (failCount > 0) {
+      console.warn(`⚠️ SpriteRenderer: ${failCount} sprite sheets failed to load - using fallback sprites for missing ones`);
     }
+  }
+  
+  /**
+   * Create a fallback sprite sheet with colored rectangles when image loading fails
+   */
+  private createFallbackSpriteSheet(classType: ClassType): void {
+    const spriteSheet = new SpriteSheet();
+    
+    // Create a canvas with colored rectangles as a fallback
+    const canvas = document.createElement('canvas');
+    canvas.width = 768; // 4x4 grid of 192x192 sprites
+    canvas.height = 768;
+    const ctx = canvas.getContext('2d');
+    
+    if (!ctx) {
+      console.error('Failed to create fallback canvas context');
+      return;
+    }
+    
+    // Get class-specific color
+    const classColors = {
+      berserker: '#ff4444',  // Red
+      mage: '#4444ff',       // Blue
+      bomber: '#ff8800',     // Orange
+      archer: '#44ff44'      // Green
+    };
+    
+    const color = classColors[classType as keyof typeof classColors] || '#888888';
+    
+    // Fill the canvas with colored rectangles in a 4x4 grid
+    for (let row = 0; row < 4; row++) {
+      for (let col = 0; col < 4; col++) {
+        const x = col * 192;
+        const y = row * 192;
+        
+        // Draw colored rectangle
+        ctx.fillStyle = color;
+        ctx.fillRect(x, y, 192, 192);
+        
+        // Add a border
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 4;
+        ctx.strokeRect(x, y, 192, 192);
+        
+        // Add class identifier text
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '24px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(classType.toUpperCase(), x + 96, y + 96);
+        ctx.fillText(`${row},${col}`, x + 96, y + 120);
+      }
+    }
+    
+    // Convert canvas to data URL and load into sprite sheet
+    const dataUrl = canvas.toDataURL();
+    spriteSheet.load(dataUrl).then(() => {
+      console.log(`✅ Created fallback sprite sheet for ${classType}`);
+      this.spriteSheets.set(classType, spriteSheet);
+    }).catch(error => {
+      console.error(`❌ Failed to create fallback sprite sheet for ${classType}:`, error);
+    });
   }
   
   /**

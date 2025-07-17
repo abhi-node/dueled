@@ -52,16 +52,48 @@ export class SpriteSheet {
   }
   
   /**
-   * Load a sprite sheet from a URL
+   * Load a sprite sheet from a URL with retry logic
    */
-  public async load(imageUrl: string): Promise<void> {
+  public async load(imageUrl: string, retries: number = 3, delayMs: number = 500): Promise<void> {
     if (this.loadPromise) {
       return this.loadPromise;
     }
     
     console.log(`🔄 SpriteSheet: Starting to load image from ${imageUrl}`);
     
-    this.loadPromise = new Promise((resolve, reject) => {
+    this.loadPromise = this.loadWithRetry(imageUrl, retries, delayMs);
+    return this.loadPromise;
+  }
+  
+  /**
+   * Internal method to load with retry logic
+   */
+  private async loadWithRetry(imageUrl: string, retries: number, delayMs: number): Promise<void> {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        console.log(`🔄 SpriteSheet: Attempt ${attempt}/${retries} to load ${imageUrl}`);
+        await this.loadSingleAttempt(imageUrl);
+        return; // Success - exit retry loop
+      } catch (error) {
+        console.warn(`⚠️ SpriteSheet: Attempt ${attempt}/${retries} failed for ${imageUrl}:`, error);
+        
+        if (attempt < retries) {
+          const delay = delayMs * attempt; // Exponential backoff
+          console.log(`⏱️ SpriteSheet: Waiting ${delay}ms before retry...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        } else {
+          console.error(`❌ SpriteSheet: All ${retries} attempts failed for ${imageUrl}`);
+          throw error;
+        }
+      }
+    }
+  }
+  
+  /**
+   * Single load attempt without retry logic
+   */
+  private async loadSingleAttempt(imageUrl: string): Promise<void> {
+    return new Promise((resolve, reject) => {
       this.image = new Image();
       this.image.crossOrigin = 'anonymous'; // Allow CORS for image loading
       
@@ -110,6 +142,22 @@ export class SpriteSheet {
         // Try to get more specific error information
         if (safeImageData.naturalWidth === 0 && safeImageData.naturalHeight === 0) {
           console.error(`🔍 This appears to be a 404 or network error - image not found`);
+          
+          // Test the URL with fetch to get more detailed error info
+          fetch(imageUrl)
+            .then(response => {
+              console.error(`🌐 Fetch test result:`, {
+                url: imageUrl,
+                status: response.status,
+                statusText: response.statusText,
+                ok: response.ok,
+                contentType: response.headers.get('content-type'),
+                contentLength: response.headers.get('content-length')
+              });
+            })
+            .catch(fetchError => {
+              console.error(`🚨 Fetch test failed:`, fetchError);
+            });
         }
         
         reject(new Error(`Failed to load sprite sheet: ${imageUrl}`));
@@ -119,8 +167,6 @@ export class SpriteSheet {
       console.log(`🌐 SpriteSheet: Setting image src to: ${imageUrl}`);
       this.image.src = imageUrl;
     });
-    
-    return this.loadPromise;
   }
   
   /**
@@ -140,7 +186,7 @@ export class SpriteSheet {
     const tempCanvas = document.createElement('canvas');
     tempCanvas.width = this.image.width;
     tempCanvas.height = this.image.height;
-    const tempCtx = tempCanvas.getContext('2d');
+    const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
     
     if (!tempCtx) {
       throw new Error('Could not get temporary canvas context');
