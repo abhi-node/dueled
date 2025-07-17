@@ -449,16 +449,7 @@ export class MainGameScene {
       return;
     }
     
-    // DEBUG: Add 'L' key for testing arrow firing
-    if (event.key.toLowerCase() === 'l') {
-      console.log('🎯 [STEP 1] DEBUG: L key pressed - initiating arrow firing sequence');
-      console.log('🎯 [STEP 1] Local player ID:', this.localPlayerId);
-      console.log('🎯 [STEP 1] Local player class:', this.localPlayerClass);
-      console.log('🎯 [STEP 1] Network connected:', this.networkManager?.isConnectedToServer());
-      this.handleBasicAttack();
-      event.preventDefault();
-      return;
-    }
+    // Removed debug 'L' key to prevent duplicate attacks
     
     // DEBUG: Add 'P' key to test server projectile creation
     if (event.key.toLowerCase() === 'p') {
@@ -726,14 +717,7 @@ export class MainGameScene {
     }
 
     if (this.localPlayerClass === CT.ARCHER) {
-      // Check cooldown first
-      const cooldowns = this.archerCombat.getCooldowns(this.localPlayerId);
-      if (cooldowns.basic > 0) {
-        this.showNotification(`Attack cooling down: ${cooldowns.basic.toFixed(1)}s`, 'warning');
-        return;
-      }
-      
-      // Calculate target position (shoot forward)
+      // Calculate target position (shoot forward) 
       const playerState = this.raycaster.getPlayerState();
       const range = getClassConfig(CT.ARCHER).weapon.range;
       
@@ -744,12 +728,23 @@ export class MainGameScene {
         return;
       }
       
-      // Server expects tile coordinates, not pixels - so just use range directly
       const targetPosition = {
         x: playerState.x + Math.cos(playerState.angle) * range,
         y: playerState.y + Math.sin(playerState.angle) * range
       };
       
+      // Use the ArcherCombat system which has proper cooldown handling
+      const success = this.archerCombat.tryBasicAttack(this.localPlayerId, targetPosition);
+      
+      if (!success) {
+        const cooldowns = this.archerCombat.getCooldowns(this.localPlayerId);
+        if (cooldowns.basic > 0) {
+          this.showNotification(`Attack cooling down: ${cooldowns.basic.toFixed(1)}s`, 'warning');
+        }
+        return;
+      }
+      
+      // If ArcherCombat succeeded, send to server
       const direction = {
         x: Math.cos(playerState.angle),
         y: Math.sin(playerState.angle)
@@ -772,61 +767,13 @@ export class MainGameScene {
         networkDiagnostic: this.networkManager.getDiagnosticInfo()
       });
       
-      // Check connection before sending attack
-      if (!this.networkManager.isConnectedToServer()) {
-        console.warn('🔌 Network not connected - creating local debug projectile instead');
-        
-        // QUICK DEBUG FIX: Create local projectile when offline
-        const now = Date.now();
-        const projectileId = `debug_arrow_${now}_${Math.random().toString(36).substr(2, 9)}`;
-        
-        // Create local projectile directly in renderProjectiles map
-        this.renderProjectiles.set(projectileId, {
-          id: projectileId,
-          position: { x: playerState.x, y: playerState.y },
-          velocity: {
-            x: Math.cos(playerState.angle) * 8, // Arrow speed
-            y: Math.sin(playerState.angle) * 8
-          },
-          rotation: playerState.angle,
-          type: 'arrow',
-          ownerId: this.localPlayerId,
-          createdAt: now,
-          lastUpdate: now
+      // Send attack to server for authoritative processing  
+      if (this.networkManager.isConnectedToServer()) {
+        this.networkManager.sendAttack({
+          direction: direction,
+          targetPosition: targetPosition,
+          attackType: 'basic'
         });
-        
-        console.log(`🏹 Created local debug projectile ${projectileId} at (${playerState.x.toFixed(1)}, ${playerState.y.toFixed(1)})`);
-        this.showNotification('Local debug arrow fired!', 'info');
-        
-        // Start simple animation for the debug projectile
-        this.animateLocalProjectile(projectileId);
-        return;
-      }
-      
-      // Send attack to server for authoritative processing
-      console.log(`🏹 [STEP 2.5] Calling NetworkManager.sendAttack...`);
-      this.networkManager.sendAttack({
-        direction: direction,
-        targetPosition: targetPosition,
-        attackType: 'basic'
-      });
-      
-      // DO NOT create local projectile - wait for server authority
-      // This prevents duplicate projectiles and ensures all players see the same thing
-      console.log(`🏹 [STEP 2.6] Basic attack sent to server for authority - waiting for server projectile...`);
-      
-      // Just update archer state for cooldown tracking locally
-      const archerState = this.archerCombat.getArcherState(this.localPlayerId);
-      if (archerState && this.archerCombat.canBasicAttack(this.localPlayerId)) {
-        // Manually update last attack time for cooldown display
-        const currentTime = Date.now() / 1000;
-        archerState.lastBasicAttack = currentTime;
-        archerState.isAttacking = true;
-        
-        // Reset attacking flag after short delay
-        setTimeout(() => {
-          archerState.isAttacking = false;
-        }, 200);
       }
     }
     // TODO: Add other class basic attacks
@@ -1173,11 +1120,20 @@ export class MainGameScene {
       const viewerState = this.raycaster.getPlayerState();
       if (!viewerState || !this.spriteRenderer) return;
       
-      // Remove local player sprite updates - we don't render our own sprite in first-person view
-      // The local player should not see their own sprite
+      // DEFENSIVE: Remove local player from remotePlayers if it somehow got added
+      if (this.localPlayerId && this.remotePlayers.has(this.localPlayerId)) {
+        console.warn(`🧹 updateSpriteDirections: Found and removing local player ${this.localPlayerId} from remotePlayers`);
+        this.remotePlayers.delete(this.localPlayerId);
+      }
       
       // Update all remote player sprites with current viewer perspective
       for (const [playerId, playerData] of this.remotePlayers) {
+        // DEFENSIVE: Skip local player if it somehow made it into this loop
+        if (playerId === this.localPlayerId) {
+          console.warn(`🚨 updateSpriteDirections: Skipping local player ${playerId} in remote players loop`);
+          continue;
+        }
+        
         if (!playerData || !playerData.position) continue;
         
         this.spriteRenderer.updatePlayerSprite(
@@ -1202,8 +1158,20 @@ export class MainGameScene {
     try {
       const viewerState = this.raycaster.getPlayerState();
       
+      // DEFENSIVE: Remove local player from remotePlayers if it somehow got added
+      if (this.localPlayerId && this.remotePlayers.has(this.localPlayerId)) {
+        console.warn(`🧹 ensureAllSpritesRendered: Found and removing local player ${this.localPlayerId} from remotePlayers`);
+        this.remotePlayers.delete(this.localPlayerId);
+      }
+      
       // Make sure all remote players are visible in the raycaster
       for (const [playerId, playerData] of this.remotePlayers) {
+        // DEFENSIVE: Skip local player if it somehow made it into this loop
+        if (playerId === this.localPlayerId) {
+          console.warn(`🚨 ensureAllSpritesRendered: Skipping local player ${playerId} in remote players loop`);
+          continue;
+        }
+        
         // Validate player data
         if (!playerData || !playerData.position) continue;
         
@@ -1290,8 +1258,6 @@ export class MainGameScene {
         
         // Handle damage results
         for (const damage of damageResults) {
-          console.log(`💥 Damage: ${damage.finalDamage} to ${damage.targetId} (${damage.effects.join(', ')})`);
-          
           // Update local player health if hit
           if (damage.targetId === this.localPlayerId) {
             this.playerHealth = Math.max(0, this.playerHealth - damage.finalDamage);
@@ -1434,15 +1400,11 @@ export class MainGameScene {
         if (!activeProjectileIds.has(projectileId)) {
           this.raycaster.removeProjectile(projectileId);
           removedCount++;
-          console.log(`[MainGameScene] Removed stale projectile ${projectileId} from Raycaster`);
+          // Performance optimized: no logging in hot path
         }
       }
       
-      console.log(`[MainGameScene] Cleanup complete:`, {
-        activeProjectiles: activeProjectileIds.size,
-        removedProjectiles: removedCount,
-        finalRaycasterCount: this.raycaster.getProjectileCount()
-      });
+      // Performance optimized: no logging in hot path
     } catch (error) {
       console.error('🚨 Error updating projectiles in raycaster:', error);
       // Don't crash the render loop
@@ -1676,6 +1638,7 @@ export class MainGameScene {
     
     console.log(`🎯 MainGameScene: Player ${playerId} joined with class ${playerData.classType} (original: ${data.classType})`);
     
+    // Store minimal data for rendering purposes only
     this.remotePlayers.set(playerId, playerData);
     
     // Get viewer (local player) position and angle for sprite direction calculation
@@ -1690,10 +1653,10 @@ export class MainGameScene {
     };
     const color = classColors[playerData.classType as string] || '#ff00ff';
     
-    // Ensure player is immediately visible in raycaster FIRST
+    // Ensure player is immediately visible in raycaster
     this.raycaster.updateOtherPlayer(playerId, playerData.position.x, playerData.position.y, color);
     
-    // THEN update sprite renderer with viewer perspective
+    // Update sprite renderer with viewer perspective
     this.spriteRenderer.updatePlayerSprite(
       playerId, 
       playerData.classType as ClassType, 
@@ -1707,31 +1670,8 @@ export class MainGameScene {
     const username = data.username || `Player ${playerId.substring(0, 8)}`;
     this.showNotification(`${username} has joined the game`, 'info');
     
-    console.log(`Player ${username} joined at position (${playerData.position.x}, ${playerData.position.y})`);
-    
-    // DON'T create any local player state - only store minimal data for rendering
+    console.log(`🎯 MainGameScene: Remote player ${playerId} added at position (${playerData.position.x}, ${playerData.position.y})`);
     console.log(`🎯 MainGameScene: Remote player ${playerId} added for rendering only`);
-    
-    // Store minimal data for rendering purposes only
-    this.remotePlayers.set(playerId, {
-      position: data.position || defaultPosition,
-      angle: data.angle || 0,
-      classType: data.classType as ClassType,
-      // No local state, health, armor, etc - server handles all that
-    });
-    
-    // Update renderer immediately
-    this.raycaster.updateOtherPlayer(playerId, playerData.position.x, playerData.position.y, color);
-    
-    // Update sprite renderer
-    this.spriteRenderer.updatePlayerSprite(
-      playerId,
-      playerData.classType as ClassType,
-      playerData.position,
-      playerData.angle,
-      { x: viewerState.x, y: viewerState.y },
-      viewerState.angle
-    );
   }
   
   public onPlayerLeft(playerId: string, data?: any): void {
@@ -1846,7 +1786,11 @@ export class MainGameScene {
   }
   
   public onPlayerMoved(playerId: string, position: Vector2, angle: number, classType?: ClassType): void {
-    // Removed console.log for performance
+    // CRITICAL: Skip updates for local player
+    if (playerId === this.localPlayerId) {
+      console.warn(`⚠️ MainGameScene: Attempted to update local player ${playerId} position. Ignoring.`);
+      return;
+    }
     
     let player = this.remotePlayers.get(playerId);
     if (!player) {
@@ -1877,8 +1821,8 @@ export class MainGameScene {
     this.spriteRenderer.updatePlayerSprite(
       playerId, 
       player.classType as ClassType, 
-      position, 
-      angle,
+      player.position, 
+      player.angle,
       { x: viewerState.x, y: viewerState.y },
       viewerState.angle
     );
@@ -1891,12 +1835,17 @@ export class MainGameScene {
       archer: '#44ff44'
     };
     const color = classColors[player.classType as string] || '#ff00ff';
-    // Removed console.log for performance
-    this.raycaster.updateOtherPlayer(playerId, position.x, position.y, color);
+    
+    // Update the raycaster with authoritative server position
+    this.raycaster.updateOtherPlayer(playerId, player.position.x, player.position.y, color);
   }
   
   public onPlayerRotated(playerId: string, angle: number, classType?: ClassType): void {
-    // Removed console.log for performance
+    // CRITICAL: Skip updates for local player
+    if (playerId === this.localPlayerId) {
+      console.warn(`⚠️ MainGameScene: Attempted to update local player ${playerId} rotation. Ignoring.`);
+      return;
+    }
     
     let player = this.remotePlayers.get(playerId);
     if (!player) {
@@ -1947,8 +1896,9 @@ export class MainGameScene {
    * Update player ID when received from network manager
    */
   public updatePlayerIdFromNetwork(playerId: string): void {
+    const oldPlayerId = this.localPlayerId;
+    
     if (!this.localPlayerId || this.localPlayerId.startsWith('temp_')) {
-      const oldPlayerId = this.localPlayerId;
       this.localPlayerId = playerId;
       console.log(`🔧 MainGameScene: Updated local player ID from network: ${oldPlayerId} -> ${this.localPlayerId}`);
       
@@ -1967,6 +1917,33 @@ export class MainGameScene {
       if (this.combatManager && this.archerCombat) {
         console.log(`🔧 MainGameScene: Re-initializing combat after player ID update`);
         this.initializeCombat();
+      }
+    }
+    
+    // CRITICAL: Purge local player from remotePlayers Map
+    // This handles the race condition where player:joined fired before localPlayerId was set
+    if (this.remotePlayers.has(this.localPlayerId)) {
+      console.log(`🧹 MainGameScene: Purging local player ${this.localPlayerId} from remotePlayers`);
+      this.remotePlayers.delete(this.localPlayerId);
+    }
+    
+    // CRITICAL: Remove local player from raycaster's otherPlayers
+    if (this.raycaster) {
+      this.raycaster.removeOtherPlayer(this.localPlayerId);
+      console.log(`🧹 MainGameScene: Removed local player ${this.localPlayerId} from raycaster`);
+    }
+    
+    // CRITICAL: Remove any sprites for the old player ID as well
+    if (oldPlayerId && oldPlayerId !== this.localPlayerId) {
+      if (this.remotePlayers.has(oldPlayerId)) {
+        console.log(`🧹 MainGameScene: Purging old player ID ${oldPlayerId} from remotePlayers`);
+        this.remotePlayers.delete(oldPlayerId);
+      }
+      if (this.spriteRenderer) {
+        this.spriteRenderer.removePlayerSprite(oldPlayerId);
+      }
+      if (this.raycaster) {
+        this.raycaster.removeOtherPlayer(oldPlayerId);
       }
     }
   }
@@ -2066,23 +2043,7 @@ export class MainGameScene {
   public handleGameUpdate(gameUpdate: any) {
     if (!gameUpdate || !gameUpdate.players) return;
     
-    
-    // Update all player positions EXCEPT our own
-    for (const playerData of gameUpdate.players) {
-      // CRITICAL: Filter out local player - we control our own position
-      if (playerData.id && playerData.id !== this.localPlayerId) {
-        this.onPlayerMoved(playerData.id, playerData.position, playerData.angle || 0);
-      }
-    }
-    
-    // Handle projectile updates if present
-    if (gameUpdate.projectiles) {
-      console.log(`🎯 [STEP 21] Processing ${gameUpdate.projectiles.length} projectiles from game update:`, gameUpdate.projectiles);
-      this.onProjectileUpdate(gameUpdate.projectiles);
-    }
-    
-    // ... existing code ...
-    // UPDATE: Process ALL server state, not just positions
+    // Process ALL player data in a single loop
     for (const playerData of gameUpdate.players) {
       if (playerData.id === this.localPlayerId) {
         // Update our own health/armor from server (authoritative)
@@ -2092,20 +2053,29 @@ export class MainGameScene {
         if (playerData.armor !== undefined) {
           this.playerArmor = playerData.armor;
         }
-        // But skip position update - we control our own movement
+        // Skip position update - we control our own movement
         continue;
       }
       
-      // For other players, update everything
-      this.onPlayerMoved(playerData.id, playerData.position, playerData.angle || 0, playerData.classType);
-      
-      // Store their health/armor for UI display if needed
-      let remotePlayer = this.remotePlayers.get(playerData.id);
-      if (remotePlayer) {
-        remotePlayer.health = playerData.health;
-        remotePlayer.armor = playerData.armor;
-        remotePlayer.isAlive = playerData.isAlive;
+      // For remote players, update position and state
+      if (playerData.id) {
+        // Update position with server-authoritative data
+        this.onPlayerMoved(playerData.id, playerData.position, playerData.angle || 0, playerData.classType);
+        
+        // Store their health/armor for UI display
+        let remotePlayer = this.remotePlayers.get(playerData.id);
+        if (remotePlayer) {
+          remotePlayer.health = playerData.health;
+          remotePlayer.armor = playerData.armor;
+          remotePlayer.isAlive = playerData.isAlive;
+        }
       }
+    }
+    
+    // Handle projectile updates if present
+    if (gameUpdate.projectiles) {
+      console.log(`🎯 [STEP 21] Processing ${gameUpdate.projectiles.length} projectiles from game update:`, gameUpdate.projectiles);
+      this.onProjectileUpdate(gameUpdate.projectiles);
     }
     
     // Process game events (kills, damage, etc)

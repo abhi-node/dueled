@@ -9,9 +9,8 @@
  * - Special ability effects
  */
 
-import { Projectile } from './Projectile.js';
-import type { ProjectileConfig, ProjectileState } from './Projectile.js';
-import type { Vector2, ClassType, ClassConfig } from '@dueled/shared';
+import { Projectile } from './Projectile';
+import type { Vector2, ClassType, ClassConfig, ProjectileConfig, ProjectileState } from '@dueled/shared';
 import { getClassConfig, calculateEffectiveDamage } from '@dueled/shared';
 
 export interface PlayerHitbox {
@@ -61,7 +60,6 @@ export class CombatManager {
     // Check if player is already registered
     const existingPlayer = this.playerHitboxes.get(playerId);
     if (existingPlayer) {
-      console.log(`🎯 Combat: Player ${playerId} already registered, updating position`);
       existingPlayer.position = { ...position };
       return;
     }
@@ -77,8 +75,6 @@ export class CombatManager {
       isAlive: true
     });
     
-    console.log(`🎯 Combat: Registered player ${playerId} as ${classType}`);
-    console.log(`🎯 Combat: Current playerHitboxes count: ${this.playerHitboxes.size}`);
   }
 
   /**
@@ -116,20 +112,14 @@ export class CombatManager {
       }
     }
     
-    console.log(`❌ Combat: Unregistered player ${playerId}`);
   }
 
   /**
    * Handle archer basic attack (piercing arrow)
    */
   public archerBasicAttack(attackData: AttackData): Projectile | null {
-    console.log(`🏹 CombatManager.archerBasicAttack called for attackerId: ${attackData.attackerId}`);
-    console.log(`🏹 Current playerHitboxes count: ${this.playerHitboxes.size}`);
-    console.log(`🏹 PlayerHitboxes keys:`, Array.from(this.playerHitboxes.keys()));
-    
     const attacker = this.playerHitboxes.get(attackData.attackerId);
     if (!attacker || !attacker.isAlive) {
-      console.warn(`🏹 No attacker hitbox found for attackerId: ${attackData.attackerId} or attacker is not alive`);
       return null;
     }
     
@@ -188,8 +178,6 @@ export class CombatManager {
     const projectile = new Projectile(projectileConfig, projectileState);
     this.projectiles.set(projectileConfig.id, projectile);
     
-    console.log(`🏹 Archer basic attack: ${attackData.attackerId} fired arrow at (${attackData.targetPosition.x.toFixed(1)}, ${attackData.targetPosition.y.toFixed(1)}) with speed ${projectileSpeed}`);
-    console.log(`🏹 Projectile created: ${projectileConfig.id} at (${projectileState.position.x.toFixed(1)}, ${projectileState.position.y.toFixed(1)}) velocity: (${projectileState.velocity.x.toFixed(2)}, ${projectileState.velocity.y.toFixed(2)})`);
     
     return projectile;
   }
@@ -219,7 +207,6 @@ export class CombatManager {
     }
     
     if (!nearestEnemy) {
-      console.warn('🏹 Dispatcher: No target found for homing arrow');
       return null;
     }
     
@@ -274,7 +261,6 @@ export class CombatManager {
     const projectile = new Projectile(projectileConfig, projectileState);
     this.projectiles.set(projectileConfig.id, projectile);
     
-    console.log(`⚡ Dispatcher: ${attackData.attackerId} fired homing arrow at ${nearestEnemy.playerId}`);
     
     return projectile;
   }
@@ -300,7 +286,6 @@ export class CombatManager {
       const stillActive = projectile.update(deltaTime, targetMap, walls);
       
       if (!stillActive) {
-        console.log(`🏹 Projectile ${projectileId} marked for removal (inactive)`);
         projectilesToRemove.push(projectileId);
         continue;
       }
@@ -326,7 +311,6 @@ export class CombatManager {
             projectilesToRemove.push(projectileId);
           }
           
-          console.log(`💥 Hit: ${projectile.getConfig().type} from ${projectile.getOwnerId()} hit ${playerId} for ${damageResult.finalDamage} damage`);
           
           break; // Only hit one target per update
         }
@@ -447,22 +431,39 @@ export class CombatManager {
           isActive: serverProjectile.isActive
         });
       } else {
-        // Create new projectile from server data
-        const projectileConfig = {
+        // Create new projectile from server data with complete ProjectileConfig
+        const projectileConfig: ProjectileConfig = {
           id: serverProjectile.id,
           type: serverProjectile.type as 'arrow' | 'ice_shard' | 'fire_bomb' | 'magic_missile',
-          ownerId: serverProjectile.ownerId,
-          position: serverProjectile.position,
-          velocity: serverProjectile.velocity,
-          damage: serverProjectile.damage || 30,
-          range: serverProjectile.range || 10,
-          homing: false,
-          path: `/assets/projectiles/${serverProjectile.type}_sheet.png`,
-          size: 0.1
+          damage: serverProjectile.damage ?? 30,
+          speed: serverProjectile.config?.speed ?? 1,
+          range: serverProjectile.range ?? 10,
+          size: { width: 1, height: 0.4 },
+          piercing: serverProjectile.piercing ?? false,
+          homing: serverProjectile.homing ?? false,
+          armorPenetration: serverProjectile.armorPenetration ?? 0,
+          effects: serverProjectile.effects ?? [],
+          spriteSheet: {
+            path: `/assets/projectiles/${serverProjectile.type}_sheet.png`,
+            frameWidth: 48,
+            frameHeight: 48,
+            totalFrames: 16
+          }
         };
         
-        const projectile = new Projectile(projectileConfig);
-        projectile.setRotation(serverProjectile.rotation || 0);
+        const projectileState: ProjectileState = {
+          id: serverProjectile.id,
+          position: serverProjectile.position,
+          velocity: serverProjectile.velocity,
+          rotation: serverProjectile.rotation || 0,
+          distanceTraveled: 0,
+          isActive: true,
+          ownerId: serverProjectile.ownerId,
+          createdAt: Date.now(),
+          lastUpdate: Date.now()
+        };
+        
+        const projectile = new Projectile(projectileConfig, projectileState);
         this.projectiles.set(serverProjectile.id, projectile);
       }
     }

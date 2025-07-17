@@ -303,8 +303,8 @@ export const setupTokenRefresh = () => {
       const refreshInterval = setInterval(() => {
         const currentState = useAuthStore.getState();
         if (currentState.isAuthenticated) {
-          refreshToken().catch(error => {
-            console.warn('Background token refresh failed:', error);
+          refreshToken().catch(() => {
+            // Background token refresh failed silently
           });
         } else {
           clearInterval(refreshInterval);

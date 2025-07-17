@@ -19,16 +19,42 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Response interceptor for error handling
+// Helper function for token refresh (defined outside of AuthService to avoid circular dependency)
+async function attemptTokenRefresh(): Promise<{ success: boolean; token?: string }> {
+  try {
+    const response = await api.post<AuthResponse>('/api/auth/refresh');
+    
+    if (response.data.success && response.data.token && response.data.player) {
+      // Store the refreshed auth data
+      localStorage.setItem('authToken', response.data.token);
+      localStorage.setItem('user', JSON.stringify(response.data.player));
+      return { success: true, token: response.data.token };
+    }
+    
+    return { success: false };
+  } catch (error) {
+    return { success: false };
+  }
+}
+
+// Response interceptor for non-destructive auth retry
 api.interceptors.response.use(
   (response) => response,
-  (error: AxiosError) => {
-    if (error.response?.status === 401) {
-      // Clear invalid token
-      localStorage.removeItem('authToken');
-      localStorage.removeItem('user');
-      window.location.href = '/auth';
+  async (error: AxiosError) => {
+    const originalRequest = error.config as any;
+    
+    if (error.response?.status === 401 && !originalRequest._retry) {
+      originalRequest._retry = true;
+      
+      const refreshResult = await attemptTokenRefresh();
+      if (refreshResult.success && refreshResult.token) {
+        // Update authorization header for retry
+        originalRequest.headers.Authorization = `Bearer ${refreshResult.token}`;
+        // Retry the original request
+        return api(originalRequest);
+      }
     }
+    
     return Promise.reject(error);
   }
 );

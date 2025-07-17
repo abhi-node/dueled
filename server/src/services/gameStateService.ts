@@ -120,9 +120,8 @@ export interface ServerProjectile {
   type: 'arrow' | 'ice_shard' | 'fire_bomb' | 'magic_missile';
   ownerId: string;
   position: Vector2;
-  velocity: Vector2;
+  velocity: Vector2; // Unit direction ONLY (normalized vector)
   rotation: number;
-  speed: number;
   damage: number;
   range: number;
   distanceTraveled: number;
@@ -134,6 +133,15 @@ export interface ServerProjectile {
   isActive: boolean;
   createdAt: number;
   lastUpdate: number;
+  // Separate config for speed
+  config: {
+    speed: number; // tiles per second
+    damage: number;
+    range: number;
+    piercing: boolean;
+    homing: boolean;
+    armorPenetration: number;
+  };
 }
 
 export interface ProjectileHit {
@@ -495,14 +503,26 @@ export class GameStateService {
       rotation
     } = moveData;
 
+    // CRITICAL FIX: Handle rotation-only updates (position undefined)
+    // This supports standalone rotation updates sent by the client
+    if (position === undefined) {
+      // This is a rotation-only update, just update the rotation
+      if (rotation !== undefined) {
+        player.rotation = rotation;
+      }
+      return;
+    }
+
     // Guard against completely missing or malformed velocity objects
+    let validVelocity = velocity;
     if (velocity === null || typeof velocity !== 'object' || velocity.x === undefined || velocity.y === undefined) {
       logger.warn(`⚠️  Missing or invalid velocity in move action from player ${player.id}. Using zero velocity.`);
-      (velocity as any).x = 0;
-      (velocity as any).y = 0;
+      // Create a new velocity object instead of modifying the potentially frozen one
+      validVelocity = { x: 0, y: 0 };
+      moveData.velocity = validVelocity;
     }
     
-    // Validate position
+    // Validate position (only if position is provided)
     const validationResult = this.validatePosition(position, gameState.arena);
     if (!validationResult.valid) {
       logger.warn(`Invalid position from player ${player.id}: ${validationResult.error}`);
@@ -511,21 +531,25 @@ export class GameStateService {
     
     // Validate velocity
     const maxSpeed = this.getPlayerMaxSpeed(player);
-    const velocityMagnitude = Math.sqrt(velocity.x * velocity.x + velocity.y * velocity.y);
+    const velocityMagnitude = Math.sqrt(validVelocity.x * validVelocity.x + validVelocity.y * validVelocity.y);
     if (velocityMagnitude > maxSpeed * 1.1) { // 10% tolerance
       logger.warn(`Player ${player.id} exceeding max speed: ${velocityMagnitude} > ${maxSpeed}`);
       // Normalize velocity
-      velocity.x = (velocity.x / velocityMagnitude) * maxSpeed;
-      velocity.y = (velocity.y / velocityMagnitude) * maxSpeed;
+      validVelocity.x = (validVelocity.x / velocityMagnitude) * maxSpeed;
+      validVelocity.y = (validVelocity.y / velocityMagnitude) * maxSpeed;
     }
     
     // Check collision with obstacles
     const correctedPosition = this.checkCollisions(position, player, gameState.arena);
     
-    // Update player state
+    // Update player state (position and velocity)
     player.position = correctedPosition;
-    player.velocity = velocity;
-    player.rotation = rotation;
+    player.velocity = validVelocity;
+    
+    // Always update rotation when provided, even if position didn't change
+    if (rotation !== undefined) {
+      player.rotation = rotation;
+    }
   }
 
   /**
@@ -547,24 +571,26 @@ export class GameStateService {
    */
   private async processProjectileAttack(gameState: ServerGameState, player: ServerPlayer, attackData: any): Promise<void> {
     let { direction, attackType, targetPosition } = attackData;
-    // 🔒 SAFETY: ensure we always have a direction object
-    if (!direction && targetPosition) {
+    
+    // CRITICAL FIX: Use server's authoritative player rotation when no direction provided
+    // This ensures projectiles fire in the direction the server knows the player is facing
+    let attackDirection = direction;
+    
+    if (!attackDirection && targetPosition) {
+      // Calculate direction from current position to target
       const dx = targetPosition.x - player.position.x;
       const dy = targetPosition.y - player.position.y;
       const len = Math.hypot(dx, dy) || 1;
-      direction = { x: dx / len, y: dy / len };
+      attackDirection = { x: dx / len, y: dy / len };
     }
-    if (!direction) direction = { x: 1, y: 0 };   // DEFAULT: facing right
     
-    // Calculate direction vector efficiently
-    let attackDirection = direction;
-    if (targetPosition) {
-      const dx = targetPosition.x - player.position.x;
-      const dy = targetPosition.y - player.position.y;
-      const distance = Math.sqrt(dx * dx + dy * dy);
-      if (distance > 0) {
-        attackDirection = { x: dx / distance, y: dy / distance };
-      }
+    if (!attackDirection) {
+      // CRITICAL FIX: Use player's authoritative rotation from server game state
+      // This is the key fix - use the rotation that was updated by both move and rotate events
+      attackDirection = {
+        x: Math.cos(player.rotation),
+        y: Math.sin(player.rotation)
+      };
     }
     
     // Ensure direction is normalized
@@ -573,9 +599,11 @@ export class GameStateService {
       attackDirection.x /= dirMagnitude;
       attackDirection.y /= dirMagnitude;
     } else {
-      // Default to facing right if no direction
-      attackDirection = { x: 1, y: 0 };
-      logger.warn(`⚠️ [STEP 10.5] No valid direction provided, defaulting to (1, 0)`);
+      // Fallback to player rotation if direction calculation failed
+      attackDirection = {
+        x: Math.cos(player.rotation),
+        y: Math.sin(player.rotation)
+      };
     }
     
     // 🔒 SAFETY: validate direction components for NaN
@@ -1311,8 +1339,8 @@ export class GameStateService {
     const rangeMultiplier = isSpecial ? 1.5 : 1.0; // Special attacks have longer range
     
     const baseDamage = calculateEffectiveDamage(weapon.damage * damageMultiplier, owner.stats.strength);
-    // Fixed speed: exactly 1 tile per second (no multiplier)
-    const projectileSpeed = 1.0;
+    // Fixed speed: 3 tiles per second for better visibility
+    const projectileSpeed = 3.0;
     
     logger.info(`📊 Projectile properties: damage=${baseDamage}, speed=${projectileSpeed}, range=${weapon.range * rangeMultiplier}`);
     logger.info(`📊 Modifiers: isSpecial=${isSpecial}, damageMultiplier=${damageMultiplier}, rangeMultiplier=${rangeMultiplier}`);
@@ -1328,12 +1356,11 @@ export class GameStateService {
         y: projectileData.position.y + projectileData.direction.y * 0.5
       },
       velocity: {
-        x: projectileData.direction.x * projectileSpeed,
-        y: projectileData.direction.y * projectileSpeed
+        x: projectileData.direction.x,
+        y: projectileData.direction.y
       },
       rotation: Math.atan2(projectileData.direction.y, projectileData.direction.x),
       damage: baseDamage,
-      speed: projectileSpeed,
       // Range expressed directly in tiles for consistency with arena bounds
       range: weapon.range * rangeMultiplier,
       distanceTraveled: 0,
@@ -1344,7 +1371,15 @@ export class GameStateService {
       armorPenetration: projectileData.classType === ClassType.ARCHER ? 50 : 0,
       isActive: true,
       createdAt: Date.now(),
-      lastUpdate: Date.now()
+      lastUpdate: Date.now(),
+      config: {
+        speed: projectileSpeed,
+        damage: baseDamage,
+        range: weapon.range * rangeMultiplier,
+        piercing: projectileData.type === 'arrow',
+        homing: isSpecial && projectileData.classType === ClassType.ARCHER,
+        armorPenetration: projectileData.classType === ClassType.ARCHER ? 50 : 0
+      }
     };
     
     // For homing projectiles, find nearest enemy
@@ -1418,7 +1453,9 @@ export class GameStateService {
       logger.info(`🎯 [STEP 14] Updating ${gameState.projectiles.size} projectiles, deltaTime: ${deltaTime}ms`);
     }
     
-    for (const [projectileId, projectile] of gameState.projectiles) {
+    // CRITICAL: Create a copy of the projectiles to avoid iterator invalidation when deleting
+    const projectileEntries = Array.from(gameState.projectiles.entries());
+    for (const [projectileId, projectile] of projectileEntries) {
       if (!projectile.isActive) {
         projectilesToRemove.push(projectileId);
         continue;
@@ -1432,11 +1469,11 @@ export class GameStateService {
         this.updateProjectileHoming(projectile, targetMap, deltaSeconds);
       }
 
-      // Move projectile once per tick
-      const moveDistance = projectile.speed * deltaSeconds;
+      // Move projectile using unit direction velocity and config speed
+      const moveDistance = projectile.config.speed * deltaSeconds;
       const newPosition = {
-        x: projectile.position.x + projectile.velocity.x * deltaSeconds, // velocity already includes speed
-        y: projectile.position.y + projectile.velocity.y * deltaSeconds  // velocity already includes speed
+        x: projectile.position.x + projectile.velocity.x * projectile.config.speed * deltaSeconds,
+        y: projectile.position.y + projectile.velocity.y * projectile.config.speed * deltaSeconds
       };
 
       // Track distance travelled (before modifying position for range checks)

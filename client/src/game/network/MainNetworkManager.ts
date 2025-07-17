@@ -4,7 +4,8 @@
  */
 
 import { io, Socket } from 'socket.io-client';
-import type { Vector2, ClassType } from '@dueled/shared';
+import { WSEvents } from '@dueled/shared';
+import type { Vector2, ClassType, MovePayload, RotatePayload, AttackPayload } from '@dueled/shared';
 
 export interface NetworkEventHandler {
   onPlayerJoined(playerId: string, data: any): void;
@@ -101,13 +102,13 @@ export class MainNetworkManager {
   public sendMovement(data: { x: number; y: number; angle: number; classType?: ClassType }): void {
     if (!this.socket || !this.isConnected) return;
     
-    console.log(`📤 Sending movement with class: ${data.classType}`);
-    this.socket.emit('player:move', {
+    const payload: MovePayload = {
       position: { x: data.x, y: data.y },
       angle: data.angle,
       classType: data.classType,
       timestamp: Date.now()
-    });
+    };
+    this.socket.emit(WSEvents.PLAYER_MOVE, payload);
   }
   
   /**
@@ -116,12 +117,12 @@ export class MainNetworkManager {
   public sendRotation(data: { angle: number; classType?: ClassType }): void {
     if (!this.socket || !this.isConnected) return;
     
-    console.log(`📤 Sending rotation with class: ${data.classType}`);
-    this.socket.emit('player:rotate', {
+    const payload: RotatePayload = {
       angle: data.angle,
       classType: data.classType,
       timestamp: Date.now()
-    });
+    };
+    this.socket.emit(WSEvents.PLAYER_ROTATE, payload);
   }
   
   /**
@@ -149,22 +150,14 @@ export class MainNetworkManager {
       return;
     }
     
-    const attackPayload = {
+    const attackPayload: AttackPayload = {
       direction: attackData.direction,
       targetPosition: attackData.targetPosition,
       attackType: attackData.attackType || 'basic',
       timestamp: Date.now()
     };
     
-    console.log(`📡 [STEP 3] NetworkManager sending player:attack:`, attackPayload);
-    console.log(`📡 [STEP 3] Socket details:`, {
-      socketId: this.socket.id,
-      connected: this.socket.connected,
-      playerId: this.playerId
-    });
-    
-    this.socket.emit('player:attack', attackPayload);
-    console.log(`📡 [STEP 3.5] Socket.emit('player:attack') called`);
+    this.socket.emit(WSEvents.PLAYER_ATTACK, attackPayload);
   }
   
   /**
@@ -193,17 +186,29 @@ export class MainNetworkManager {
     this.socket.off('connect_error');
     
     // Connection events
-    this.socket.on('connect', () => {
+    this.socket.on(WSEvents.CONNECT, () => {
       console.log('✅ Connected to game server namespace');
       this.isConnected = true;
+      
+      // CRITICAL: Set player ID immediately on connection to prevent race conditions
+      // This ensures we have a player ID before any 'player:joined' events are processed
+      if (this.socket?.id && !this.playerId) {
+        this.playerId = this.socket.id;
+        console.log('🆔 MainNetworkManager: Set initial player ID from socket:', this.playerId);
+        
+        // Update the game scene with the player ID immediately
+        if ('updatePlayerIdFromNetwork' in this.eventHandler) {
+          (this.eventHandler as any).updatePlayerIdFromNetwork(this.playerId);
+        }
+      }
     });
     
-    this.socket.on('disconnect', () => {
+    this.socket.on(WSEvents.DISCONNECT, () => {
       console.log('❌ Disconnected from game server');
       this.isConnected = false;
     });
     
-    this.socket.on('connect_error', (error) => {
+    this.socket.on(WSEvents.ERROR, (error) => {
       console.error('🚨 Connection error:', error);
     });
     
@@ -248,30 +253,37 @@ export class MainNetworkManager {
     });
     
     this.socket.on('player:joined', (data) => {
-      if (data.playerId !== this.playerId) {
-        this.eventHandler.onPlayerJoined(data.playerId, data);
+      // CRITICAL: Skip if this is our own player joining
+      if (data.playerId === this.playerId) {
+        console.log(`🔒 MainNetworkManager: Skipping player:joined for local player ${data.playerId}`);
+        return;
       }
+      this.eventHandler.onPlayerJoined(data.playerId, data);
     });
     
     this.socket.on('player:left', (data) => {
       this.eventHandler.onPlayerLeft(data.playerId, data);
     });
     
-    this.socket.on('player:moved', (data) => {
-      if (data.playerId !== this.playerId) {
-        console.log(`📥 Received movement from ${data.playerId} with class: ${data.classType}`);
-        this.eventHandler.onPlayerMoved(
-          data.playerId,
-          data.position,
-          data.angle,
-          data.classType // Pass class information if available
-        );
+    this.socket.on(WSEvents.PLAYER_MOVED, (data) => {
+      // CRITICAL: Skip if this is our own player movement
+      if (data.playerId === this.playerId) {
+        return;
       }
+      this.eventHandler.onPlayerMoved(
+        data.playerId,
+        data.position,
+        data.angle,
+        data.classType
+      );
     });
     
-    this.socket.on('player:rotated', (data) => {
-      if (data.playerId !== this.playerId && this.eventHandler.onPlayerRotated) {
-        console.log(`📥 Received rotation from ${data.playerId} with class: ${data.classType}`);
+    this.socket.on(WSEvents.PLAYER_ROTATED, (data) => {
+      // CRITICAL: Skip if this is our own player rotation
+      if (data.playerId === this.playerId) {
+        return;
+      }
+      if (this.eventHandler.onPlayerRotated) {
         this.eventHandler.onPlayerRotated(
           data.playerId,
           data.angle,
@@ -285,31 +297,18 @@ export class MainNetworkManager {
       console.log('Received game state update');
     });
 
-    this.socket.on('game:update', (data) => {
-      console.log(`🌐 [STEP 19] NetworkManager received game:update:`, {
-        hasData: !!data,
-        hasProjectiles: !!data?.projectiles,
-        projectileCount: data?.projectiles?.length || 0,
-        projectileDetails: data?.projectiles || [],
-        hasEvents: !!data?.events,
-        eventCount: data?.events?.length || 0,
-        eventDetails: data?.events || []
-      });
-      
+    this.socket.on(WSEvents.GAME_UPDATE, (data) => {
       if (this.eventHandler.handleGameUpdate) {
-        console.log(`🌐 [STEP 19.5] Calling handleGameUpdate on event handler`);
         this.eventHandler.handleGameUpdate(data);
       }
       
       // Handle projectile updates
       if (data.projectiles && this.eventHandler.onProjectileUpdate) {
-        console.log(`📡 [STEP 20] NetworkManager forwarding ${data.projectiles.length} projectiles to event handler`);
         this.eventHandler.onProjectileUpdate(data.projectiles);
       }
       
       // Handle game events (projectile creation, hits, etc.)
       if (data.events && this.eventHandler.onGameEvents) {
-        console.log(`📡 [STEP 20.5] NetworkManager forwarding ${data.events.length} events to event handler`);
         this.eventHandler.onGameEvents(data.events);
       }
     });
@@ -333,15 +332,17 @@ export class MainNetworkManager {
       // Process players from initial state
       if (data.players && this.eventHandler.onPlayerJoined) {
         for (const player of data.players) {
-          // Skip local player
-          if (player.id !== this.playerId) {
-            this.eventHandler.onPlayerJoined(player.id, {
-              username: player.username,
-              classType: player.classType,
-              position: player.position,
-              angle: player.rotation || 0
-            });
+          // CRITICAL: Skip local player
+          if (player.id === this.playerId) {
+            console.log(`🔒 MainNetworkManager: Skipping initial_state player for local player ${player.id}`);
+            continue;
           }
+          this.eventHandler.onPlayerJoined(player.id, {
+            username: player.username,
+            classType: player.classType,
+            position: player.position,
+            angle: player.rotation || 0
+          });
         }
       }
     });

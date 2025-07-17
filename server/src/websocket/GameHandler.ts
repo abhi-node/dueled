@@ -1,10 +1,13 @@
 import { Server, Socket } from 'socket.io';
 import { logger } from '../utils/logger.js';
-import { ActionType, type GameAction, type ClassType } from '@dueled/shared';
+import { ActionType, type GameAction, type ClassType, WSEvents, type MovePayload, type RotatePayload, type AttackPayload } from '@dueled/shared';
 import jwt from 'jsonwebtoken';
 import { matchmakingService } from '../services/matchmakingService.js';
 import { PlayerService } from '../services/playerService.js';
 import { gameStateService } from '../services/gameStateService.js';
+import { authenticateSocketToken } from '../middleware/authSecure.js';
+import { verifyToken, JwtPayload } from '../utils/jwt.js';
+import { connectionTracker } from '../services/connectionTracker.js';
 
 const playerService = new PlayerService();
 
@@ -51,6 +54,11 @@ export class GameHandler {
     setInterval(() => {
       this.cleanupMatchStates();
     }, 15000); // Every 15 seconds
+    
+    // Start stale player cleanup with connection tracker
+    setInterval(() => {
+      this.cleanupStaleConnections();
+    }, 5000); // Every 5 seconds
   }
 
   private setupNamespace() {
@@ -63,23 +71,45 @@ export class GameHandler {
           // Allow anonymous connections for debugging
           logger.warn(`Socket connection without token - allowing anonymous access for ${socket.id}`);
           socket.data.userId = `anon_${socket.id}`;
+          socket.data.sessionId = `anon_session_${socket.id}`;
           socket.data.username = `Anonymous_${socket.id.substr(-4)}`;
           socket.data.isAnonymous = true;
           return next();
         }
 
-        const decoded = jwt.verify(token, process.env.JWT_SECRET!) as any;
-        socket.data.userId = decoded.id; // Fixed: JWT contains 'id', not 'userId'
-        socket.data.username = decoded.username;
-        socket.data.isAnonymous = decoded.isAnonymous;
+        // Use the new JWT verification with RS256
+        const payload = await authenticateSocketToken(token);
+        if (!payload) {
+          logger.error(`Invalid token for socket ${socket.id}`);
+          // Fall back to anonymous for debugging
+          socket.data.userId = `anon_${socket.id}`;
+          socket.data.sessionId = `anon_session_${socket.id}`;
+          socket.data.username = `Anonymous_${socket.id.substr(-4)}`;
+          socket.data.isAnonymous = true;
+          return next();
+        }
+
+        // Get player data
+        const player = await playerService.findPlayerById(payload.sub);
+        if (!player) {
+          logger.error(`Player not found for user ${payload.sub}`);
+          return next(new Error('Player not found'));
+        }
+
+        socket.data.userId = payload.sub;
+        socket.data.sessionId = payload.sid; // Session ID for multi-tab support
+        socket.data.username = player.username;
+        socket.data.isAnonymous = player.isAnonymous;
+        socket.data.role = payload.role;
         
-        logger.info(`Socket authenticated successfully: user ${decoded.id} (${decoded.username}) on socket ${socket.id}`);
+        logger.info(`Socket authenticated successfully: user ${payload.sub} (${player.username}) session ${payload.sid} on socket ${socket.id}`);
         next();
       } catch (error) {
         logger.error(`Socket authentication failed for ${socket.id}:`, error);
         // Fall back to anonymous for debugging
         logger.warn(`Falling back to anonymous connection for ${socket.id}`);
         socket.data.userId = `anon_${socket.id}`;
+        socket.data.sessionId = `anon_session_${socket.id}`;
         socket.data.username = `Anonymous_${socket.id.substr(-4)}`;
         socket.data.isAnonymous = true;
         next();
@@ -98,10 +128,18 @@ export class GameHandler {
 
   private handleConnection(socket: Socket) {
     const userId = socket.data.userId;
+    const sessionId = socket.data.sessionId;
     logger.info(`Player ${userId} connected to game namespace`);
     
     // Store socket reference
     this.playerSockets.set(userId, socket);
+    
+    // Update connection tracker with heartbeat
+    const roomId = this.playerToRoom.get(userId);
+    if (roomId && roomId.startsWith('match:')) {
+      const matchId = roomId.replace('match:', '');
+      connectionTracker.updateLastSeen(matchId, userId, sessionId, socket.id);
+    }
 
     // Setup event handlers
     socket.on('join_queue', (data) => this.handleJoinQueue(socket, data));
@@ -112,10 +150,16 @@ export class GameHandler {
     
     // Game events
     socket.on('join_match', (data) => this.handleJoinMatch(socket, data));
-    socket.on('player:move', (data) => this.handlePlayerMove(socket, data));
-    socket.on('player:rotate', (data) => this.handlePlayerRotate(socket, data));
-    socket.on('player:attack', (data) => this.handlePlayerAttack(socket, data));
+    socket.on(WSEvents.PLAYER_MOVE, (data) => this.handlePlayerMove(socket, data));
+    socket.on(WSEvents.PLAYER_ROTATE, (data) => this.handlePlayerRotate(socket, data));
+    socket.on(WSEvents.PLAYER_ATTACK, (data) => this.handlePlayerAttack(socket, data));
     socket.on('game:action', (action) => this.handleGameAction(socket, action));
+    
+    // Heartbeat for connection tracking
+    socket.on('heartbeat', () => this.handleHeartbeat(socket));
+    
+    // Reconnection handler
+    socket.on('reconnect_to_match', (data) => this.handleReconnectToMatch(socket, data));
     
     // Debug endpoints
     socket.on('debug:test_projectile', () => this.handleDebugTestProjectile(socket));
@@ -128,14 +172,15 @@ export class GameHandler {
   private async handleJoinQueue(socket: Socket, data: { classType: ClassType }) {
     try {
       const userId = socket.data.userId;
+      const sessionId = socket.data.sessionId;
       const username = socket.data.username;
       
       // Get player rating
       const player = await playerService.getPlayerProfile(userId);
       const rating = player?.stats?.rating || 1000;
       
-      // Join matchmaking queue
-      await matchmakingService.joinQueue(userId, username, rating, data.classType);
+      // Join matchmaking queue with sessionId for multi-tab support
+      await matchmakingService.joinQueue(userId, sessionId, username, rating, data.classType);
       
       // Store player class
       this.playerClasses.set(userId, data.classType);
@@ -157,8 +202,9 @@ export class GameHandler {
   private async handleLeaveQueue(socket: Socket) {
     try {
       const userId = socket.data.userId;
+      const sessionId = socket.data.sessionId;
       
-      await matchmakingService.leaveQueue(userId);
+      await matchmakingService.leaveQueue(userId, sessionId);
       
       socket.emit('queue_left', { success: true });
       
@@ -172,8 +218,9 @@ export class GameHandler {
   private async handleQueueStatus(socket: Socket) {
     try {
       const userId = socket.data.userId;
+      const sessionId = socket.data.sessionId;
       
-      const status = await matchmakingService.getQueueStatus(userId);
+      const status = await matchmakingService.getQueueStatus(userId, sessionId);
       socket.emit('queue_status', status);
     } catch (error) {
       logger.error('Error getting queue status:', error);
@@ -239,11 +286,15 @@ export class GameHandler {
       }
       
       const userId = socket.data.userId;
+      const sessionId = socket.data.sessionId;
       const roomId = `match:${data.matchId}`;
       
       // Join the match room
       socket.join(roomId);
       this.playerToRoom.set(userId, roomId);
+      
+      // Update connection tracker for this match
+      connectionTracker.updateLastSeen(data.matchId, userId, sessionId, socket.id);
       
       if (!this.rooms.has(roomId)) {
         this.rooms.set(roomId, new Set());
@@ -439,7 +490,7 @@ export class GameHandler {
     }
   }
 
-  private async handlePlayerMove(socket: Socket, data: { position: { x: number; y: number }; angle: number; classType?: ClassType }) {
+  private async handlePlayerMove(socket: Socket, data: MovePayload) {
     const userId = socket.data.userId;
     const roomId = this.playerToRoom.get(userId);
     
@@ -451,8 +502,8 @@ export class GameHandler {
     const action: GameAction = {
       type: ActionType.MOVE,
       playerId: userId,
-      data: { position: data.position, angle: data.angle },
-      timestamp: Date.now()
+      data: { position: data.position, rotation: data.angle },
+      timestamp: data.timestamp || Date.now()
     };
     
     await gameStateService.addPlayerInput(matchId, userId, action);
@@ -479,15 +530,16 @@ export class GameHandler {
     }
     
     // Broadcast movement to other players in the room
-    socket.to(roomId).emit('player:moved', {
+    socket.to(roomId).emit(WSEvents.PLAYER_MOVED, {
       playerId: userId,
       position: data.position,
       angle: data.angle,
-      classType: classType
+      classType: classType,
+      timestamp: data.timestamp || Date.now()
     });
   }
 
-  private async handlePlayerRotate(socket: Socket, data: { angle: number; classType?: ClassType }) {
+  private async handlePlayerRotate(socket: Socket, data: RotatePayload) {
     const userId = socket.data.userId;
     const roomId = this.playerToRoom.get(userId);
     
@@ -516,28 +568,35 @@ export class GameHandler {
       }
     }
     
-    if (!classType) {
-      logger.warn(`Player ${userId} rotation without class type - class not found anywhere`);
-      // Still send the rotation but without class type
-      socket.to(roomId).emit('player:rotated', {
-        playerId: userId,
-        angle: data.angle,
-        // No classType field when unknown
-      });
-      return;
-    }
-    
     // Update stored class if provided
     if (data.classType) {
       this.playerClasses.set(userId, data.classType);
     }
     
-    // Broadcast rotation to other players in the room
-    socket.to(roomId).emit('player:rotated', {
+    // CRITICAL FIX: Update game state with rotation data
+    // Create a game action for rotation to ensure server stores the latest facing direction
+    const rotationAction: GameAction = {
+      type: ActionType.MOVE, // Use MOVE type but with position from current state
       playerId: userId,
-      angle: data.angle,
-      classType: classType
-    });
+      data: {
+        position: undefined, // Will be filled by GameStateService from current player position
+        rotation: data.angle,
+        timestamp: data.timestamp || Date.now()
+      }
+    };
+    
+    // Add to game state processing - this ensures server stores the rotation
+    gameStateService.addPlayerInput(roomId.replace('match:', ''), userId, rotationAction);
+    
+    // Broadcast rotation to other players in the room
+    if (classType) {
+      socket.to(roomId).emit(WSEvents.PLAYER_ROTATED, {
+        playerId: userId,
+        angle: data.angle,
+        classType: classType,
+        timestamp: data.timestamp || Date.now()
+      });
+    }
   }
 
   private async handlePlayerAttack(socket: Socket, data: any) {
@@ -702,6 +761,113 @@ export class GameHandler {
     }
   }
 
+  private handleHeartbeat(socket: Socket) {
+    const userId = socket.data.userId;
+    const sessionId = socket.data.sessionId;
+    const roomId = this.playerToRoom.get(userId);
+    
+    if (roomId && roomId.startsWith('match:')) {
+      const matchId = roomId.replace('match:', '');
+      connectionTracker.updateLastSeen(matchId, userId, sessionId, socket.id);
+    }
+  }
+
+  /**
+   * Handle player reconnection to an existing match
+   * Resync state instead of recreating
+   */
+  private async handleReconnectToMatch(socket: Socket, data: { matchId: string }) {
+    try {
+      const userId = socket.data.userId;
+      const sessionId = socket.data.sessionId;
+      const username = socket.data.username;
+      
+      logger.info(`Player ${userId} attempting to reconnect to match ${data.matchId}`);
+      
+      // Check if game state still exists
+      const gameState = await gameStateService.getGameState(data.matchId);
+      if (!gameState) {
+        socket.emit('reconnect_failed', { 
+          error: 'game_state_not_found',
+          message: 'Game state no longer exists' 
+        });
+        return;
+      }
+      
+      // Check if player was in this match
+      if (!gameState.players.has(userId)) {
+        socket.emit('reconnect_failed', { 
+          error: 'player_not_in_match',
+          message: 'You were not a player in this match' 
+        });
+        return;
+      }
+      
+      const roomId = `match:${data.matchId}`;
+      
+      // Rejoin the match room
+      socket.join(roomId);
+      this.playerToRoom.set(userId, roomId);
+      
+      if (!this.rooms.has(roomId)) {
+        this.rooms.set(roomId, new Set());
+      }
+      this.rooms.get(roomId)!.add(userId);
+      
+      // Update connection tracker
+      connectionTracker.updateLastSeen(data.matchId, userId, sessionId, socket.id);
+      
+      // Update socket reference
+      this.playerSockets.set(userId, socket);
+      
+      // Notify other players of reconnection
+      socket.to(roomId).emit('player:reconnected', {
+        playerId: userId,
+        username,
+        message: `${username} has reconnected`
+      });
+      
+      // Send current game state to reconnecting player
+      const players = Array.from(gameState.players.values()).map(p => ({
+        id: p.id,
+        position: p.position,
+        velocity: p.velocity,
+        rotation: p.rotation,
+        health: p.health,
+        armor: p.armor,
+        isAlive: p.isAlive,
+        classType: p.classType,
+        username: p.username
+      }));
+      
+      const projectiles = Array.from(gameState.projectiles.values()).map(p => ({
+        id: p.id,
+        position: p.position,
+        velocity: p.velocity,
+        ownerId: p.ownerId,
+        config: p.config
+      }));
+      
+      // Send resync state event
+      socket.emit('resync_state', {
+        matchId: data.matchId,
+        players,
+        projectiles,
+        status: gameState.status,
+        timestamp: Date.now()
+      });
+      
+      logger.info(`Player ${userId} successfully reconnected to match ${data.matchId}`);
+      
+    } catch (error) {
+      logger.error(`Error handling reconnection for player ${socket.data.userId}:`, error);
+      socket.emit('reconnect_failed', { 
+        error: 'internal_error',
+        message: 'Internal server error during reconnection' 
+      });
+    }
+  }
+
   private async handleDisconnect(socket: Socket) {
     const userId = socket.data.userId;
     const username = socket.data.username;
@@ -716,192 +882,33 @@ export class GameHandler {
     
     // Remove socket reference
     this.playerSockets.delete(userId);
-    // Don't delete class data immediately - it might be needed for reconnection
-    // this.playerClasses.delete(userId);
     
-    if (roomId) {
-      const room = this.rooms.get(roomId);
+    if (roomId && roomId.startsWith('match:')) {
+      const matchId = roomId.replace('match:', '');
       
-      // If this is a match room
-      if (roomId.startsWith('match:') && room) {
-        const matchId = roomId.replace('match:', '');
-        const matchState = this.matchStates.get(matchId);
+      // Mark as disconnected in connection tracker but don't destroy state
+      connectionTracker.markDisconnected(matchId, userId);
+      
+      // Remove from room for now - they can rejoin if they reconnect
+      const room = this.rooms.get(roomId);
+      if (room) {
+        room.delete(userId);
         
-        let shouldEndMatch = false;
-        let reason = '';
-        
-        if (matchState) {
-          const now = Date.now();
-          const timeSinceCreation = now - matchState.createdAt;
-          
-          // Case 1: Both players joined and someone is leaving
-          if (matchState.allPlayersJoinedAt) {
-            shouldEndMatch = true;
-            reason = `Player ${username} left after match started`;
-            logger.info(`Match ${matchId}: Player disconnect after both joined. Ending match after 2 second delay.`);
-            
-            // Give a 2-second grace period for reconnection before ending the match
-            setTimeout(async () => {
-              // Check if the player rejoined during the delay
-              const currentMatchState = this.matchStates.get(matchId);
-              const currentRoom = this.rooms.get(roomId);
-              
-              // If match is still active and player hasn't rejoined
-              if (currentMatchState && currentRoom && !currentRoom.has(userId)) {
-                logger.info(`Match ${matchId}: Player ${username} didn't rejoin within 2 seconds. Ending match.`);
-                
-                // Notify all remaining players that the match is ending
-                this.io.of('/game').to(roomId).emit('match_ended', {
-                  reason: 'player_disconnect',
-                  disconnectedPlayer: {
-                    playerId: userId,
-                    username: username
-                  },
-                  message: `${username} has left the game. Match ended.`
-                });
-                
-                // Get all players in the room to disconnect them
-                const playersInRoom = Array.from(currentRoom);
-                
-                // Remove all players from the room
-                for (const playerId of playersInRoom) {
-                  const playerSocket = this.playerSockets.get(playerId);
-                  if (playerSocket && playerId !== userId) {
-                    // Force disconnect the remaining player after a short delay to allow notification to be received
-                    setTimeout(() => {
-                      logger.info(`Forcibly disconnecting player ${playerId} from ended match`);
-                      playerSocket.disconnect(true);
-                    }, 2000);
-                  }
-                  
-                  // Clean up player data
-                  this.playerToRoom.delete(playerId);
-                  this.playerSockets.delete(playerId);
-                  this.playerClasses.delete(playerId);
-                }
-                
-                // Clean up game state
-                try {
-                  await gameStateService.cleanup(matchId);
-                  logger.info(`Game state cleaned up for match ${matchId}`);
-                } catch (error) {
-                  logger.error(`Error cleaning up game state for match ${matchId}:`, error);
-                }
-                
-                // Clean up room
-                this.rooms.delete(roomId);
-                
-                // Clean up match state
-                this.matchStates.delete(matchId);
-                
-                // Clean up disconnected player's class data
-                this.playerClasses.delete(userId);
-              } else if (currentRoom && currentRoom.has(userId)) {
-                logger.info(`Match ${matchId}: Player ${username} rejoined within 2 seconds. Match continues.`);
-              }
-            }, 2000);
-            
-            // Don't end the match immediately
-            shouldEndMatch = false;
-          }
-          // Case 2: Still within grace period (10 seconds) and not all players joined
-          else if (timeSinceCreation < this.MATCH_JOIN_GRACE_PERIOD) {
-            shouldEndMatch = false;
-            logger.info(`Match ${matchId}: Player ${username} disconnected during grace period (${Math.round(timeSinceCreation/1000)}s/${Math.round(this.MATCH_JOIN_GRACE_PERIOD/1000)}s). Waiting for other player.`);
-          }
-          // Case 3: Grace period expired and not all players joined
-          else {
-            shouldEndMatch = true;
-            reason = `Grace period expired - not all players joined`;
-            logger.info(`Match ${matchId}: Grace period expired. Ending match.`);
-          }
-        } else {
-          // No match state - this shouldn't happen but end match to be safe
-          shouldEndMatch = true;
-          reason = `No match state found`;
-          logger.warn(`Match ${matchId}: No match state found. Ending match.`);
-        }
-        
-        if (shouldEndMatch) {
-          // Notify all remaining players that the match is ending
-          socket.to(roomId).emit('match_ended', {
-            reason: reason.includes('Grace period') ? 'grace_period_expired' : 'player_disconnect',
-            disconnectedPlayer: reason.includes('Grace period') ? undefined : {
-              playerId: userId,
-              username: username
-            },
-            message: reason
-          });
-          
-          // Get all players in the room to disconnect them
-          const playersInRoom = Array.from(room);
-          
-          // Remove all players from the room
-          for (const playerId of playersInRoom) {
-            const playerSocket = this.playerSockets.get(playerId);
-            if (playerSocket && playerId !== userId) {
-              // Force disconnect the remaining player after a short delay to allow notification to be received
-              setTimeout(() => {
-                logger.info(`Forcibly disconnecting player ${playerId} from ended match`);
-                playerSocket.disconnect(true);
-              }, 2000);
-            }
-            
-            // Clean up player data
-            this.playerToRoom.delete(playerId);
-            this.playerSockets.delete(playerId);
-            this.playerClasses.delete(playerId);
-          }
-          
-          // Clean up game state
-          try {
-            await gameStateService.cleanup(matchId);
-            logger.info(`Game state cleaned up for match ${matchId}`);
-          } catch (error) {
-            logger.error(`Error cleaning up game state for match ${matchId}:`, error);
-          }
-          
-          // Clean up room
-          this.rooms.delete(roomId);
-          
-          // Clean up match state
-          this.matchStates.delete(matchId);
-        } else {
-          // Player disconnected during grace period - just remove them
-          logger.info(`Match ${matchId}: Removing player ${username} during grace period`);
-          
-          // Notify other players that someone left (but match continues)
-          socket.to(roomId).emit('player:left', { 
-            playerId: userId,
-            username: username,
-            message: `${username} disconnected. Waiting for players to join...`
-          });
-          
-          // Remove player from room
-          if (room) {
-            room.delete(userId);
-          }
-          
-          // Clean up this player's data
-          this.playerToRoom.delete(userId);
-          this.playerSockets.delete(userId);
-          // Don't delete class data during grace period - player might reconnect
-          // this.playerClasses.delete(userId);
-          
-          // Update match state to remove this player from joined list
-          if (matchState) {
-            matchState.joinedPlayers.delete(userId);
-            logger.info(`Match ${matchId}: Players in match after disconnect: ${matchState.joinedPlayers.size}/${matchState.expectedPlayers.size}`);
-          }
-        }
-      } else {
-        // Handle normal room cleanup for non-match rooms or single player rooms
-        socket.to(roomId).emit('player:left', { 
+        // Notify other players
+        socket.to(roomId).emit('player:disconnected', {
           playerId: userId,
-          username: username 
+          username,
+          message: `${username} disconnected. Waiting for reconnection...`
         });
-        
-        // Clean up room data
+      }
+      
+      this.playerToRoom.delete(userId);
+      
+      logger.info(`Player ${userId} marked as disconnected. Grace period active.`);
+    } else {
+      // Handle non-match room cleanup
+      if (roomId) {
+        const room = this.rooms.get(roomId);
         if (room) {
           room.delete(userId);
           if (room.size === 0) {
@@ -909,14 +916,90 @@ export class GameHandler {
           }
         }
         
+        socket.to(roomId).emit('player:left', { 
+          playerId: userId,
+          username 
+        });
+        
         this.playerToRoom.delete(userId);
       }
-    }
-    
-    // Final cleanup of class data if not in a match
-    if (!roomId || !roomId.startsWith('match:')) {
+      
+      // Clean up class data for non-match disconnections
       this.playerClasses.delete(userId);
     }
+  }
+
+  /**
+   * New stale connection cleanup using connection tracker
+   * Replaces the old 2s timer approach with proper heartbeat tracking
+   */
+  private async cleanupStaleConnections() {
+    try {
+      const staleMatches = connectionTracker.getStaleMatches();
+      
+      for (const matchId of staleMatches) {
+        // Check if the match is finished before cleanup
+        const gameState = await gameStateService.getGameState(matchId);
+        if (gameState && !gameState.isFinished) {
+          // Only check finished matches or surrendered ones
+          continue;
+        }
+        
+        logger.info(`Cleaning up stale match: ${matchId}`);
+        
+        const roomId = `match:${matchId}`;
+        
+        // Notify any remaining players
+        this.io.of('/game').to(roomId).emit('match_ended', {
+          reason: 'player_disconnect',
+          message: 'All players have been disconnected for too long. Match ended.'
+        });
+        
+        // Clean up all match resources
+        await this.cleanupMatch(matchId);
+      }
+    } catch (error) {
+      logger.error('Error during stale connection cleanup:', error);
+    }
+  }
+
+  /**
+   * Clean up all resources for a match
+   */
+  private async cleanupMatch(matchId: string) {
+    const roomId = `match:${matchId}`;
+    const room = this.rooms.get(roomId);
+    
+    // Remove all players from room
+    if (room) {
+      for (const playerId of room) {
+        this.playerToRoom.delete(playerId);
+        this.playerClasses.delete(playerId);
+        
+        // Disconnect socket if still connected
+        const socket = this.playerSockets.get(playerId);
+        if (socket) {
+          socket.disconnect(true);
+        }
+        this.playerSockets.delete(playerId);
+      }
+      
+      this.rooms.delete(roomId);
+    }
+    
+    // Clean up game state
+    try {
+      await gameStateService.cleanup(matchId);
+      logger.info(`Game state cleaned up for match ${matchId}`);
+    } catch (error) {
+      logger.error(`Error cleaning up game state for match ${matchId}:`, error);
+    }
+    
+    // Remove from connection tracker
+    connectionTracker.removeMatch(matchId);
+    
+    // Clean up match state
+    this.matchStates.delete(matchId);
   }
 
   // Called when a match is found by the matchmaking service

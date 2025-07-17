@@ -10,39 +10,7 @@
  * Total sheet: 192×192 pixels
  */
 
-import type { Vector2, ClassType, WeaponEffect } from '@dueled/shared';
-
-export interface ProjectileConfig {
-  id: string;
-  type: 'arrow' | 'ice_shard' | 'fire_bomb' | 'magic_missile';
-  damage: number;
-  speed: number; // pixels per second
-  range: number; // max distance in tiles
-  size: { width: number; height: number }; // hitbox size
-  piercing: boolean;
-  homing: boolean;
-  armorPenetration: number; // percentage (0-100)
-  effects: WeaponEffect[];
-  spriteSheet?: {
-    path: string;
-    frameWidth: number; // 48 pixels
-    frameHeight: number; // 48 pixels  
-    totalFrames: number; // 16 frames total
-  };
-}
-
-export interface ProjectileState {
-  id: string;
-  position: Vector2;
-  velocity: Vector2;
-  rotation: number;
-  distanceTraveled: number;
-  isActive: boolean;
-  ownerId: string;
-  targetId?: string; // For homing projectiles
-  createdAt: number;
-  lastUpdate: number;
-}
+import type { Vector2, ClassType, WeaponEffect, ProjectileState, ProjectileConfig } from '@dueled/shared';
 
 export class Projectile {
   private config: ProjectileConfig;
@@ -67,7 +35,7 @@ export class Projectile {
   private async loadSprite(path: string): Promise<void> {
     this.sprite = new Image();
     this.sprite.onload = () => {
-      console.log(`✅ Projectile sprite loaded: ${path}`);
+      // Sprite loaded successfully
     };
     this.sprite.onerror = () => {
       console.warn(`❌ Failed to load projectile sprite: ${path}`);
@@ -80,7 +48,6 @@ export class Projectile {
    */
   public update(deltaTime: number, targets: Map<string, Vector2>, walls: number[][]): boolean {
     if (!this.state.isActive) {
-      console.log(`🏹 Projectile ${this.state.id} is not active, skipping update`);
       return false;
     }
     
@@ -92,14 +59,14 @@ export class Projectile {
       this.updateHoming(targets, deltaSeconds);
     }
     
-    // Update position using proper speed calculation
-    const moveDistance = this.config.speed * deltaSeconds;
-    const newX = this.state.position.x + this.state.velocity.x * moveDistance;
-    const newY = this.state.position.y + this.state.velocity.y * moveDistance;
+    // Update position using unit direction velocity and speed
+    const deltaX = this.state.velocity.x * this.config.speed * deltaSeconds;
+    const deltaY = this.state.velocity.y * this.config.speed * deltaSeconds;
+    const newX = this.state.position.x + deltaX;
+    const newY = this.state.position.y + deltaY;
     
     // Check wall collisions
     if (this.checkWallCollision(newX, newY, walls)) {
-      console.log(`🏹 Projectile ${this.state.id} hit wall at (${newX.toFixed(1)}, ${newY.toFixed(1)}), deactivating`);
       this.onImpact();
       return false;
     }
@@ -107,10 +74,7 @@ export class Projectile {
     // Update position
     this.state.position.x = newX;
     this.state.position.y = newY;
-    this.state.distanceTraveled += Math.sqrt(
-      (this.state.velocity.x * moveDistance) ** 2 + 
-      (this.state.velocity.y * moveDistance) ** 2
-    );
+    this.state.distanceTraveled += Math.sqrt(deltaX ** 2 + deltaY ** 2);
     
     // Update rotation based on velocity
     this.state.rotation = Math.atan2(this.state.velocity.y, this.state.velocity.x);
@@ -118,7 +82,6 @@ export class Projectile {
     // Check range limit
     const maxDistance = this.config.range;
     if (this.state.distanceTraveled >= maxDistance) {
-      console.log(`🏹 Projectile ${this.state.id} exceeded range: ${this.state.distanceTraveled.toFixed(1)} >= ${maxDistance.toFixed(1)}, deactivating`);
       this.state.isActive = false;
       return false;
     }
@@ -180,13 +143,11 @@ export class Projectile {
     
     // Check bounds first
     if (tileY < 0 || tileY >= walls.length || tileX < 0 || tileX >= walls[0].length) {
-      console.log(`🏹 Projectile ${this.state.id} out of bounds at tile (${tileX}, ${tileY}), pixel (${x.toFixed(1)}, ${y.toFixed(1)})`);
       return true; // Out of bounds = collision
     }
     
     const tileValue = walls[tileY][tileX];
     if (tileValue !== 0) {
-      console.log(`🏹 Projectile ${this.state.id} hit wall tile (${tileX}, ${tileY}) = ${tileValue}, pixel (${x.toFixed(1)}, ${y.toFixed(1)})`);
       return true; // Wall collision
     }
     
@@ -210,8 +171,6 @@ export class Projectile {
    */
   private onImpact(): void {
     this.state.isActive = false;
-    
-    console.log(`💥 Projectile ${this.config.type} impact at (${this.state.position.x.toFixed(1)}, ${this.state.position.y.toFixed(1)})`);
   }
 
   /**
@@ -343,10 +302,16 @@ export class Projectile {
   /**
    * Update state from server data (for network synchronization)
    */
-  public updateFromServer(serverData: { position: Vector2; velocity: Vector2; rotation: number }): void {
-    this.state.position = { ...serverData.position };
-    this.state.velocity = { ...serverData.velocity };
-    this.state.rotation = serverData.rotation;
+  public updateFromServer(data: {
+    position: Vector2;
+    velocity: Vector2;
+    rotation: number;
+    isActive?: boolean;
+  }): void {
+    this.state.position = { ...data.position };
+    this.state.velocity = { ...data.velocity };
+    this.state.rotation = data.rotation;
+    if (data.isActive !== undefined) this.state.isActive = data.isActive;
     this.state.lastUpdate = Date.now();
   }
 } 

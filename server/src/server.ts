@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import cookieParser from 'cookie-parser';
 import { createServer } from 'http';
 import { Server as SocketIOServer } from 'socket.io';
 import dotenv from 'dotenv';
@@ -156,6 +157,9 @@ app.use(express.urlencoded({
   limit: '1mb',
   parameterLimit: 20
 }));
+
+// Cookie parser middleware
+app.use(cookieParser());
 
 // Additional security middleware
 app.use(requestLogger);

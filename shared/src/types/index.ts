@@ -203,3 +203,36 @@ export enum ObstacleType {
   PILLAR = 'pillar',
   DESTRUCTIBLE = 'destructible'
 }
+
+// Projectile types for deterministic physics
+export interface ProjectileState {
+  id: string;
+  position: Vector2;
+  velocity: Vector2; // Unit direction ONLY (normalized vector)
+  rotation: number;
+  distanceTraveled: number;
+  isActive: boolean;
+  ownerId: string;
+  targetId?: string; // For homing projectiles
+  createdAt: number;
+  lastUpdate: number;
+}
+
+export interface ProjectileConfig {
+  id: string;
+  type: 'arrow' | 'ice_shard' | 'fire_bomb' | 'magic_missile';
+  damage: number;
+  speed: number; // tiles per second
+  range: number; // max distance in tiles
+  size: { width: number; height: number }; // hitbox size
+  piercing: boolean;
+  homing: boolean;
+  armorPenetration: number; // percentage (0-100)
+  effects: WeaponEffect[];
+  spriteSheet?: {
+    path: string;
+    frameWidth: number;
+    frameHeight: number;
+    totalFrames: number;
+  };
+}

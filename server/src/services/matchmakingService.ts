@@ -17,6 +17,7 @@ export function setGameHandler(handler: any) {
 
 export interface QueueEntry {
   playerId: string;
+  sessionId: string; // Unique session ID for multi-tab support
   username: string;
   rating: number;
   classType: ClassType;
@@ -62,16 +63,20 @@ export class MatchmakingService {
   /**
    * Add player to matchmaking queue
    */
-  async joinQueue(playerId: string, username: string, rating: number, classType: ClassType): Promise<void> {
+  async joinQueue(playerId: string, sessionId: string, username: string, rating: number, classType: ClassType): Promise<void> {
     try {
-      // Check if player is already in queue
-      const inQueue = await redis.get(`${this.PLAYER_IN_QUEUE_PREFIX}${playerId}`);
+      // For multi-tab support, we use sessionId as the unique identifier in queue
+      const queueKey = `${playerId}:${sessionId}`;
+      
+      // Check if this session is already in queue
+      const inQueue = await redis.get(`${this.PLAYER_IN_QUEUE_PREFIX}${queueKey}`);
       if (inQueue) {
-        throw new Error('Player already in queue');
+        throw new Error('Session already in queue');
       }
       
       const queueEntry: QueueEntry = {
         playerId,
+        sessionId,
         username,
         rating,
         classType,
@@ -81,10 +86,10 @@ export class MatchmakingService {
       // Add to queue using rating as score for sorted set
       await redis.zadd(this.QUEUE_KEY, rating, JSON.stringify(queueEntry));
       
-      // Mark player as in queue
-      await redis.setex(`${this.PLAYER_IN_QUEUE_PREFIX}${playerId}`, 300, '1'); // 5 min TTL
+      // Mark session as in queue
+      await redis.setex(`${this.PLAYER_IN_QUEUE_PREFIX}${queueKey}`, 300, '1'); // 5 min TTL
       
-      logger.info(`Player ${playerId} joined queue with rating ${rating}`);
+      logger.info(`Player ${playerId} (session ${sessionId}) joined queue with rating ${rating}`);
       
       // Try to find a match immediately
       const match = await this.findMatch(queueEntry);
@@ -110,7 +115,7 @@ export class MatchmakingService {
   /**
    * Remove player from queue
    */
-  async leaveQueue(playerId: string): Promise<void> {
+  async leaveQueue(playerId: string, sessionId?: string): Promise<void> {
     try {
       // Get all queue entries
       const members = await redis.zrange(this.QUEUE_KEY, 0, -1) as string[];
@@ -118,16 +123,18 @@ export class MatchmakingService {
       // Find and remove the player's entry
       for (const member of members) {
         const entry = JSON.parse(member) as QueueEntry;
-        if (entry.playerId === playerId) {
+        // Match by sessionId if provided, otherwise by playerId (for backwards compatibility)
+        if (sessionId ? (entry.playerId === playerId && entry.sessionId === sessionId) : entry.playerId === playerId) {
           await redis.zrem(this.QUEUE_KEY, member);
+          
+          // Remove in-queue marker
+          const queueKey = sessionId ? `${playerId}:${sessionId}` : playerId;
+          await redis.delete(`${this.PLAYER_IN_QUEUE_PREFIX}${queueKey}`);
+          
+          logger.info(`Player ${playerId}${sessionId ? ` (session ${sessionId})` : ''} left queue`);
           break;
         }
       }
-      
-      // Remove in-queue marker
-      await redis.delete(`${this.PLAYER_IN_QUEUE_PREFIX}${playerId}`);
-      
-      logger.info(`Player ${playerId} left queue`);
     } catch (error) {
       logger.error('Error leaving queue:', error);
       throw error;
@@ -137,9 +144,10 @@ export class MatchmakingService {
   /**
    * Get queue status for a player
    */
-  async getQueueStatus(playerId: string): Promise<{ inQueue: boolean; estimatedWait: number; queuePosition?: number }> {
+  async getQueueStatus(playerId: string, sessionId?: string): Promise<{ inQueue: boolean; estimatedWait: number; queuePosition?: number }> {
     try {
-      const inQueue = await redis.get(`${this.PLAYER_IN_QUEUE_PREFIX}${playerId}`) !== null;
+      const queueKey = sessionId ? `${playerId}:${sessionId}` : playerId;
+      const inQueue = await redis.get(`${this.PLAYER_IN_QUEUE_PREFIX}${queueKey}`) !== null;
       
       if (!inQueue) {
         return { inQueue: false, estimatedWait: 0 };
@@ -192,9 +200,9 @@ export class MatchmakingService {
       // Parse all entries once
       const allEntries = allMembers.map(member => JSON.parse(member) as QueueEntry);
       
-      // OPTIMIZATION 2: Filter out self and sort by wait time (prioritize longest waiting)
+      // OPTIMIZATION 2: Filter out self (by sessionId) and sort by wait time (prioritize longest waiting)
       const candidates = allEntries
-        .filter(entry => entry.playerId !== playerEntry.playerId)
+        .filter(entry => entry.sessionId !== playerEntry.sessionId) // Allow same player different sessions
         .sort((a, b) => a.joinedAt - b.joinedAt); // Oldest first
       
       if (candidates.length === 0) {
@@ -237,9 +245,9 @@ export class MatchmakingService {
         // Create match
         const matchData = await this.createMatch(playerEntry, bestMatch);
         
-        // Remove both players from queue
-        await this.leaveQueue(playerEntry.playerId);
-        await this.leaveQueue(bestMatch.playerId);
+        // Remove both players from queue with their sessionIds
+        await this.leaveQueue(playerEntry.playerId, playerEntry.sessionId);
+        await this.leaveQueue(bestMatch.playerId, bestMatch.sessionId);
         
         return matchData;
       }
@@ -718,8 +726,9 @@ export class MatchmakingService {
         // Remove entries older than 5 minutes
         if (currentTime - member.joinedAt > 300000) {
           await redis.zrem(this.QUEUE_KEY, memberData);
-          await redis.delete(`${this.PLAYER_IN_QUEUE_PREFIX}${member.playerId}`);
-          logger.info(`Cleaned up stale queue entry for player ${member.playerId}`);
+          const queueKey = member.sessionId ? `${member.playerId}:${member.sessionId}` : member.playerId;
+          await redis.delete(`${this.PLAYER_IN_QUEUE_PREFIX}${queueKey}`);
+          logger.info(`Cleaned up stale queue entry for player ${member.playerId}${member.sessionId ? ` (session ${member.sessionId})` : ''}`);
         }
       }
     } catch (error) {

@@ -49,7 +49,6 @@ export class ArcherCombat {
     // Check if archer is already registered
     const existingArcher = this.archerStates.get(playerId);
     if (existingArcher) {
-      console.log(`🏹 Archer ${playerId} already registered, updating position and angle`);
       existingArcher.position = { ...position };
       existingArcher.facingAngle = facingAngle;
       return;
@@ -73,9 +72,6 @@ export class ArcherCombat {
     // Register with combat manager
     this.combatManager.registerPlayer(playerId, position, ClassType.ARCHER);
     
-    console.log(`🏹 Archer registered: ${playerId} (Basic: ${basicCooldown.toFixed(2)}s, Special: ${specialCooldown.toFixed(1)}s)`);
-    console.log(`🏹 Current archer states count: ${this.archerStates.size}`);
-    console.log(`🏹 Archer states keys:`, Array.from(this.archerStates.keys()));
   }
 
   /**
@@ -96,13 +92,8 @@ export class ArcherCombat {
    * Attempt basic attack (piercing arrow)
    */
   public tryBasicAttack(playerId: string, targetPosition?: Vector2): boolean {
-    console.log(`🏹 tryBasicAttack called for playerId: ${playerId}`);
-    console.log(`🏹 Current archer states count: ${this.archerStates.size}`);
-    console.log(`🏹 Archer states keys:`, Array.from(this.archerStates.keys()));
-    
     const archer = this.archerStates.get(playerId);
     if (!archer) {
-      console.warn(`🏹 No archer state found for playerId: ${playerId}`);
       return false;
     }
     
@@ -112,6 +103,9 @@ export class ArcherCombat {
     if (currentTime - archer.lastBasicAttack < archer.basicAttackCooldown) {
       return false;
     }
+    
+    // Update lastBasicAttack BEFORE creating projectile to prevent duplicate attacks
+    archer.lastBasicAttack = currentTime;
     
     // Calculate target position if not provided (shoot in facing direction)
     let attackTarget = targetPosition;
@@ -136,7 +130,6 @@ export class ArcherCombat {
     const projectile = this.combatManager.archerBasicAttack(attackData);
     
     if (projectile) {
-      archer.lastBasicAttack = currentTime;
       archer.isAttacking = true;
       
       // Reset attacking flag after short delay
@@ -144,7 +137,6 @@ export class ArcherCombat {
         archer.isAttacking = false;
       }, 200);
       
-      console.log(`🏹 ${playerId} fired basic arrow at (${attackTarget.x.toFixed(1)}, ${attackTarget.y.toFixed(1)})`);
       return true;
     }
     
@@ -194,7 +186,6 @@ export class ArcherCombat {
         }
       }, archer.specialAttackCooldown * 1000);
       
-      console.log(`⚡ ${playerId} fired Dispatcher (homing arrow)`);
       return true;
     }
     
@@ -255,7 +246,6 @@ export class ArcherCombat {
   public unregisterArcher(playerId: string): void {
     this.archerStates.delete(playerId);
     this.combatManager.unregisterPlayer(playerId);
-    console.log(`🏹 Archer unregistered: ${playerId}`);
   }
 
   /**

@@ -7,6 +7,14 @@ import rateLimit from 'express-rate-limit';
 import { logger } from '../utils/logger.js';
 import { PlayerService } from '../services/playerService.js';
 import { redis } from '../services/redis.js';
+import { 
+  createSession, 
+  refreshAccessToken, 
+  destroySession, 
+  verifyToken, 
+  JwtPayload 
+} from '../utils/jwt.js';
+import { authenticateToken, AuthenticatedRequest } from '../middleware/authSecure.js';
 import type { AuthRequest, AuthResponse, Player } from '@dueled/shared';
 
 const router = Router();
@@ -102,19 +110,12 @@ const validatePasswordStrength = (password: string): { isValid: boolean; message
   return { isValid: true };
 };
 
-// Generate JWT token
-const generateToken = (user: Player): string => {
-  const secret = process.env.JWT_SECRET || 'default-secret';
-  return jwt.sign(
-    {
-      id: user.id,
-      username: user.username,
-      isAnonymous: user.isAnonymous,
-      rating: user.rating,
-    },
-    secret,
-    { expiresIn: '24h' }
-  );
+// Cookie options for refresh token
+const refreshTokenCookieOptions = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: 'strict' as const,
+  maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days in milliseconds
 };
 
 // Register endpoint
@@ -218,20 +219,24 @@ router.post(
         isAnonymous: false,
       });
 
-      // Generate token
-      const token = generateToken(newUser);
+      // Create session with JWT tokens
+      const session = await createSession(newUser.id, 'user');
 
       logSecurityEvent('USER_REGISTERED', { 
         username: newUser.username,
         email: newUser.email || 'N/A',
-        isAnonymous: newUser.isAnonymous 
+        isAnonymous: newUser.isAnonymous,
+        sessionId: session.sessionId
       }, req);
       
       logger.info(`New user registered: ${username}`);
 
+      // Set refresh token as HttpOnly cookie
+      res.cookie('rt', session.refreshToken, refreshTokenCookieOptions);
+
       res.status(201).json({
         success: true,
-        token,
+        token: session.accessToken,
         player: newUser,
       });
     } catch (error: any) {
@@ -318,7 +323,7 @@ router.post(
         });
       }
 
-      // Generate token
+      // Create player data
       const playerData: Player = {
         id: user.id,
         username: user.username,
@@ -326,18 +331,23 @@ router.post(
         rating: user.rating || 1000,
       };
 
-      const token = generateToken(playerData);
+      // Create session with JWT tokens
+      const session = await createSession(user.id, 'user');
 
       logSecurityEvent('USER_LOGIN_SUCCESS', { 
         username: playerData.username,
-        isAnonymous: playerData.isAnonymous 
+        isAnonymous: playerData.isAnonymous,
+        sessionId: session.sessionId
       }, req);
       
       logger.info(`User logged in: ${username}`);
 
+      // Set refresh token as HttpOnly cookie
+      res.cookie('rt', session.refreshToken, refreshTokenCookieOptions);
+
       res.json({
         success: true,
-        token,
+        token: session.accessToken,
         player: playerData,
       });
     } catch (error: any) {
@@ -374,13 +384,17 @@ router.post('/anonymous', anonymousRateLimit, async (req: Request<{}, AuthRespon
       isAnonymous: true,
     });
 
-    const token = generateToken(anonymousUser);
+    // Create session for anonymous user
+    const session = await createSession(anonymousUser.id, 'user');
 
-    logger.info(`Anonymous user created: ${anonymousUser.username}`);
+    logger.info(`Anonymous user created: ${anonymousUser.username} with session: ${session.sessionId}`);
+
+    // Set refresh token as HttpOnly cookie
+    res.cookie('rt', session.refreshToken, refreshTokenCookieOptions);
 
     res.json({
       success: true,
-      token,
+      token: session.accessToken,
       player: anonymousUser,
     });
   } catch (error) {
@@ -393,11 +407,27 @@ router.post('/anonymous', anonymousRateLimit, async (req: Request<{}, AuthRespon
 });
 
 // Logout endpoint
-router.post('/logout', async (req: Request, res: Response) => {
+router.post('/logout', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    // For now, just acknowledge the logout
-    // In a production app, you'd invalidate the token in a blacklist
-    logger.info('User logged out');
+    if (!req.user || !req.sessionId) {
+      return res.status(401).json({
+        success: false,
+        error: 'Not authenticated',
+      });
+    }
+    
+    // Destroy session (revokes refresh token and optionally deny-lists access token)
+    await destroySession(req.sessionId, req.user.jti);
+    
+    logSecurityEvent('USER_LOGOUT', { 
+      username: req.user.player?.username || 'unknown',
+      sessionId: req.sessionId
+    }, req);
+    
+    logger.info(`User logged out: ${req.user.player?.username || req.user.sub}`);
+    
+    // Clear refresh token cookie
+    res.clearCookie('rt', refreshTokenCookieOptions);
     
     res.json({
       success: true,
@@ -415,51 +445,86 @@ router.post('/logout', async (req: Request, res: Response) => {
 // Refresh token endpoint
 router.post('/refresh', refreshRateLimit, async (req: Request, res: Response<AuthResponse>) => {
   try {
-    const authHeader = req.headers.authorization;
-    const token = authHeader && authHeader.split(' ')[1];
+    // Get refresh token from cookie
+    const refreshToken = req.cookies.rt;
 
-    if (!token) {
+    if (!refreshToken) {
       return res.status(401).json({
         success: false,
-        error: 'Access token required',
+        error: 'Refresh token required',
       });
     }
 
-    try {
-      const secret = process.env.JWT_SECRET || 'default-secret';
-      const decoded = jwt.verify(token, secret) as any;
-      
-      // Get fresh user data
-      const user = await playerService.findPlayerById(decoded.id);
-      
-      if (!user) {
+    // Check for optional new session request (for multi-tab support)
+    const createNewSession = req.query.newSession === 'true';
+
+    let newAccessToken: string | null;
+    let newRefreshToken: string | undefined;
+    let sessionId: string | undefined;
+
+    if (createNewSession) {
+      // Create entirely new session for this tab/device
+      try {
+        const rtPayload = verifyToken<{ sub: string }>(refreshToken);
+        const session = await createSession(rtPayload.sub, 'user');
+        
+        newAccessToken = session.accessToken;
+        newRefreshToken = session.refreshToken;
+        sessionId = session.sessionId;
+        
+        logSecurityEvent('NEW_SESSION_CREATED', { 
+          userId: rtPayload.sub,
+          newSessionId: sessionId
+        }, req);
+      } catch (error) {
         return res.status(401).json({
           success: false,
-          error: 'User not found',
+          error: 'Invalid refresh token',
         });
       }
+    } else {
+      // Standard refresh - reuse same session
+      newAccessToken = await refreshAccessToken(refreshToken);
+    }
 
-      const playerData: Player = {
-        id: user.id,
-        username: user.username,
-        isAnonymous: user.isAnonymous,
-        rating: user.rating || 1000,
-      };
-
-      // Generate new token
-      const newToken = generateToken(playerData);
-
-      res.json({
-        success: true,
-        token: newToken,
-        player: playerData,
-      });
-    } catch (jwtError) {
+    if (!newAccessToken) {
       return res.status(401).json({
         success: false,
-        error: 'Invalid token',
+        error: 'Failed to refresh token',
       });
     }
+
+    // Decode the new token to get user info
+    const payload = verifyToken<JwtPayload>(newAccessToken);
+    
+    // Get fresh user data
+    const user = await playerService.findPlayerById(payload.sub);
+    
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        error: 'User not found',
+      });
+    }
+
+    const playerData: Player = {
+      id: user.id,
+      username: user.username,
+      isAnonymous: user.isAnonymous,
+      rating: user.rating || 1000,
+    };
+
+    // Set new refresh token cookie if we created a new session
+    if (newRefreshToken) {
+      res.cookie('rt', newRefreshToken, refreshTokenCookieOptions);
+    }
+
+    res.json({
+      success: true,
+      token: newAccessToken,
+      player: playerData,
+      sessionId: sessionId || payload.sid,
+    });
   } catch (error) {
     logger.error('Token refresh error:', error);
     res.status(500).json({
@@ -470,48 +535,20 @@ router.post('/refresh', refreshRateLimit, async (req: Request, res: Response<Aut
 });
 
 // Get current user endpoint
-router.get('/me', async (req: Request, res: Response) => {
+router.get('/me', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const authHeader = req.headers.authorization;
-    const token = authHeader && authHeader.split(' ')[1];
-
-    if (!token) {
+    if (!req.user || !req.user.player) {
       return res.status(401).json({
         success: false,
-        error: 'Access token required',
+        error: 'Not authenticated',
       });
     }
 
-    try {
-      const secret = process.env.JWT_SECRET || 'default-secret';
-      const decoded = jwt.verify(token, secret) as any;
-      
-      const user = await playerService.findPlayerById(decoded.id);
-      
-      if (!user) {
-        return res.status(401).json({
-          success: false,
-          error: 'User not found',
-        });
-      }
-
-      const playerData: Player = {
-        id: user.id,
-        username: user.username,
-        isAnonymous: user.isAnonymous,
-        rating: user.rating || 1000,
-      };
-
-      res.json({
-        success: true,
-        player: playerData,
-      });
-    } catch (jwtError) {
-      return res.status(401).json({
-        success: false,
-        error: 'Invalid token',
-      });
-    }
+    res.json({
+      success: true,
+      player: req.user.player,
+      sessionId: req.sessionId,
+    });
   } catch (error) {
     logger.error('Get current user error:', error);
     res.status(500).json({

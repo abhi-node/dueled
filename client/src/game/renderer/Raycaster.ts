@@ -222,16 +222,14 @@ export class Raycaster {
     }
     
     this.otherPlayers.set(playerId, { x, y, color });
-    // Removed console.log for performance
+    // Performance optimized: no logging in hot path
   }
 
   /**
    * Add or update a projectile for 3D rendering
    */
   public updateProjectile(projectileId: string, x: number, y: number, type: string, rotation: number, size: number = 0.1, color?: string): void {
-    console.log(`🎨 [STEP 25] Raycaster.updateProjectile called for ${projectileId} at (${x.toFixed(1)}, ${y.toFixed(1)}), type: ${type}, size: ${size}, color: ${color}`);
     this.projectiles.set(projectileId, { x, y, type, rotation, size, color: color || '#ffffff' });
-    console.log(`🎨 [STEP 25.5] Raycaster now has ${this.projectiles.size} projectiles total`);
   }
 
   /**
@@ -284,13 +282,10 @@ export class Raycaster {
     size: number,
     fogFactor: number
   ): void {
-    console.log(`🎨 [STEP 30] renderProjectile called: type=${projectile.type}, screen=(${screenX.toFixed(1)}, ${screenY.toFixed(1)}), size=${size.toFixed(1)}`);
-    
     // Scale down the projectile size for arrows (they should be small)
     const renderSize = Math.max(4, size * 0.5); // Reduced size multiplier from 2 to 0.5
     
     if (renderSize < 1) {
-      console.warn(`🎨 [STEP 30.5] Projectile too small to render: renderSize=${renderSize}`);
       return; // Too small to render
     }
     

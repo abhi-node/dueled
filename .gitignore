@@ -53,3 +53,7 @@ temp/
 
 # Redis dump file
 dump.rdb
+
+# JWT Keys
+server/jwtRS256.key
+server/jwtRS256.key.pub

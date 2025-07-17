@@ -183,7 +183,7 @@ export class ProjectileSpriteManager extends BaseSpriteManager {
   public getProjectileFrame(type: string, timestamp?: number): SpriteFrame | null {
     const projectileSprite = this.projectileSprites.get(type);
     if (!projectileSprite) {
-      console.warn(`No sprite loaded for projectile type: ${type}. Available types: ${Array.from(this.projectileSprites.keys()).join(', ')}`);
+      // Performance optimized: no logging in hot path
       return null;
     }
     
@@ -194,9 +194,6 @@ export class ProjectileSpriteManager extends BaseSpriteManager {
     
     // Get current animation frame
     const frame = projectileSprite.spriteSheet.getCurrentFrame(projectileSprite.animation);
-    if (!frame) {
-      console.warn(`No frame returned for projectile type: ${type}`);
-    }
     return frame;
   }
   
