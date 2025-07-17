@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { Player } from '../entities/Player';
-import { NetworkManager } from '../network/NetworkManager';
-import type { GameAction, Vector2, ActionType } from '@dueled/shared';
+import { MainNetworkManager } from '../network/MainNetworkManager';
+import type { Vector2 } from '@dueled/shared';
 
 export class InputManager {
   private scene: Phaser.Scene;
@@ -17,8 +17,9 @@ export class InputManager {
   private movementThreshold: number = 16; // Send move updates every 16ms (60fps)
   private lastSentPosition: Vector2 = { x: 0, y: 0 };
   private positionThreshold: number = 2; // Only send if moved more than 2 pixels
-  private networkManager: NetworkManager | null = null;
+  private networkManager: MainNetworkManager | null = null;
   private touchControls: any = null;
+  private currentAimAngle: number = 0; // Current player facing angle
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
@@ -238,6 +239,21 @@ export class InputManager {
     // This would affect attack direction
     const worldPoint = this.scene.cameras.main.getWorldPoint(pointer.x, pointer.y);
     
+    // Get player position to calculate angle
+    const player = (this.scene as any).getLocalPlayer();
+    if (player) {
+      const playerPos = player.getPosition();
+      const dx = worldPoint.x - playerPos.x;
+      const dy = worldPoint.y - playerPos.y;
+      this.currentAimAngle = Math.atan2(dy, dx);
+      
+      // Send rotation-only update if player has moved mouse but not WASD
+      const now = Date.now();
+      if (now - this.lastMoveTime > this.movementThreshold) {
+        this.sendRotationUpdate();
+      }
+    }
+    
     // Store aiming direction for use in attacks
     this.scene.data.set('aimDirection', {
       x: worldPoint.x,
@@ -293,52 +309,41 @@ export class InputManager {
   private sendAttackAction(): void {
     const aimDirection = this.scene.data.get('aimDirection');
     
-    const action: GameAction = {
-      type: 'attack' as ActionType,
-      playerId: this.networkManager?.getPlayerId() || '',
-      data: {
+    if (this.networkManager) {
+      this.networkManager.sendAttack({
         direction: aimDirection,
-        timestamp: Date.now(),
-        sequence: this.inputSequence++,
-      },
-      timestamp: Date.now(),
-    };
-
-    this.networkManager?.sendPlayerAction(action);
+        attackType: 'basic'
+      });
+    }
   }
 
   private sendAbilityAction(): void {
     const aimDirection = this.scene.data.get('aimDirection');
     
-    const action: GameAction = {
-      type: 'use_ability' as ActionType,
-      playerId: this.networkManager?.getPlayerId() || '',
-      data: {
-        abilityId: 'primary',
+    if (this.networkManager) {
+      this.networkManager.sendAttack({
         direction: aimDirection,
-        timestamp: Date.now(),
-        sequence: this.inputSequence++,
-      },
-      timestamp: Date.now(),
-    };
-
-    this.networkManager?.sendPlayerAction(action);
+        attackType: 'special'
+      });
+    }
   }
 
   private sendMoveAction(position: Vector2, velocity: Vector2): void {
-    const action: GameAction = {
-      type: 'move' as ActionType,
-      playerId: this.networkManager?.getPlayerId() || '',
-      data: {
-        position,
-        velocity,
-        timestamp: Date.now(),
-        sequence: this.inputSequence++,
-      },
-      timestamp: Date.now(),
-    };
+    if (this.networkManager) {
+      this.networkManager.sendMovement({
+        x: position.x,
+        y: position.y,
+        angle: this.currentAimAngle
+      });
+    }
+  }
 
-    this.networkManager?.sendPlayerAction(action);
+  private sendRotationUpdate(): void {
+    if (this.networkManager) {
+      this.networkManager.sendRotation({ 
+        angle: this.currentAimAngle 
+      });
+    }
   }
 
   // Input prediction methods
@@ -388,7 +393,7 @@ export class InputManager {
     return this.isEnabled;
   }
 
-  public setNetworkManager(networkManager: NetworkManager): void {
+  public setNetworkManager(networkManager: MainNetworkManager): void {
     this.networkManager = networkManager;
   }
 

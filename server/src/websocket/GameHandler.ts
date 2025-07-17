@@ -529,14 +529,16 @@ export class GameHandler {
       this.playerClasses.set(userId, data.classType);
     }
     
-    // Broadcast movement to other players in the room
-    socket.to(roomId).emit(WSEvents.PLAYER_MOVED, {
-      playerId: userId,
-      position: data.position,
-      angle: data.angle,
-      classType: classType,
-      timestamp: data.timestamp || Date.now()
-    });
+    // Immediate broadcast for debugging - should be replaced by tick-based updates
+    if (process.env.DEBUG_IMMEDIATE_BROADCASTS === 'true') {
+      socket.to(roomId).emit(WSEvents.PLAYER_MOVED, {
+        playerId: userId,
+        position: data.position,
+        angle: data.angle,
+        classType: classType,
+        timestamp: data.timestamp || Date.now()
+      });
+    }
   }
 
   private async handlePlayerRotate(socket: Socket, data: RotatePayload) {
@@ -582,14 +584,15 @@ export class GameHandler {
         position: undefined, // Will be filled by GameStateService from current player position
         rotation: data.angle,
         timestamp: data.timestamp || Date.now()
-      }
+      },
+      timestamp: data.timestamp || Date.now()
     };
     
     // Add to game state processing - this ensures server stores the rotation
     gameStateService.addPlayerInput(roomId.replace('match:', ''), userId, rotationAction);
     
-    // Broadcast rotation to other players in the room
-    if (classType) {
+    // Immediate broadcast for debugging - should be replaced by tick-based updates
+    if (process.env.DEBUG_IMMEDIATE_BROADCASTS === 'true' && classType) {
       socket.to(roomId).emit(WSEvents.PLAYER_ROTATED, {
         playerId: userId,
         angle: data.angle,
@@ -1186,7 +1189,7 @@ export class GameHandler {
     const roomId = `match:${matchId}`;
     
     // Emit to all clients in the match room - MUST use the game namespace
-    this.io.of('/game').to(roomId).emit('game:update', gameUpdate);
+    this.io.of('/game').to(roomId).emit(WSEvents.GAME_UPDATE, gameUpdate);
     
     // Log if there are projectiles for debugging
     if (gameUpdate.projectiles && gameUpdate.projectiles.length > 0) {

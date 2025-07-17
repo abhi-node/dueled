@@ -44,6 +44,9 @@ export class Player {
   private moveBuffer: Vector2[] = [];
   private attackCooldown: number = 0;
   private abilityCooldown: number = 0;
+  
+  // Rotation management for authoritative angle
+  private rotation: number = 0;
 
   constructor(scene: Phaser.Scene, x: number, y: number, classType: ClassType, isLocal: boolean) {
     this.scene = scene;
@@ -299,12 +302,27 @@ export class Player {
   }
 
   private updateFacing(): void {
-    if (this.velocity.x > 0) {
-      this._facing = 'right';
-      this.sprite.setFlipX(false);
-    } else if (this.velocity.x < 0) {
-      this._facing = 'left';
-      this.sprite.setFlipX(true);
+    // Use authoritative rotation for remote players, fall back to velocity for local player convenience
+    if (!this.isLocal && this.rotation !== 0) {
+      // For remote players, use the server's authoritative rotation
+      const angle = this.rotation;
+      // Convert angle to facing direction: 0 = right, Math.PI = left
+      if (Math.cos(angle) >= 0) {
+        this._facing = 'right';
+        this.sprite.setFlipX(false);
+      } else {
+        this._facing = 'left';
+        this.sprite.setFlipX(true);
+      }
+    } else {
+      // For local player or when no rotation is set, use velocity-based direction
+      if (this.velocity.x > 0) {
+        this._facing = 'right';
+        this.sprite.setFlipX(false);
+      } else if (this.velocity.x < 0) {
+        this._facing = 'left';
+        this.sprite.setFlipX(true);
+      }
     }
   }
 
@@ -531,6 +549,16 @@ export class Player {
   public setPosition(position: Vector2): void {
     this.sprite.setPosition(position.x, position.y);
     this.lastPosition = position;
+  }
+
+  public setAngle(angle: number): void {
+    this.rotation = angle;
+    this.sprite.setRotation(angle);
+    this.updateFacing();
+  }
+
+  public getAngle(): number {
+    return this.rotation;
   }
 
   public getVelocity(): Vector2 {

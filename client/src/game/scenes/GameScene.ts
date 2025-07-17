@@ -1,16 +1,17 @@
 import Phaser from 'phaser';
 import { Player } from '../entities/Player';
 import { Arena } from '../entities/Arena';
-import { NetworkManager } from '../network/NetworkManager';
+import { MainNetworkManager } from '../network/MainNetworkManager';
+import type { NetworkEventHandler } from '../network/MainNetworkManager';
 import { InputManager } from '../input/InputManager';
 import { GameState } from '../state/GameState';
 import type { Vector2, ClassType } from '@dueled/shared';
 
-export class GameScene extends Phaser.Scene {
+export class GameScene extends Phaser.Scene implements NetworkEventHandler {
   private arena!: Arena;
   private localPlayer!: Player;
   private remotePlayers: Map<string, Player> = new Map();
-  private networkManager!: NetworkManager;
+  private networkManager!: MainNetworkManager;
   private inputManager!: InputManager;
   private gameState!: GameState;
   private ui!: Phaser.GameObjects.Container;
@@ -50,9 +51,6 @@ export class GameScene extends Phaser.Scene {
     // Setup UI
     this.setupUI();
     
-    // Setup network events
-    this.setupNetworkEvents();
-    
     // Setup physics
     this.setupPhysics();
     
@@ -65,11 +63,11 @@ export class GameScene extends Phaser.Scene {
 
   private initializeGameSystems(): void {
     this.gameState = new GameState(this);
-    this.networkManager = new NetworkManager(this);
+    this.networkManager = new MainNetworkManager(this);
     this.inputManager = new InputManager(this);
     
     // Initialize networking
-    this.networkManager.initialize();
+    this.networkManager.connect();
   }
 
   private createArena(): void {
@@ -160,27 +158,6 @@ export class GameScene extends Phaser.Scene {
     this.ui.add(notificationContainer);
   }
 
-  private setupNetworkEvents(): void {
-    this.networkManager.on('player-joined', (playerData: any) => {
-      this.handlePlayerJoined(playerData);
-    });
-    
-    this.networkManager.on('player-left', (playerData: any) => {
-      this.handlePlayerLeft(playerData);
-    });
-    
-    this.networkManager.on('player-moved', (moveData: any) => {
-      this.handlePlayerMoved(moveData);
-    });
-    
-    this.networkManager.on('game-start', (gameData: any) => {
-      this.handleGameStart(gameData);
-    });
-    
-    this.networkManager.on('match-found', (matchData: any) => {
-      this.handleMatchFound(matchData);
-    });
-  }
 
   private setupPhysics(): void {
     // Setup physics world bounds
@@ -597,7 +574,7 @@ export class GameScene extends Phaser.Scene {
     return this.remotePlayers.get(playerId) || null;
   }
 
-  public getNetworkManager(): NetworkManager {
+  public getNetworkManager(): MainNetworkManager {
     return this.networkManager;
   }
 
@@ -607,5 +584,67 @@ export class GameScene extends Phaser.Scene {
 
   public isGameStarted(): boolean {
     return this.gameStarted;
+  }
+
+  // NetworkEventHandler interface implementation
+  public onPlayerJoined(playerId: string, data: any): void {
+    this.handlePlayerJoined({ playerId, ...data });
+  }
+
+  public onPlayerLeft(playerId: string, data?: any): void {
+    this.handlePlayerLeft({ playerId, ...data });
+  }
+
+  public onPlayerMoved(playerId: string, position: Vector2, angle: number, classType?: ClassType): void {
+    this.handlePlayerMoved({ 
+      playerId, 
+      position, 
+      angle,
+      classType 
+    });
+  }
+
+  public onPlayerRotated?(playerId: string, angle: number, classType?: ClassType): void {
+    // Handle rotation-only updates
+    const player = this.remotePlayers.get(playerId);
+    if (player) {
+      player.setAngle(angle);
+    }
+  }
+
+  public handleGameUpdate?(data: any): void {
+    // Process authoritative server game state updates
+    // This will replace the immediate player-moved handlers
+    if (data.players) {
+      data.players.forEach((playerData: any) => {
+        if (playerData.id !== this.networkManager.getPlayerId()) {
+          const player = this.remotePlayers.get(playerData.id);
+          if (player) {
+            player.setPosition(playerData.position);
+            player.setAngle(playerData.rotation);
+          }
+        }
+      });
+    }
+  }
+
+  public onMatchEnded?(data: any): void {
+    console.log('Match ended:', data);
+  }
+
+  public onProjectileUpdate?(projectiles: any[]): void {
+    // Handle projectile updates from server
+  }
+
+  public onGameEvents?(events: any[]): void {
+    // Handle game events from server
+  }
+
+  public updatePlayerIdFromNetwork?(playerId: string): void {
+    console.log('Player ID updated:', playerId);
+  }
+
+  public onInitialGameState?(data: any): void {
+    console.log('Initial game state received:', data);
   }
 }

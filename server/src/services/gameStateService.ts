@@ -917,7 +917,7 @@ export class GameStateService {
       
       // Trigger WebSocket broadcast
       const broadcastEvent = {
-        type: 'game_update',
+        type: 'game:update',
         matchId,
         data: gameUpdate
       };
