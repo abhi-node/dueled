@@ -40,6 +40,20 @@ export class MainGameScene {
     createdAt: number;
     lastUpdate: number;
   }> = new Map();
+
+  // Direct player management for rendering (unified state)
+  private renderPlayers: Map<string, {
+    id: string;
+    position: { x: number; y: number };
+    angle: number;
+    classType: ClassType;
+    isMoving: boolean;
+    health: number;
+    armor: number;
+    isAlive: boolean;
+    lastUpdate: number;
+    username?: string;
+  }> = new Map();
   
   // UI elements
   private minimapCanvas!: HTMLCanvasElement;
@@ -56,6 +70,9 @@ export class MainGameScene {
   private localPlayerClass: ClassType;
   private classConfig!: ClassConfig;
   private remotePlayers: Map<string, any> = new Map();
+  
+  // Rendering optimization
+  private lastPlayerCleanup: number = 0;
   
   // Input handling
   private keys: Set<string> = new Set();
@@ -1115,101 +1132,6 @@ export class MainGameScene {
   /**
    * Update sprite directions based on current viewer position/angle
    */
-  private updateSpriteDirections(): void {
-    try {
-      const viewerState = this.raycaster.getPlayerState();
-      if (!viewerState || !this.spriteRenderer) return;
-      
-      // DEFENSIVE: Remove local player from remotePlayers if it somehow got added
-      if (this.localPlayerId && this.remotePlayers.has(this.localPlayerId)) {
-        console.warn(`🧹 updateSpriteDirections: Found and removing local player ${this.localPlayerId} from remotePlayers`);
-        this.remotePlayers.delete(this.localPlayerId);
-      }
-      
-      // Update all remote player sprites with current viewer perspective
-      for (const [playerId, playerData] of this.remotePlayers) {
-        // DEFENSIVE: Skip local player if it somehow made it into this loop
-        if (playerId === this.localPlayerId) {
-          console.warn(`🚨 updateSpriteDirections: Skipping local player ${playerId} in remote players loop`);
-          continue;
-        }
-        
-        if (!playerData || !playerData.position) continue;
-        
-        this.spriteRenderer.updatePlayerSprite(
-          playerId,
-          playerData.classType as ClassType,
-          playerData.position,
-          playerData.angle,
-          { x: viewerState.x, y: viewerState.y },
-          viewerState.angle
-        );
-      }
-    } catch (error) {
-      console.error('Error in updateSpriteDirections:', error);
-      // Don't crash the game loop
-    }
-  }
-  
-  /**
-   * Ensure all remote players have sprites rendered, even if they haven't moved
-   */
-  private ensureAllSpritesRendered(): void {
-    try {
-      const viewerState = this.raycaster.getPlayerState();
-      
-      // DEFENSIVE: Remove local player from remotePlayers if it somehow got added
-      if (this.localPlayerId && this.remotePlayers.has(this.localPlayerId)) {
-        console.warn(`🧹 ensureAllSpritesRendered: Found and removing local player ${this.localPlayerId} from remotePlayers`);
-        this.remotePlayers.delete(this.localPlayerId);
-      }
-      
-      // Make sure all remote players are visible in the raycaster
-      for (const [playerId, playerData] of this.remotePlayers) {
-        // DEFENSIVE: Skip local player if it somehow made it into this loop
-        if (playerId === this.localPlayerId) {
-          console.warn(`🚨 ensureAllSpritesRendered: Skipping local player ${playerId} in remote players loop`);
-          continue;
-        }
-        
-        // Validate player data
-        if (!playerData || !playerData.position) continue;
-        
-        // Log if class type is missing
-        if (!playerData.classType) {
-          console.warn(`⚠️ Player ${playerId} has no class type stored!`);
-          continue;
-        }
-        
-        // Get color based on class
-        const classColors: Record<string, string> = {
-          berserker: '#ff4444',
-          mage: '#4444ff',
-          bomber: '#ff8800',
-          archer: '#44ff44'
-        };
-        const color = classColors[playerData.classType as string] || '#ff00ff';
-        
-        // Update raycaster with current position (this ensures they're always rendered)
-        this.raycaster.updateOtherPlayer(playerId, playerData.position.x, playerData.position.y, color);
-        
-        // Also ensure sprite is created/updated (with safety check)
-        if (this.spriteRenderer && viewerState) {
-          this.spriteRenderer.updatePlayerSprite(
-            playerId,
-            playerData.classType as ClassType,
-            playerData.position,
-            playerData.angle,
-            { x: viewerState.x, y: viewerState.y },
-            viewerState.angle
-          );
-        }
-      }
-    } catch (error) {
-      console.error('Error in ensureAllSpritesRendered:', error);
-      // Don't crash the game loop
-    }
-  }
   
   /**
    * Show notification message
@@ -1301,6 +1223,9 @@ export class MainGameScene {
       // Update projectiles in raycaster for 3D rendering
       this.updateProjectilesInRaycaster();
       
+      // Update players in raycaster for 3D rendering
+      this.updatePlayersInRaycaster();
+      
       // Check if gameMap exists and has valid grid
       if (!this.gameMap) {
         console.error('🚨 GameMap is null in render()');
@@ -1319,14 +1244,8 @@ export class MainGameScene {
       }
       
       
-      // Clear canvas and render 3D scene (now includes projectiles)
+      // Clear canvas and render 3D scene (now includes projectiles and players)
       this.raycaster.render(mapGrid);
-      
-      // Update sprite directions based on camera view
-      this.updateSpriteDirections();
-      
-      // Ensure all sprites are being rendered
-      this.ensureAllSpritesRendered();
       
       // Update sprite animations
       this.spriteRenderer.update(Date.now());
@@ -1351,10 +1270,12 @@ export class MainGameScene {
   private updateProjectilesInRaycaster(): void {
     try {
       // Use direct render projectiles map for better control
-      console.log(`[MainGameScene] Updating projectiles in Raycaster (direct):`, {
-        count: this.renderProjectiles.size,
-        projectileIds: Array.from(this.renderProjectiles.keys())
-      });
+      if (this.debugCombat) {
+        console.log(`[MainGameScene] Updating projectiles in Raycaster (direct):`, {
+          count: this.renderProjectiles.size,
+          projectileIds: Array.from(this.renderProjectiles.keys())
+        });
+      }
 
       // First, collect all active projectile IDs
       const activeProjectileIds = new Set<string>();
@@ -1383,17 +1304,21 @@ export class MainGameScene {
           projectileColor
         );
         
-        console.log(`[MainGameScene] Added/Updated projectile in Raycaster:`, {
-          id,
-          position: { x: projectile.position.x, y: projectile.position.y },
-          angle: projectile.rotation,
-          type: projectile.type
-        });
+        if (this.debugCombat) {
+          console.log(`[MainGameScene] Added/Updated projectile in Raycaster:`, {
+            id,
+            position: { x: projectile.position.x, y: projectile.position.y },
+            angle: projectile.rotation,
+            type: projectile.type
+          });
+        }
       }
       
       // Remove stale projectiles from Raycaster
       const raycasterProjectileIds = this.raycaster.getProjectileIds();
-      console.log(`[MainGameScene] Before cleanup - Raycaster has ${raycasterProjectileIds.length} projectiles`);
+      if (this.debugCombat) {
+        console.log(`[MainGameScene] Before cleanup - Raycaster has ${raycasterProjectileIds.length} projectiles`);
+      }
       
       let removedCount = 0;
       for (const projectileId of raycasterProjectileIds) {
@@ -1407,6 +1332,94 @@ export class MainGameScene {
       // Performance optimized: no logging in hot path
     } catch (error) {
       console.error('🚨 Error updating projectiles in raycaster:', error);
+      // Don't crash the render loop
+    }
+  }
+
+  /**
+   * Update players in raycaster for 3D rendering
+   * Uses direct player management similar to projectiles
+   */
+  private updatePlayersInRaycaster(): void {
+    try {
+      // Get viewer state for sprite direction calculation
+      const viewerState = this.raycaster.getPlayerState();
+      
+      // Track which players have been updated to avoid duplicates
+      const updatedPlayers = new Set<string>();
+      
+      // Update all active players
+      for (const [id, player] of this.renderPlayers) {
+        // Skip if already updated this frame
+        if (updatedPlayers.has(id)) continue;
+        
+        // Validate position is within map bounds
+        if (player.position.x < 0 || player.position.x > 20 || 
+            player.position.y < 0 || player.position.y > 20) {
+          console.warn(`🚨 Player ${id} outside map bounds at (${player.position.x}, ${player.position.y})`);
+          continue;
+        }
+        
+        // Update raycaster with player data
+        const classColors: Record<string, string> = {
+          berserker: '#ff4444',
+          mage: '#4444ff',
+          bomber: '#ff8800',
+          archer: '#44ff44'
+        };
+        const color = classColors[player.classType] || '#ff00ff';
+        
+        // Only update raycaster if position or angle changed significantly
+        const existingPlayer = this.raycaster.getOtherPlayerPosition(id);
+        const positionChanged = !existingPlayer || 
+          Math.abs(existingPlayer.x - player.position.x) > 0.01 ||
+          Math.abs(existingPlayer.y - player.position.y) > 0.01;
+        
+        if (positionChanged) {
+          this.raycaster.updateOtherPlayer(
+            id,
+            player.position.x,
+            player.position.y,
+            player.angle,
+            player.classType,
+            player.isMoving,
+            player.health,
+            player.armor,
+            player.isAlive,
+            color
+          );
+        }
+        
+        // Always update sprite renderer for direction changes
+        // The sprite renderer will handle caching to prevent flickering
+        this.spriteRenderer.updatePlayerSprite(
+          id,
+          player.classType,
+          player.position,
+          player.angle,
+          { x: viewerState.x, y: viewerState.y },
+          viewerState.angle,
+          undefined, // fogFactor - let raycaster handle this
+          player.isMoving
+        );
+        
+        updatedPlayers.add(id);
+      }
+      
+      // Remove stale players from raycaster - but throttle this to prevent flickering
+      const now = Date.now();
+      if (!this.lastPlayerCleanup || now - this.lastPlayerCleanup > 1000) { // Clean up once per second
+        const activeIds = new Set(this.renderPlayers.keys());
+        for (const id of this.raycaster.getAllOtherPlayers().keys()) {
+          if (!activeIds.has(id)) {
+            this.raycaster.removeOtherPlayer(id);
+            this.spriteRenderer.removePlayerSprite(id);
+          }
+        }
+        this.lastPlayerCleanup = now;
+      }
+    } catch (error) {
+      console.error('🚨 Error updating players in raycaster:', error);
       // Don't crash the render loop
     }
   }
@@ -1625,60 +1638,51 @@ export class MainGameScene {
     
     console.log(`🎯 MainGameScene: onPlayerJoined called for ${playerId} with data:`, data);
     
-    const playerData = {
-      position: data.position || defaultPosition,
-      angle: data.angle || 0,
-      classType: data.classType as ClassType
-    };
-    
-    if (!playerData.classType) {
+    const classType = data.classType as ClassType;
+    if (!classType) {
       console.error(`⚠️ MainGameScene: Player ${playerId} joined without class type! This should not happen.`);
       return; // Don't add player without class type
     }
     
-    console.log(`🎯 MainGameScene: Player ${playerId} joined with class ${playerData.classType} (original: ${data.classType})`);
+    console.log(`🎯 MainGameScene: Player ${playerId} joined with class ${classType} (original: ${data.classType})`);
     
-    // Store minimal data for rendering purposes only
-    this.remotePlayers.set(playerId, playerData);
+    // Create player in renderPlayers Map (unified state)
+    const player = this.createDefaultPlayer(playerId, classType);
+    player.position = data.position || defaultPosition;
+    player.angle = data.angle || 0;
+    player.health = data.health || 100;
+    player.armor = data.armor || 50;
+    player.isAlive = data.isAlive !== false;
+    player.username = data.username;
     
-    // Get viewer (local player) position and angle for sprite direction calculation
-    const viewerState = this.raycaster.getPlayerState();
+    this.renderPlayers.set(playerId, player);
     
-    // Update renderer with player color based on class (fallback for non-sprite rendering)
-    const classColors: Record<string, string> = {
-      berserker: '#ff4444',
-      mage: '#4444ff',
-      bomber: '#ff8800',
-      archer: '#44ff44'
-    };
-    const color = classColors[playerData.classType as string] || '#ff00ff';
-    
-    // Ensure player is immediately visible in raycaster
-    this.raycaster.updateOtherPlayer(playerId, playerData.position.x, playerData.position.y, color);
-    
-    // Update sprite renderer with viewer perspective
-    this.spriteRenderer.updatePlayerSprite(
-      playerId, 
-      playerData.classType as ClassType, 
-      playerData.position, 
-      playerData.angle,
-      { x: viewerState.x, y: viewerState.y },
-      viewerState.angle
-    );
+    // Keep remotePlayers for compatibility with other systems (temporary)
+    this.remotePlayers.set(playerId, {
+      position: player.position,
+      angle: player.angle,
+      classType: classType
+    });
     
     // Show notification
     const username = data.username || `Player ${playerId.substring(0, 8)}`;
     this.showNotification(`${username} has joined the game`, 'info');
     
-    console.log(`🎯 MainGameScene: Remote player ${playerId} added at position (${playerData.position.x}, ${playerData.position.y})`);
+    console.log(`🎯 MainGameScene: Remote player ${playerId} added at position (${player.position.x}, ${player.position.y})`);
     console.log(`🎯 MainGameScene: Remote player ${playerId} added for rendering only`);
   }
   
   public onPlayerLeft(playerId: string, data?: any): void {
-    const player = this.remotePlayers.get(playerId);
-    const username = data?.username || `Player ${playerId.substring(0, 8)}`;
+    const player = this.renderPlayers.get(playerId);
+    const username = data?.username || player?.username || `Player ${playerId.substring(0, 8)}`;
     
+    // Remove from unified state
+    this.renderPlayers.delete(playerId);
+    
+    // Remove from legacy state (temporary)
     this.remotePlayers.delete(playerId);
+    
+    // Remove from rendering systems
     this.raycaster.removeOtherPlayer(playerId);
     this.spriteRenderer.removePlayerSprite(playerId);
     
@@ -1785,59 +1789,64 @@ export class MainGameScene {
     }
   }
   
-  public onPlayerMoved(playerId: string, position: Vector2, angle: number, classType?: ClassType): void {
+  private createDefaultPlayer(playerId: string, classType: ClassType = CT.BERSERKER): typeof this.renderPlayers extends Map<string, infer T> ? T : never {
+    return {
+      id: playerId,
+      position: { x: 10, y: 10 },
+      angle: 0,
+      classType: classType,
+      isMoving: false,
+      health: 100,
+      armor: 50,
+      isAlive: true,
+      lastUpdate: Date.now()
+    };
+  }
+
+  public onPlayerMoved(playerId: string, position: Vector2, angle: number, classType?: ClassType, isMoving?: boolean): void {
     // CRITICAL: Skip updates for local player
     if (playerId === this.localPlayerId) {
       console.warn(`⚠️ MainGameScene: Attempted to update local player ${playerId} position. Ignoring.`);
       return;
     }
     
-    let player = this.remotePlayers.get(playerId);
+    // Update renderPlayers Map (unified state)
+    let player = this.renderPlayers.get(playerId);
     if (!player) {
-      // Create player if it doesn't exist
       if (!classType) {
         console.error(`⚠️ MainGameScene: Cannot create player ${playerId} without class type!`);
         return;
       }
-      player = {
+      player = this.createDefaultPlayer(playerId, classType);
+    }
+    
+    // Update player data
+    player.position = position;
+    player.angle = angle;
+    player.isMoving = isMoving ?? false;
+    player.lastUpdate = Date.now();
+    if (classType) {
+      player.classType = classType;
+    }
+    
+    this.renderPlayers.set(playerId, player);
+    
+    // Keep remotePlayers for compatibility with other systems (temporary)
+    let legacyPlayer = this.remotePlayers.get(playerId);
+    if (!legacyPlayer) {
+      legacyPlayer = {
         position: position,
         angle: angle,
         classType: classType
       };
-      this.remotePlayers.set(playerId, player);
+      this.remotePlayers.set(playerId, legacyPlayer);
     } else {
-      player.position = position;
-      player.angle = angle;
-      // Update class if provided
+      legacyPlayer.position = position;
+      legacyPlayer.angle = angle;
       if (classType) {
-        player.classType = classType;
+        legacyPlayer.classType = classType;
       }
     }
-    
-    // Get viewer (local player) position and angle for sprite direction calculation
-    const viewerState = this.raycaster.getPlayerState();
-    
-    // Update sprite renderer with viewer perspective
-    this.spriteRenderer.updatePlayerSprite(
-      playerId, 
-      player.classType as ClassType, 
-      player.position, 
-      player.angle,
-      { x: viewerState.x, y: viewerState.y },
-      viewerState.angle
-    );
-    
-    // Update renderer (fallback for non-sprite rendering)
-    const classColors: Record<string, string> = {
-      berserker: '#ff4444',
-      mage: '#4444ff',
-      bomber: '#ff8800',
-      archer: '#44ff44'
-    };
-    const color = classColors[player.classType as string] || '#ff00ff';
-    
-    // Update the raycaster with authoritative server position
-    this.raycaster.updateOtherPlayer(playerId, player.position.x, player.position.y, color);
   }
   
   public onPlayerRotated(playerId: string, angle: number, classType?: ClassType): void {
@@ -1847,49 +1856,40 @@ export class MainGameScene {
       return;
     }
     
-    let player = this.remotePlayers.get(playerId);
+    // Update renderPlayers Map (unified state)
+    let player = this.renderPlayers.get(playerId);
     if (!player) {
-      // Create player if it doesn't exist (shouldn't happen but just in case)
       if (!classType) {
         console.error(`⚠️ MainGameScene: Cannot create player ${playerId} in rotation without class type!`);
         return;
       }
-      player = {
-        position: { x: 10, y: 10 }, // Default position
+      player = this.createDefaultPlayer(playerId, classType);
+    }
+    
+    // Update player data
+    player.angle = angle;
+    player.lastUpdate = Date.now();
+    if (classType) {
+      player.classType = classType;
+    }
+    
+    this.renderPlayers.set(playerId, player);
+    
+    // Keep remotePlayers for compatibility with other systems (temporary)
+    let legacyPlayer = this.remotePlayers.get(playerId);
+    if (!legacyPlayer) {
+      legacyPlayer = {
+        position: player.position,
         angle: angle,
         classType: classType
       };
-      this.remotePlayers.set(playerId, player);
+      this.remotePlayers.set(playerId, legacyPlayer);
     } else {
-      player.angle = angle;
-      // Update class if provided
+      legacyPlayer.angle = angle;
       if (classType) {
-        player.classType = classType;
+        legacyPlayer.classType = classType;
       }
     }
-    
-    // Get viewer (local player) position and angle for sprite direction calculation
-    const viewerState = this.raycaster.getPlayerState();
-    
-    // Update sprite renderer with new rotation and viewer perspective
-    this.spriteRenderer.updatePlayerSprite(
-      playerId, 
-      player.classType as ClassType, 
-      player.position, 
-      angle,
-      { x: viewerState.x, y: viewerState.y },
-      viewerState.angle
-    );
-    
-    // Update renderer (fallback for non-sprite rendering)
-    const classColors: Record<string, string> = {
-      berserker: '#ff4444',
-      mage: '#4444ff',
-      bomber: '#ff8800',
-      archer: '#44ff44'
-    };
-    const color = classColors[player.classType as string] || '#ff00ff';
-    this.raycaster.updateOtherPlayer(playerId, player.position.x, player.position.y, color);
   }
   
   /**
@@ -2074,8 +2074,18 @@ export class MainGameScene {
     
     // Handle projectile updates if present
     if (gameUpdate.projectiles) {
-      console.log(`🎯 [STEP 21] Processing ${gameUpdate.projectiles.length} projectiles from game update:`, gameUpdate.projectiles);
+      if (this.debugCombat) {
+        console.log(`🎯 [STEP 21] Processing ${gameUpdate.projectiles.length} projectiles from game update:`, gameUpdate.projectiles);
+      }
       this.onProjectileUpdate(gameUpdate.projectiles);
+    }
+    
+    // Handle player updates if present
+    if (gameUpdate.players) {
+      if (this.debugCombat) {
+        console.log(`👥 [STEP 21B] Processing ${gameUpdate.players.length} players from game update:`, gameUpdate.players);
+      }
+      this.onPlayersUpdate(gameUpdate.players);
     }
     
     // Process game events (kills, damage, etc)
@@ -2129,7 +2139,9 @@ export class MainGameScene {
    * Now updates direct projectile management instead of CombatManager
    */
   public onProjectileUpdate(serverProjectiles: any[]): void {
-    console.log(`🎯 [STEP 22] Processing ${serverProjectiles.length} projectiles from server (direct management)`);
+    if (this.debugCombat) {
+      console.log(`🎯 [STEP 22] Processing ${serverProjectiles.length} projectiles from server (direct management)`);
+    }
     
     // Get current projectiles for comparison
     const currentProjectileIds = new Set(this.renderProjectiles.keys());
@@ -2179,6 +2191,75 @@ export class MainGameScene {
     }
     
     console.log(`📊 Total projectiles after sync: ${this.renderProjectiles.size}`);
+  }
+
+  /**
+   * Handle server player state updates (unified player sync)
+   */
+  public onPlayersUpdate(serverPlayers: any[]): void {
+    if (this.debugCombat) {
+      console.log(`👥 Processing ${serverPlayers.length} players from server (unified sync)`);
+    }
+    
+    // Get current players for comparison
+    const currentPlayerIds = new Set(this.renderPlayers.keys());
+    const serverPlayerIds = new Set(serverPlayers.map(p => p.id));
+    
+    // Remove players that are no longer on the server
+    for (const id of currentPlayerIds) {
+      if (!serverPlayerIds.has(id) && id !== this.localPlayerId) {
+        console.log(`🗑️ Removing local player ${id} - not in server state`);
+        this.renderPlayers.delete(id);
+        // Legacy cleanup (temporary)
+        this.remotePlayers.delete(id);
+      }
+    }
+    
+    // Add or update players from server
+    for (const serverPlayer of serverPlayers) {
+      // Skip local player - we manage that separately
+      if (serverPlayer.id === this.localPlayerId) continue;
+      
+      const existing = this.renderPlayers.get(serverPlayer.id);
+      
+      if (existing) {
+        // Update existing player
+        existing.position = { ...serverPlayer.position };
+        existing.angle = serverPlayer.angle;
+        existing.classType = serverPlayer.classType;
+        existing.health = serverPlayer.health ?? existing.health;
+        existing.armor = serverPlayer.armor ?? existing.armor;
+        existing.isAlive = serverPlayer.isAlive ?? existing.isAlive;
+        existing.isMoving = serverPlayer.isMoving ?? false;
+        existing.username = serverPlayer.username ?? existing.username;
+        existing.lastUpdate = Date.now();
+        
+        console.log(`📍 Updated player ${serverPlayer.id} to pos(${serverPlayer.position.x.toFixed(1)}, ${serverPlayer.position.y.toFixed(1)})`);
+      } else {
+        // Create new player
+        const newPlayer = this.createDefaultPlayer(serverPlayer.id, serverPlayer.classType);
+        newPlayer.position = { ...serverPlayer.position };
+        newPlayer.angle = serverPlayer.angle;
+        newPlayer.health = serverPlayer.health ?? 100;
+        newPlayer.armor = serverPlayer.armor ?? 50;
+        newPlayer.isAlive = serverPlayer.isAlive ?? true;
+        newPlayer.isMoving = serverPlayer.isMoving ?? false;
+        newPlayer.username = serverPlayer.username;
+        
+        this.renderPlayers.set(serverPlayer.id, newPlayer);
+        
+        console.log(`✅ Created new player ${serverPlayer.id} at (${serverPlayer.position.x.toFixed(1)}, ${serverPlayer.position.y.toFixed(1)})`);
+      }
+      
+      // Update legacy system (temporary)
+      this.remotePlayers.set(serverPlayer.id, {
+        position: serverPlayer.position,
+        angle: serverPlayer.angle,
+        classType: serverPlayer.classType
+      });
+    }
+    
+    console.log(`📊 Total players after sync: ${this.renderPlayers.size}`);
   }
 
   /**

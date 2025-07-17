@@ -1,6 +1,6 @@
 /**
  * SpriteSheet - Loads and parses 4x4 character sprite sheets
- * Each sprite sheet is 768x768 pixels with 192x192 individual sprites
+ * Each sprite sheet is 192x192 pixels with 48x48 individual sprites
  * Rows represent walking directions: forward, right, backward, left
  */
 
@@ -35,8 +35,8 @@ export class SpriteSheet {
   private loadPromise: Promise<void> | null = null;
   
   // Sprite sheet configuration
-  private static readonly EXPECTED_SHEET_SIZE = 768; // 768x768 total (actual size)
-  private static readonly SPRITE_SIZE = 192;  // 192x192 per sprite (768/4)
+  private static readonly EXPECTED_SHEET_SIZE = 192; // 192x192 total (actual size)
+  private static readonly SPRITE_SIZE = 48;  // 48x48 per sprite (192/4)
   private static readonly GRID_SIZE = 4;     // 4x4 grid
   
   constructor() {
@@ -177,10 +177,19 @@ export class SpriteSheet {
       throw new Error('No image loaded');
     }
     
-    // Validate image dimensions
-    if (this.image.width !== SpriteSheet.EXPECTED_SHEET_SIZE || this.image.height !== SpriteSheet.EXPECTED_SHEET_SIZE) {
-      throw new Error(`Invalid sprite sheet dimensions. Expected ${SpriteSheet.EXPECTED_SHEET_SIZE}x${SpriteSheet.EXPECTED_SHEET_SIZE}, got ${this.image.width}x${this.image.height}`);
+    // Dynamic size detection - accept any square sheet
+    const grid = SpriteSheet.GRID_SIZE; // 4
+    const spriteW = this.image.width / grid;
+    const spriteH = this.image.height / grid;
+    
+    if (spriteW !== spriteH) {
+      console.warn(
+        `[SpriteSheet] Non-square cells (${spriteW}×${spriteH}). Using ${Math.min(spriteW, spriteH)}.`
+      );
     }
+    
+    // Use the actual calculated sprite size
+    const spriteSize = Math.floor(Math.min(spriteW, spriteH));
     
     // Create temporary canvas for extraction
     const tempCanvas = document.createElement('canvas');
@@ -198,21 +207,21 @@ export class SpriteSheet {
     // Initialize sprites array
     this.sprites = [];
     
-    // Extract each sprite
-    for (let row = 0; row < SpriteSheet.GRID_SIZE; row++) {
+    // Extract each sprite using dynamic size
+    for (let row = 0; row < grid; row++) {
       this.sprites[row] = [];
       
-      for (let col = 0; col < SpriteSheet.GRID_SIZE; col++) {
-        const x = col * SpriteSheet.SPRITE_SIZE;
-        const y = row * SpriteSheet.SPRITE_SIZE;
+      for (let col = 0; col < grid; col++) {
+        const x = col * spriteSize;
+        const y = row * spriteSize;
         
         // Extract sprite image data
-        const imageData = tempCtx.getImageData(x, y, SpriteSheet.SPRITE_SIZE, SpriteSheet.SPRITE_SIZE);
+        const imageData = tempCtx.getImageData(x, y, spriteSize, spriteSize);
         
         // Create individual canvas for this sprite
         const spriteCanvas = document.createElement('canvas');
-        spriteCanvas.width = SpriteSheet.SPRITE_SIZE;
-        spriteCanvas.height = SpriteSheet.SPRITE_SIZE;
+        spriteCanvas.width = spriteSize;
+        spriteCanvas.height = spriteSize;
         const spriteCtx = spriteCanvas.getContext('2d');
         
         if (!spriteCtx) {
@@ -230,7 +239,9 @@ export class SpriteSheet {
       }
     }
     
-    console.log(`Loaded sprite sheet with ${this.sprites.length}x${this.sprites[0].length} sprites`);
+    console.log(
+      `✅ Parsed sprite sheet ${this.image.width}×${this.image.height} → ${grid}×${grid} frames (${spriteSize}×${spriteSize} each)`
+    );
   }
   
   /**

@@ -7,6 +7,8 @@ import type { SpriteRenderer } from './SpriteRenderer';
 import { TextureManager } from './TextureManager';
 import type { FlexibleMap } from '../world/FlexibleMap';
 import { projectileSpriteManager } from './ProjectileSpriteManager';
+import type { ClassType } from '@dueled/shared';
+import { ClassType as CT } from '@dueled/shared';
 
 export interface RayResult {
   distance: number;
@@ -175,8 +177,18 @@ export class Raycaster {
     return null;
   }
   
-  // Other players
-  private otherPlayers: Map<string, { x: number; y: number; color: string }> = new Map();
+  // Other players - complete player data
+  private otherPlayers: Map<string, { 
+    x: number; 
+    y: number; 
+    angle: number;
+    classType: ClassType;
+    isMoving: boolean;
+    health?: number;
+    armor?: number;
+    isAlive?: boolean;
+    color: string;
+  }> = new Map();
   
   // Local player ID to filter out
   private localPlayerId: string | null = null;
@@ -212,17 +224,40 @@ export class Raycaster {
   }
   
   /**
-   * Add or update another player
+   * Add or update another player with complete data
    */
-  public updateOtherPlayer(playerId: string, x: number, y: number, color: string = '#ff0000'): void {
+  public updateOtherPlayer(
+    playerId: string, 
+    x: number, 
+    y: number, 
+    angle: number = 0,
+    classType: ClassType = CT.BERSERKER,
+    isMoving: boolean = false,
+    health?: number,
+    armor?: number,
+    isAlive: boolean = true,
+    color: string = '#ff0000'
+  ): void {
     // CRITICAL: Never add local player to other players
     if (playerId === this.localPlayerId) {
       console.warn(`⚠️ Raycaster: Attempted to add local player ${playerId} to other players. Ignoring.`);
       return;
     }
     
-    this.otherPlayers.set(playerId, { x, y, color });
-    // Performance optimized: no logging in hot path
+    this.otherPlayers.set(playerId, { 
+      x, 
+      y, 
+      angle,
+      classType,
+      isMoving,
+      health,
+      armor,
+      isAlive,
+      color 
+    });
+    
+    // Sprite updates are now handled by MainGameScene to avoid conflicts
+    // The raycaster will query the sprite renderer during rendering
   }
 
   /**
@@ -553,6 +588,16 @@ export class Raycaster {
       return;
     }
     
+    // Debug: Check if we have players and projectiles to render
+    if (Math.random() < 0.01) { // Log occasionally
+      console.log('Raycaster render debug:', {
+        otherPlayersCount: this.otherPlayers.size,
+        projectilesCount: this.projectiles.size,
+        playerIds: Array.from(this.otherPlayers.keys()),
+        projectileIds: Array.from(this.projectiles.keys())
+      });
+    }
+    
     try {
       // Pre-calculate common values for efficiency
       const pitchOffset = this.playerPitch * this.distanceToProjectionPlane;
@@ -659,27 +704,46 @@ export class Raycaster {
             let spriteRendered = false;
             if (this.spriteRenderer) {
               try {
+                // Just fetch the pre-updated frame - no per-frame mutation here
                 const spriteFrame = this.spriteRenderer.getPlayerSpriteFrame(playerId);
+                
+                // Debug why sprites might be failing
+                if (!spriteFrame) {
+                  if (Math.random() < 0.01) { // Log occasionally to avoid spam
+                    const hasSprite = this.spriteRenderer.hasPlayerSprite(playerId);
+                    const debugInfo = this.spriteRenderer.getDebugInfo();
+                    console.warn(`Sprite render failed for ${playerId}:`, {
+                      hasSprite,
+                      totalSprites: debugInfo.playerCount,
+                      registeredIds: debugInfo.playerIds,
+                      playerData: player
+                    });
+                  }
+                }
+                
                 if (spriteFrame && spriteFrame.canvas) {
                   // Validate sprite frame canvas
                   if (spriteFrame.canvas.width > 0 && spriteFrame.canvas.height > 0) {
                     // Render sprite with stable positioning
                     const spriteSize = Math.max(1, projectedPlayerHeight); // Ensure positive size
                     const spriteX = screenX - spriteSize / 2;
-                    // Position sprite so bottom edge is at ground level
+                    
+                    // Position sprite centered on the ground plane
+                    // The sprite should be centered vertically on the player's position
                     const spriteY = playerCenterY - spriteSize / 2;
                     
-                    // Validate screen position
-                    if (spriteX < this.width && spriteX + spriteSize > 0 && 
-                        spriteY < this.height && spriteY + spriteSize > 0) {
-                      this.ctx.globalAlpha = Math.max(0, Math.min(1, fogFactor));
+                    // Validate screen position with margin for partial visibility
+                    if (spriteX < this.width + spriteSize && spriteX + spriteSize > -spriteSize && 
+                        spriteY < this.height + spriteSize && spriteY + spriteSize > -spriteSize) {
+                      // Apply fog using alpha for distance
+                      this.ctx.globalAlpha = Math.max(0.1, fogFactor);
                       try {
                         this.ctx.drawImage(
                           spriteFrame.canvas,
-                          spriteX,
-                          spriteY,
-                          spriteSize,
-                          spriteSize
+                          Math.round(spriteX), // Round to prevent sub-pixel blurring
+                          Math.round(spriteY), // Round to prevent sub-pixel blurring
+                          Math.round(spriteSize),
+                          Math.round(spriteSize)
                         );
                         spriteRendered = true;
                       } catch (drawError) {
@@ -892,6 +956,20 @@ export class Raycaster {
   public getOtherPlayerPosition(playerId: string): { x: number; y: number } | null {
     const player = this.otherPlayers.get(playerId);
     return player ? { x: player.x, y: player.y } : null;
+  }
+  
+  /**
+   * Get complete player data
+   */
+  public getOtherPlayerData(playerId: string) {
+    return this.otherPlayers.get(playerId);
+  }
+  
+  /**
+   * Get all other players data
+   */
+  public getAllOtherPlayers() {
+    return this.otherPlayers;
   }
   
   /**

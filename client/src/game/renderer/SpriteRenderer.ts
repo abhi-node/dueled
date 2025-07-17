@@ -6,6 +6,7 @@
 import { SpriteSheet, WalkDirection } from './SpriteSheet';
 import type { SpriteAnimation, SpriteFrame } from './SpriteSheet';
 import type { ClassType } from '@dueled/shared';
+import { angleToDirection } from '../utils/direction';
 
 export interface PlayerSprite {
   playerId: string;
@@ -17,6 +18,10 @@ export interface PlayerSprite {
   angle: number;
   isMoving: boolean;
   lastMoveTime: number;
+  foggedFrame?: HTMLCanvasElement | null;
+  fogFactor?: number;
+  lastFrameDirection?: WalkDirection;
+  cachedFrame?: SpriteFrame | null;
 }
 
 export class SpriteRenderer {
@@ -152,7 +157,9 @@ export class SpriteRenderer {
     position: { x: number; y: number }, 
     angle: number,
     viewerPosition?: { x: number; y: number },
-    viewerAngle?: number
+    viewerAngle?: number,
+    fogFactor?: number,
+    isMoving?: boolean
   ): void {
     let playerSprite = this.playerSprites.get(playerId);
     
@@ -235,50 +242,83 @@ export class SpriteRenderer {
       playerSprite.position = { ...position };
       playerSprite.angle = angle;
       
-      // Check if player is moving
-      const distanceMoved = Math.sqrt(
-        Math.pow(position.x - previousPosition.x, 2) + 
-        Math.pow(position.y - previousPosition.y, 2)
-      );
-      
-      if (distanceMoved > 0.01) { // Threshold for movement
-        playerSprite.isMoving = true;
-        playerSprite.lastMoveTime = Date.now();
+      // Check if player is moving - use explicit parameter if provided, otherwise fall back to distance
+      if (isMoving !== undefined) {
+        playerSprite.isMoving = isMoving;
+        if (isMoving) {
+          playerSprite.lastMoveTime = Date.now();
+        }
+      } else {
+        const distanceMoved = Math.sqrt(
+          Math.pow(position.x - previousPosition.x, 2) + 
+          Math.pow(position.y - previousPosition.y, 2)
+        );
+        
+        if (distanceMoved > 0.01) { // Threshold for movement
+          playerSprite.isMoving = true;
+          playerSprite.lastMoveTime = Date.now();
+        }
       }
       
-      // Calculate direction based on viewer's perspective using player's FACING direction
-      if (viewerPosition) {
-        // Calculate angle from viewer to this player's position
+      // Calculate direction based on viewer's perspective - use immediate viewerAngle if provided
+      if (viewerAngle !== undefined && viewerPosition) {
+        // Calculate angle from viewer to sprite
         const dx = position.x - viewerPosition.x;
         const dy = position.y - viewerPosition.y;
-        const angleFromViewer = Math.atan2(dy, dx);
+        const angleFromViewerToSprite = Math.atan2(dy, dx);
         
-        // Calculate relative facing direction (difference between where player is facing vs where viewer sees them)
-        // `angle` is the player's facing direction (camera direction)
-        // We want to show the sprite direction based on how the player is facing relative to the viewer
-        let relativeAngle = angle - angleFromViewer;
+        // The relative angle is the difference between where the sprite is facing
+        // and where the viewer is relative to the sprite
+        // We add PI because we want to know which side of the sprite we're looking at
+        let relativeAngle = angle - angleFromViewerToSprite + Math.PI;
         
         // Normalize angle to [-PI, PI]
         while (relativeAngle > Math.PI) relativeAngle -= 2 * Math.PI;
         while (relativeAngle < -Math.PI) relativeAngle += 2 * Math.PI;
         
-        const newDirection = this.angleToDirection(relativeAngle);
+        const newDirection = angleToDirection(relativeAngle);
         
-        // Debug direction changes (throttled to avoid spam)
+        // Only update if direction actually changed to prevent flickering
         if (playerSprite.currentDirection !== newDirection) {
+          playerSprite.currentDirection = newDirection;
+        }
+      } else if (viewerPosition) {
+        // Fallback to position-based calculation
+        const dx = position.x - viewerPosition.x;
+        const dy = position.y - viewerPosition.y;
+        const angleFromViewer = Math.atan2(dy, dx);
+        
+        // Add PI to get the correct viewing angle
+        let relativeAngle = angle - angleFromViewer + Math.PI;
+        
+        // Normalize angle to [-PI, PI]
+        while (relativeAngle > Math.PI) relativeAngle -= 2 * Math.PI;
+        while (relativeAngle < -Math.PI) relativeAngle += 2 * Math.PI;
+        
+        const newDirection = angleToDirection(relativeAngle);
+        
+        // Only update if direction actually changed
+        if (playerSprite.currentDirection !== newDirection) {
+          // Debug direction changes (throttled to avoid spam)
           const now = Date.now();
-          if (!this.lastDirectionLogTime || now - this.lastDirectionLogTime > 500) { // Log max once per 500ms
+          if (!this.lastDirectionLogTime || now - this.lastDirectionLogTime > 500) {
             const directionNames = ['FORWARD', 'RIGHT', 'BACKWARD', 'LEFT'];
             console.log(`🧭 Player ${playerId} direction changed: ${directionNames[playerSprite.currentDirection]} → ${directionNames[newDirection]}`);
             console.log(`📐 Player facing: ${(angle * 180 / Math.PI).toFixed(1)}°, viewer→player: ${(angleFromViewer * 180 / Math.PI).toFixed(1)}°, relative: ${(relativeAngle * 180 / Math.PI).toFixed(1)}°`);
             this.lastDirectionLogTime = now;
           }
+          
+          playerSprite.currentDirection = newDirection;
         }
-        
-        playerSprite.currentDirection = newDirection;
       } else {
-        // Fallback: face forward if no viewer position
+        // Fallback: face forward if no viewer data
         playerSprite.currentDirection = WalkDirection.FORWARD;
+      }
+      
+      // Update fog factor if provided
+      if (fogFactor !== undefined) {
+        playerSprite.fogFactor = fogFactor;
+        playerSprite.foggedFrame = null; // Clear cached fogged frame
       }
     }
   }
@@ -315,51 +355,77 @@ export class SpriteRenderer {
   /**
    * Get sprite frame for rendering a player
    */
-  public getPlayerSpriteFrame(playerId: string): SpriteFrame | null {
+  public getPlayerSpriteFrame(playerId: string, fogged: boolean = false): SpriteFrame | null {
     const playerSprite = this.playerSprites.get(playerId);
     if (!playerSprite) return null;
+    
+    // Check if we can use cached frame
+    if (playerSprite.cachedFrame && 
+        playerSprite.lastFrameDirection === playerSprite.currentDirection &&
+        !playerSprite.isMoving) {
+      return playerSprite.cachedFrame;
+    }
     
     const animation = playerSprite.animations.get(playerSprite.currentDirection);
     if (!animation) return null;
     
+    let frame: SpriteFrame | null;
     if (playerSprite.isMoving) {
       // Return current animation frame
-      return playerSprite.spriteSheet.getCurrentFrame(animation);
+      frame = playerSprite.spriteSheet.getCurrentFrame(animation);
     } else {
       // Return first frame (idle pose)
-      return animation.frames[0] || null;
+      frame = animation.frames[0] || null;
     }
+    
+    // Cache the frame for non-moving sprites
+    if (!playerSprite.isMoving && frame) {
+      playerSprite.cachedFrame = frame;
+      playerSprite.lastFrameDirection = playerSprite.currentDirection;
+    }
+    
+    if (!frame || !fogged || !playerSprite.fogFactor) {
+      return frame;
+    }
+    
+    // Create fogged version using color darkening
+    if (!playerSprite.foggedFrame) {
+      playerSprite.foggedFrame = this.createFoggedFrame(frame, playerSprite.fogFactor);
+    }
+    
+    // Return fogged frame maintaining SpriteFrame interface
+    return {
+      imageData: frame.imageData, // Keep original image data
+      canvas: playerSprite.foggedFrame,
+      ctx: frame.ctx // Keep original context reference
+    };
   }
   
   /**
-   * Convert relative viewing angle to sprite direction
-   * This determines which sprite row to use based on how the viewer sees the player
+   * Create a darkened (fogged) version of a sprite frame
    */
-  private angleToDirection(relativeAngle: number): WalkDirection {
-    // Normalize angle to [0, 2π]
-    let normalizedAngle = relativeAngle % (2 * Math.PI);
-    if (normalizedAngle < 0) normalizedAngle += 2 * Math.PI;
+  private createFoggedFrame(frame: SpriteFrame, fogFactor: number): HTMLCanvasElement {
+    const canvas = document.createElement('canvas');
+    canvas.width = frame.canvas.width;
+    canvas.height = frame.canvas.height;
+    const ctx = canvas.getContext('2d');
     
-    // Convert to degrees for easier calculation
-    const degrees = normalizedAngle * 180 / Math.PI;
-    
-    // Determine sprite direction based on viewing angle
-    // This is from the perspective of the viewer looking at the sprite
-    // Forward: Player facing towards viewer (135° to 225°) - FIXED: was inverted
-    // Right: Player facing right relative to viewer (45° to 135°)  
-    // Backward: Player facing away from viewer (315° to 45°) - FIXED: was inverted
-    // Left: Player facing left relative to viewer (225° to 315°)
-    
-    if (degrees >= 315 || degrees < 45) {
-      return WalkDirection.BACKWARD; // Player facing away from viewer (FIXED)
-    } else if (degrees >= 45 && degrees < 135) {
-      return WalkDirection.RIGHT; // Player facing right relative to viewer
-    } else if (degrees >= 135 && degrees < 225) {
-      return WalkDirection.FORWARD; // Player facing towards viewer (FIXED)
-    } else {
-      return WalkDirection.LEFT; // Player facing left relative to viewer
+    if (!ctx) {
+      return frame.canvas; // Fallback to original
     }
+    
+    // Draw original frame
+    ctx.drawImage(frame.canvas, 0, 0);
+    
+    // Apply darkening using multiply blend mode
+    const darkenAmount = 1 - Math.max(0, Math.min(1, fogFactor));
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.fillStyle = `rgb(${Math.floor(darkenAmount * 255)}, ${Math.floor(darkenAmount * 255)}, ${Math.floor(darkenAmount * 255)})`;
+    ctx.fillRect(0, 0, frame.canvas.width, frame.canvas.height);
+    
+    return canvas;
   }
+  
   
   /**
    * Get all player sprites for rendering
@@ -373,6 +439,23 @@ export class SpriteRenderer {
    */
   public isReady(): boolean {
     return this.isInitialized;
+  }
+  
+  /**
+   * Check if a player has a sprite registered
+   */
+  public hasPlayerSprite(playerId: string): boolean {
+    return this.playerSprites.has(playerId);
+  }
+  
+  /**
+   * Get debug info about registered sprites
+   */
+  public getDebugInfo(): { playerCount: number; playerIds: string[] } {
+    return {
+      playerCount: this.playerSprites.size,
+      playerIds: Array.from(this.playerSprites.keys())
+    };
   }
   
   /**

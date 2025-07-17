@@ -10,7 +10,7 @@ import type { Vector2, ClassType, MovePayload, RotatePayload, AttackPayload } fr
 export interface NetworkEventHandler {
   onPlayerJoined(playerId: string, data: any): void;
   onPlayerLeft(playerId: string, data?: any): void;
-  onPlayerMoved(playerId: string, position: Vector2, angle: number, classType?: ClassType): void;
+  onPlayerMoved(playerId: string, position: Vector2, angle: number, classType?: ClassType, isMoving?: boolean): void;
   onPlayerRotated?(playerId: string, angle: number, classType?: ClassType): void;
   onMatchEnded?(data: any): void;
   handleGameUpdate?(data: any): void;
@@ -99,12 +99,13 @@ export class MainNetworkManager {
   /**
    * Send player movement update
    */
-  public sendMovement(data: { x: number; y: number; angle: number; classType?: ClassType }): void {
+  public sendMovement(data: { x: number; y: number; angle: number; classType?: ClassType; isMoving?: boolean }): void {
     if (!this.socket || !this.isConnected) return;
     
     const payload: MovePayload = {
       position: { x: data.x, y: data.y },
       angle: data.angle,
+      isMoving: data.isMoving ?? true, // Default to true if not specified
       classType: data.classType,
       timestamp: Date.now()
     };
@@ -274,7 +275,8 @@ export class MainNetworkManager {
         data.playerId,
         data.position,
         data.angle,
-        data.classType
+        data.classType,
+        data.isMoving
       );
     });
     

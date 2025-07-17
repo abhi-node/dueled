@@ -43,6 +43,7 @@ export const WSEvents = {
 export interface MovePayload {
   position: Vector2;    // Tile coordinates (not pixels)
   angle: number;        // Facing direction in radians (0 = +X east, counter-clockwise)
+  isMoving: boolean;    // Whether the player is actively moving
   classType?: ClassType;
   timestamp: number;    // Client timestamp for lag compensation
 }
@@ -81,6 +82,7 @@ export interface PlayerMovedPayload {
   playerId: string;
   position: Vector2;
   angle: number;
+  isMoving: boolean;    // Whether the player is actively moving
   velocity?: Vector2;
   timestamp: number;
 }

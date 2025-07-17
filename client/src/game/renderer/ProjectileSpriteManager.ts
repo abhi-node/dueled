@@ -57,7 +57,7 @@ export class ProjectileSpriteManager extends BaseSpriteManager {
         const loadPromise = spriteSheet.load(projectileType.path).then(() => {
           successCount++;
           console.log(`✅ ProjectileSpriteManager: Successfully loaded sprite sheet for ${projectileType.type} (${successCount}/${projectileTypes.length})`);
-          console.log(`🎨 Sprite sheet dimensions: ${spriteSheet.getWidth()}x${spriteSheet.getHeight()}`);
+          console.log(`🎨 Sprite sheet loaded with ${SpriteSheet.getSpriteSize()}x${SpriteSheet.getSpriteSize()} sprites in ${SpriteSheet.getGridSize()}x${SpriteSheet.getGridSize()} grid`);
           
           // Create animation for this projectile type - use all frames (row 0)
           const animation = spriteSheet.createAnimation(WalkDirection.FORWARD, ProjectileSpriteManager.PROJECTILE_FRAME_TIME);
@@ -98,8 +98,8 @@ export class ProjectileSpriteManager extends BaseSpriteManager {
    */
   protected createFallbackSprite(type: string, config?: SpriteSheetConfig): void {
     const canvas = document.createElement('canvas');
-    canvas.width = 768; // SpriteSheet expects 768x768
-    canvas.height = 768;
+    canvas.width = 192; // SpriteSheet expects 192x192
+    canvas.height = 192;
     const ctx = canvas.getContext('2d');
     
     if (!ctx) return;
@@ -113,7 +113,7 @@ export class ProjectileSpriteManager extends BaseSpriteManager {
     };
     
     const color = colors[type] || '#FFFFFF';
-    const spriteSize = 192; // 192x192 per sprite
+    const spriteSize = 48; // 48x48 per sprite
     
     // Draw 16 frames in a 4x4 grid
     for (let frame = 0; frame < 16; frame++) {
@@ -127,24 +127,24 @@ export class ProjectileSpriteManager extends BaseSpriteManager {
       ctx.translate(x + spriteSize / 2, y + spriteSize / 2);
       ctx.rotate((frame / 16) * Math.PI * 2); // Rotate through frames
       
-      // Draw arrow/projectile shape (scaled up for 192x192 sprites)
+      // Draw arrow/projectile shape (scaled for 48x48 sprites)
       ctx.fillStyle = color;
       ctx.beginPath();
       if (type === 'arrow') {
-        // Arrow shape
-        ctx.moveTo(-80, 0);
-        ctx.lineTo(60, -20);
-        ctx.lineTo(80, 0);
-        ctx.lineTo(60, 20);
+        // Arrow shape (scaled down from 192x192 to 48x48)
+        ctx.moveTo(-20, 0);
+        ctx.lineTo(15, -5);
+        ctx.lineTo(20, 0);
+        ctx.lineTo(15, 5);
         ctx.closePath();
       } else {
         // Generic projectile shape
-        ctx.ellipse(0, 0, 80, 32, 0, 0, Math.PI * 2);
+        ctx.ellipse(0, 0, 20, 8, 0, 0, Math.PI * 2);
       }
       ctx.fill();
       
       // Add glow effect
-      ctx.shadowBlur = 20;
+      ctx.shadowBlur = 5;
       ctx.shadowColor = color;
       ctx.fill();
       
