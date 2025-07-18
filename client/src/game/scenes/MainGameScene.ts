@@ -1611,7 +1611,7 @@ export class MainGameScene {
     } else if (this.localPlayerClass === CT.BERSERKER) {
       // Get current health to check for rage mode activation
       const playerSprite = this.renderSprites.get(this.localPlayerId);
-      const health = playerSprite?.health || this.classConfig.health;
+      const health = playerSprite?.health || this.classConfig.stats.health;
       this.berserkerCombat.updateBerserker(this.localPlayerId, position, playerState.angle, health);
     }
   }
