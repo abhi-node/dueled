@@ -8,6 +8,7 @@ import { gameStateService } from '../services/gameStateService.js';
 import { authenticateSocketToken } from '../middleware/authSecure.js';
 import { verifyToken, JwtPayload } from '../utils/jwt.js';
 import { connectionTracker } from '../services/connectionTracker.js';
+import { db } from '../services/database.js';
 
 const playerService = new PlayerService();
 
@@ -322,16 +323,7 @@ export class GameHandler {
         logger.warn(`Could not get position for player notification ${userId}:`, error);
       }
       
-      // Notify other players with position
-      socket.to(roomId).emit('player:joined', {
-        playerId: userId,
-        username: socket.data.username,
-        classType: playerClass,
-        position: playerPosition,
-        angle: 0
-      });
-      
-      logger.info(`Emitting player:joined for ${userId} with class ${playerClass} to room ${roomId}`);
+      // Removed player:joined broadcast - sprites now handled via game_update packets only
       
       // Get initial spawn position for this player
       const playerIndex = userId === matchData.player1.playerId ? 0 : 1;
@@ -529,16 +521,9 @@ export class GameHandler {
       this.playerClasses.set(userId, data.classType);
     }
     
-    // Immediate broadcast for debugging - should be replaced by tick-based updates
-    if (process.env.DEBUG_IMMEDIATE_BROADCASTS === 'true') {
-      socket.to(roomId).emit(WSEvents.PLAYER_MOVED, {
-        playerId: userId,
-        position: data.position,
-        angle: data.angle,
-        classType: classType,
-        timestamp: data.timestamp || Date.now()
-      });
-    }
+    // REMOVED: Immediate player:moved broadcast to prevent position conflicts
+    // The authoritative position is now provided by game_update after collision correction
+    // This eliminates sprite teleporting caused by raw position vs corrected position mismatch
   }
 
   private async handlePlayerRotate(socket: Socket, data: RotatePayload) {
@@ -591,15 +576,7 @@ export class GameHandler {
     // Add to game state processing - this ensures server stores the rotation
     gameStateService.addPlayerInput(roomId.replace('match:', ''), userId, rotationAction);
     
-    // Immediate broadcast for debugging - should be replaced by tick-based updates
-    if (process.env.DEBUG_IMMEDIATE_BROADCASTS === 'true' && classType) {
-      socket.to(roomId).emit(WSEvents.PLAYER_ROTATED, {
-        playerId: userId,
-        angle: data.angle,
-        classType: classType,
-        timestamp: data.timestamp || Date.now()
-      });
-    }
+    // Removed immediate player:rotated broadcast - rotations now handled via game_update packets only
   }
 
   private async handlePlayerAttack(socket: Socket, data: any) {
@@ -1194,6 +1171,85 @@ export class GameHandler {
     // Log if there are projectiles for debugging
     if (gameUpdate.projectiles && gameUpdate.projectiles.length > 0) {
       logger.info(`📡 [STEP 18] Broadcasting game update to room ${roomId} with ${gameUpdate.projectiles.length} projectiles`);
+    }
+  }
+
+  /**
+   * Announce match end to all players in the match
+   * Called by MatchFinalizationService when match is completed
+   */
+  public async announceMatchEnd(matchId: string, result: {
+    winnerId: string;
+    loserId: string;
+    winnerRatingChange: number;
+    loserRatingChange: number;
+    newWinnerRating: number;
+    newLoserRating: number;
+    matchDuration: number;
+  }): Promise<void> {
+    const roomId = `match:${matchId}`;
+    
+    try {
+      // Get player usernames for display
+      const [winnerProfile, loserProfile] = await Promise.all([
+        this.getUserProfile(result.winnerId),
+        this.getUserProfile(result.loserId)
+      ]);
+
+      const matchEndData = {
+        matchId,
+        reason: 'player_death',
+        winnerId: result.winnerId,
+        loserId: result.loserId,
+        winnerUsername: winnerProfile?.username || 'Unknown Player',
+        loserUsername: loserProfile?.username || 'Unknown Player',
+        ratingChanges: {
+          winner: result.winnerRatingChange,
+          loser: result.loserRatingChange
+        },
+        finalRatings: {
+          winner: result.newWinnerRating,
+          loser: result.newLoserRating
+        },
+        matchDuration: result.matchDuration,
+        timestamp: Date.now()
+      };
+
+      // Broadcast to all players in the match room
+      this.io.of('/game').to(roomId).emit('match_ended', matchEndData);
+      
+      logger.info(`📢 Match end announced for ${matchId}:`, {
+        winner: matchEndData.winnerUsername,
+        winnerRating: `${result.newWinnerRating} (${result.winnerRatingChange > 0 ? '+' : ''}${result.winnerRatingChange})`,
+        loser: matchEndData.loserUsername,
+        loserRating: `${result.newLoserRating} (${result.loserRatingChange > 0 ? '+' : ''}${result.loserRatingChange})`,
+        duration: `${result.matchDuration}s`
+      });
+
+      // Schedule match cleanup after allowing time for victory screen
+      setTimeout(() => {
+        this.cleanupMatch(matchId);
+      }, 10000); // 10 seconds to display results
+
+    } catch (error) {
+      logger.error(`❌ Failed to announce match end for ${matchId}:`, error);
+      // Still try to cleanup the match
+      setTimeout(() => {
+        this.cleanupMatch(matchId);
+      }, 5000);
+    }
+  }
+
+  /**
+   * Get user profile for display purposes
+   */
+  private async getUserProfile(userId: string): Promise<{ username: string } | null> {
+    try {
+      const result = await db.query('SELECT username FROM players WHERE id = $1', [userId]);
+      return result.rows[0] || null;
+    } catch (error) {
+      logger.warn(`Failed to get profile for user ${userId}:`, error);
+      return null;
     }
   }
   

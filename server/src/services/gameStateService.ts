@@ -383,7 +383,7 @@ export class GameStateService {
       this.updateBuffs(gameState, deltaTime);
       
       // Check win conditions
-      this.checkWinConditions(gameState);
+      await this.checkWinConditions(gameState);
       
       // Update game time
       gameState.gameTime += deltaTime;
@@ -807,34 +807,94 @@ export class GameStateService {
   }
 
   /**
-   * Check win conditions
+   * Check win conditions and handle match finalization
    */
-  private checkWinConditions(gameState: ServerGameState): void {
+  private async checkWinConditions(gameState: ServerGameState): Promise<void> {
     const alivePlayers = Array.from(gameState.players.values()).filter(p => p.isAlive);
     
     if (alivePlayers.length <= 1) {
-      gameState.status = MatchStatus.COMPLETED;
-      
-      if (alivePlayers.length === 1) {
-        const winner = alivePlayers[0];
-        const winEvent: GameEvent = {
-          id: `win_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          type: 'game_end',
-          playerId: winner.id,
-          data: {
-            winnerId: winner.id,
-            reason: 'elimination'
-          },
-          timestamp: Date.now(),
-          processed: false
-        };
-        
-        gameState.events.push(winEvent);
-      }
-      
-      // Stop game loop
-      this.stopGameLoop(gameState.matchId);
+      await this.handleMatchEnd(gameState, alivePlayers);
     }
+  }
+
+  /**
+   * Handle match end logic including finalization and rating updates
+   */
+  private async handleMatchEnd(gameState: ServerGameState, alivePlayers: ServerPlayer[]): Promise<void> {
+    gameState.status = MatchStatus.COMPLETED;
+    
+    if (alivePlayers.length === 1) {
+      const winner = alivePlayers[0];
+      
+      // Create game end event
+      const winEvent: GameEvent = {
+        id: `win_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        type: 'game_end',
+        playerId: winner.id,
+        data: {
+          winnerId: winner.id,
+          reason: 'elimination'
+        },
+        timestamp: Date.now(),
+        processed: false
+      };
+      
+      gameState.events.push(winEvent);
+
+      // Finalize match with rating updates
+      try {
+        const playerIds = Array.from(gameState.players.keys());
+        if (playerIds.length === 2) {
+          const [player1Id, player2Id] = playerIds;
+          const player1 = gameState.players.get(player1Id)!;
+          const player2 = gameState.players.get(player2Id)!;
+
+          // Get match start time from game state or estimate
+          const matchStartTime = gameState.startTime || (Date.now() - gameState.gameTime);
+
+          // Gather final stats for analytics
+          const finalStats = {
+            player1: {
+              health: player1.health,
+              armor: player1.armor,
+              damageDealt: player1.damageDealt || 0,
+              damageTaken: player1.damageTaken || 0
+            },
+            player2: {
+              health: player2.health,
+              armor: player2.armor,
+              damageDealt: player2.damageDealt || 0,
+              damageTaken: player2.damageTaken || 0
+            }
+          };
+
+          // Import and use MatchFinalizationService
+          const { matchFinalizationService } = await import('./matchFinalizationService.js');
+          
+          await matchFinalizationService.finalizeMatch({
+            matchId: gameState.matchId,
+            player1Id,
+            player2Id,
+            winnerId: winner.id,
+            startTime: matchStartTime,
+            finalStats
+          });
+
+          logger.info(`🏆 Match ${gameState.matchId} won by player ${winner.id}, finalization initiated`);
+        } else {
+          logger.warn(`⚠️ Unexpected number of players (${playerIds.length}) in match ${gameState.matchId}`);
+        }
+      } catch (error) {
+        logger.error(`❌ Failed to finalize match ${gameState.matchId}:`, error);
+        // Continue with game loop stop even if finalization fails
+      }
+    } else {
+      // Draw/no winner case
+      logger.info(`🤝 Match ${gameState.matchId} ended in a draw (${alivePlayers.length} survivors)`);
+    }
+    
+    // Stop game loop
+    this.stopGameLoop(gameState.matchId);
   }
 
   /**
@@ -846,6 +906,8 @@ export class GameStateService {
     // Create delta update with only changed data
     const playerUpdates = Array.from(gameState.players.values()).map(player => ({
       id: player.id,
+      username: player.username,  // Include username for sprite rendering
+      classType: player.classType,  // Include classType for sprite rendering
       position: player.position,
       velocity: player.velocity,
       rotation: player.rotation,
@@ -1339,8 +1401,8 @@ export class GameStateService {
     const rangeMultiplier = isSpecial ? 1.5 : 1.0; // Special attacks have longer range
     
     const baseDamage = calculateEffectiveDamage(weapon.damage * damageMultiplier, owner.stats.strength);
-    // Fixed speed: 3 tiles per second for better visibility
-    const projectileSpeed = 3.0;
+    // Fixed speed: 9 tiles per second for better visibility
+    const projectileSpeed = 9.0;
     
     logger.info(`📊 Projectile properties: damage=${baseDamage}, speed=${projectileSpeed}, range=${weapon.range * rangeMultiplier}`);
     logger.info(`📊 Modifiers: isSpecial=${isSpecial}, damageMultiplier=${damageMultiplier}, rangeMultiplier=${rangeMultiplier}`);

@@ -41,32 +41,16 @@ export class MainGameScene {
     lastUpdate: number;
   }> = new Map();
 
-  // NEW: Unified sprite management for rendering (models after renderProjectiles)
+  // Unified sprite management for rendering
   private renderSprites: Map<string, {
     id: string;
-    position: { x: number; y: number };
-    angle: number;  // Direction the player is facing
+    position: { x: number; y: number };  // Server position - single source of truth
+    angle: number;  // Server angle - single source of truth
     classType: ClassType;
     health: number;
     armor: number;
     isAlive: boolean;
     isMoving: boolean;
-    velocity: { x: number; y: number };  // For interpolation
-    lastUpdate: number;
-    username?: string;
-  }> = new Map();
-
-  // OLD: Will be removed once new system is working
-  private renderPlayers: Map<string, {
-    id: string;
-    position: { x: number; y: number };
-    angle: number;
-    classType: ClassType;
-    isMoving: boolean;
-    velocity: { x: number; y: number };
-    health: number;
-    armor: number;
-    isAlive: boolean;
     lastUpdate: number;
     username?: string;
   }> = new Map();
@@ -86,8 +70,6 @@ export class MainGameScene {
   private localPlayerClass: ClassType;
   private classConfig!: ClassConfig;
   
-  // Rendering optimization
-  private lastPlayerCleanup: number = 0;
   
   // Input handling
   private keys: Set<string> = new Set();
@@ -165,7 +147,7 @@ export class MainGameScene {
     // Set local player ID from match data with fallbacks
     if (matchData?.yourPlayerId) {
       this.localPlayerId = matchData.yourPlayerId;
-      console.log(`🎮 MainGameScene: Local player ID set to ${this.localPlayerId}`);
+      console.log(`🎮 MainGameScene: Local player ID set to ${this.localPlayerId} from matchData`);
     } else {
       // Fallback 1: Try to get from socket connection
       if (this.socket?.id) {
@@ -177,6 +159,8 @@ export class MainGameScene {
         console.log(`🎮 MainGameScene: Generated temporary local player ID: ${this.localPlayerId}`);
       }
     }
+    
+    console.log(`🎮 MainGameScene: Final local player ID: ${this.localPlayerId}`);
     
     // Create main canvas
     this.canvas = document.createElement('canvas');
@@ -534,7 +518,7 @@ export class MainGameScene {
       console.log('🎨 DEBUG: R key pressed - checking rendering status');
       const viewerState = this.raycaster.getPlayerState();
       console.log('🎨 Player state:', viewerState);
-      console.log('🎨 Remote players:', this.renderPlayers.size);
+      console.log('🎨 Remote players:', this.renderSprites.size);
       console.log('🎨 Projectiles in combat manager:', this.combatManager?.getProjectiles().size || 0);
       console.log('🎨 Running:', this.running);
       this.showNotification(`Rendering: ${this.running ? 'Active' : 'Inactive'}`, 'info');
@@ -1027,7 +1011,7 @@ export class MainGameScene {
     const projectileCountCombatManager = this.combatManager ? this.combatManager.getProjectiles().size : 0;
     const projectileCountRenderDirect = this.renderProjectiles.size;
     const projectileCountRaycaster = this.raycaster.getProjectileCount();
-    const playerCount = this.renderPlayers.size;
+    const playerCount = this.renderSprites.size;
     const spriteCount = this.renderSprites.size;
     
     this.debugOverlayDiv.innerHTML = `
@@ -1070,9 +1054,9 @@ export class MainGameScene {
     
     // Generate remote player debug info
     let opponentDebugInfo = '';
-    if (this.debugCombat && this.renderPlayers.size > 0) {
+    if (this.debugCombat && this.renderSprites.size > 0) {
       opponentDebugInfo = '<br><strong>Opponents:</strong><br>';
-      for (const [playerId, player] of this.renderPlayers) {
+      for (const [playerId, player] of this.renderSprites) {
         const raycasterPos = this.raycaster.getOtherPlayerPosition(playerId);
         opponentDebugInfo += `${player.username || playerId.substring(0, 8)}: Server(${player.position.x.toFixed(1)}, ${player.position.y.toFixed(1)})`;
         if (raycasterPos) {
@@ -1219,6 +1203,9 @@ export class MainGameScene {
       // Update minimap
       this.updateMinimap();
       
+      // Add verification
+      this.verifySpriteConsistency();
+      
       // Continue game loop
       requestAnimationFrame((time) => this.gameLoop(time));
     } catch (error) {
@@ -1231,18 +1218,39 @@ export class MainGameScene {
   }
 
   /**
+   * Add debug verification method to verify sprite persistence
+   */
+  private verifySpriteConsistency(): void {
+    if (this.debugFrameCount % 300 === 0) { // Every 5 seconds at 60fps
+      console.log('🔍 Sprite Consistency Check:', {
+        renderSprites: this.renderSprites.size,
+        raycasterSprites: this.raycaster.getSpriteIds().length,
+        sprites: Array.from(this.renderSprites.entries()).map(([id, sprite]) => ({
+          id: id.substring(0, 8),
+          pos: `(${sprite.position.x.toFixed(1)}, ${sprite.position.y.toFixed(1)})`,
+          class: sprite.classType,
+          alive: sprite.isAlive
+        }))
+      });
+    }
+  }
+
+  /**
    * Enhanced render method with combat visuals
    */
   private render(): void {
     try {
+      // Debug log every second
+      if (this.debugFrameCount % 60 === 0) {
+        console.log(`🎮 Render - Sprites: ${this.renderSprites.size}`);
+      }
+      
       // Update projectiles in raycaster for 3D rendering
       this.updateProjectilesInRaycaster();
       
       // NEW: Update sprites in raycaster for 3D rendering
       this.updateSpritesInRaycaster();
       
-      // OLD: Update players in raycaster for 3D rendering (will be removed)
-      // this.updatePlayersInRaycaster();
       
       // Check if gameMap exists and has valid grid
       if (!this.gameMap) {
@@ -1360,48 +1368,32 @@ export class MainGameScene {
    */
   private updateSpritesInRaycaster(): void {
     try {
-      // Use direct render sprites map for better control
-      if (this.debugCombat) {
-        console.log(`[MainGameScene] Updating sprites in Raycaster (direct):`, {
-          count: this.renderSprites.size,
-          spriteIds: Array.from(this.renderSprites.keys())
-        });
-      }
-
       // Get viewer state for sprite direction calculation
       const viewerState = this.raycaster.getPlayerState();
       const now = Date.now();
 
-      // First, collect all active sprite IDs
-      const activeSpriteIds = new Set<string>();
-
-      if (this.renderSprites.size > 0) {
-        console.log(`🎨 Updating ${this.renderSprites.size} sprites in raycaster`);
-      }
+      // CRITICAL CHANGE: Don't remove sprites, only update them
+      // The server is the ONLY source of truth for sprite existence
       
-      // Update or add active sprites from direct management
       for (const [id, sprite] of this.renderSprites) {
         // Skip local player - never render ourselves
         if (id === this.localPlayerId) continue;
 
-        // Validate position is within map bounds
-        if (sprite.position.x < 0 || sprite.position.x > 20 || 
-            sprite.position.y < 0 || sprite.position.y > 20) {
-          console.warn(`🚨 Sprite ${id} outside map bounds at (${sprite.position.x}, ${sprite.position.y})`);
-          continue;
+        // KEEP sprites even if slightly out of bounds (they might come back)
+        // Only skip extreme out-of-bounds cases
+        if (sprite.position.x < -5 || sprite.position.x > 25 || 
+            sprite.position.y < -5 || sprite.position.y > 25) {
+          continue; // Skip rendering but DON'T delete
         }
         
-        // Track this as an active sprite
-        activeSpriteIds.add(id);
-        
-        // Calculate correct sprite direction based on viewer perspective
+        // Calculate sprite direction
         const direction = this.calculateSpriteDirection(
           sprite.angle,
           { x: viewerState.x, y: viewerState.y },
           sprite.position
         );
         
-        // Get sprite frame from sprite sheet manager
+        // Get sprite frame
         const spriteFrame = spriteSheetManager.getFrame(
           sprite.classType,
           direction,
@@ -1409,135 +1401,27 @@ export class MainGameScene {
           now
         );
         
-        if (!spriteFrame) {
-          console.warn(`🚨 No sprite frame for ${id} (${sprite.classType}, ${direction})`);
-        }
-        
-        // Persist sprite to raycaster for rendering
+        // ALWAYS persist sprite to raycaster with exact server position
         this.raycaster.persistSprite(
           id,
-          sprite.position.x,
-          sprite.position.y,
-          sprite.angle,
+          sprite.position.x,  // Exact server X
+          sprite.position.y,  // Exact server Y
+          sprite.angle,       // Exact server angle
           sprite.classType,
-          spriteFrame,
-          1.0 // size
+          spriteFrame || null, // Use null frame if not available
+          1.0
         );
-        
-        if (this.debugCombat) {
-          console.log(`[MainGameScene] Added/Updated sprite in Raycaster:`, {
-            id,
-            position: { x: sprite.position.x, y: sprite.position.y },
-            angle: sprite.angle,
-            direction,
-            classType: sprite.classType
-          });
-        }
       }
       
-      // Remove stale sprites from Raycaster
-      const raycasterSpriteIds = this.raycaster.getSpriteIds();
-      if (this.debugCombat) {
-        console.log(`[MainGameScene] Before cleanup - Raycaster has ${raycasterSpriteIds.length} sprites`);
-      }
+      // CRITICAL: Remove the entire cleanup section
+      // No more 5-second timeout, no more removal logic
+      // Sprites are ONLY removed when server explicitly tells us
       
-      let removedCount = 0;
-      for (const spriteId of raycasterSpriteIds) {
-        if (!activeSpriteIds.has(spriteId)) {
-          this.raycaster.removeSprite(spriteId);
-          removedCount++;
-          // Performance optimized: no logging in hot path
-        }
-      }
-      
-      // Performance optimized: no logging in hot path
     } catch (error) {
       console.error('🚨 Error updating sprites in raycaster:', error);
-      // Don't crash the render loop
     }
   }
 
-  /**
-   * OLD: Update players in raycaster for 3D rendering
-   * Uses direct player management similar to projectiles
-   */
-  private updatePlayersInRaycaster(): void {
-    try {
-      // Get viewer state for sprite direction calculation
-      const viewerState = this.raycaster.getPlayerState();
-      
-      // Track which players have been updated to avoid duplicates
-      const updatedPlayers = new Set<string>();
-      
-      // Update all active players
-      for (const [id, player] of this.renderPlayers) {
-        // Skip if already updated this frame
-        if (updatedPlayers.has(id)) continue;
-        
-        // Validate position is within map bounds
-        if (player.position.x < 0 || player.position.x > 20 || 
-            player.position.y < 0 || player.position.y > 20) {
-          console.warn(`🚨 Player ${id} outside map bounds at (${player.position.x}, ${player.position.y})`);
-          continue;
-        }
-        
-        // Update raycaster with player data
-        const classColors: Record<string, string> = {
-          berserker: '#ff4444',
-          mage: '#4444ff',
-          bomber: '#ff8800',
-          archer: '#44ff44'
-        };
-        const color = classColors[player.classType] || '#ff00ff';
-        
-        // Only update raycaster if position or angle changed significantly
-        const existingPlayer = this.raycaster.getOtherPlayerPosition(id);
-        const positionChanged = !existingPlayer || 
-          Math.abs(existingPlayer.x - player.position.x) > 0.01 ||
-          Math.abs(existingPlayer.y - player.position.y) > 0.01;
-        
-        // OLD SYSTEM: Removed to prevent duplicate rendering
-        // The old updateOtherPlayer populates the legacy otherPlayers map
-        // This has been replaced by the unified sprite system
-        /*
-        if (positionChanged) {
-          this.raycaster.updateOtherPlayer(
-            id,
-            player.position.x,
-            player.position.y,
-            player.angle,
-            player.classType,
-            player.isMoving,
-            player.health,
-            player.armor,
-            player.isAlive,
-            color
-          );
-        }
-        */
-        
-        // Sprites are now updated via unified updateSpritesInRaycaster method
-        
-        updatedPlayers.add(id);
-      }
-      
-      // Remove stale players from raycaster - but throttle this to prevent flickering
-      const now = Date.now();
-      if (!this.lastPlayerCleanup || now - this.lastPlayerCleanup > 1000) { // Clean up once per second
-        const activeIds = new Set(this.renderPlayers.keys());
-        for (const id of this.raycaster.getAllOtherPlayers().keys()) {
-          if (!activeIds.has(id)) {
-            this.raycaster.removeOtherPlayer(id);
-            this.removeSprite(id);
-          }
-        }
-        this.lastPlayerCleanup = now;
-      }
-    } catch (error) {
-      console.error('🚨 Error updating players in raycaster:', error);
-      // Don't crash the render loop
-    }
-  }
 
   /**
    * Initialize combat system when game starts
@@ -1758,60 +1642,54 @@ export class MainGameScene {
     
     console.log(`🎯 MainGameScene: Player ${playerId} joined with class ${classType} (original: ${data.classType})`);
     
-    // Create player in renderPlayers Map (unified state)
-    const player = this.createDefaultPlayer(playerId, classType);
-    player.position = data.position || defaultPosition;
-    player.angle = data.angle || 0;
-    player.health = data.health || 100;
-    player.armor = data.armor || 50;
-    player.isAlive = data.isAlive !== false;
-    player.username = data.username;
-    
-    this.renderPlayers.set(playerId, player);
-    
+    // Create/update player via unified sprite system
+    const position = data.position || defaultPosition;
+    this.updateSprite(playerId, {
+      position: position,
+      angle: data.angle || 0,
+      classType: classType,
+      health: data.health || 100,
+      armor: data.armor || 50,
+      isAlive: data.isAlive !== false,
+      username: data.username
+    });
     
     // Show notification
     const username = data.username || `Player ${playerId.substring(0, 8)}`;
     this.showNotification(`${username} has joined the game`, 'info');
     
-    console.log(`🎯 MainGameScene: Remote player ${playerId} added at position (${player.position.x}, ${player.position.y})`);
+    console.log(`🎯 MainGameScene: Remote player ${playerId} added at position (${position.x}, ${position.y})`);
     console.log(`🎯 MainGameScene: Remote player ${playerId} added for rendering only`);
   }
   
   public onPlayerLeft(playerId: string, data?: any): void {
-    const player = this.renderPlayers.get(playerId);
+    const player = this.renderSprites.get(playerId);
     const username = data?.username || player?.username || `Player ${playerId.substring(0, 8)}`;
     
-    // Remove from unified state
-    this.renderPlayers.delete(playerId);
-    
-    // Remove from rendering systems
+    // ONLY remove sprite when explicitly told by server
     this.removeSprite(playerId);
-    this.raycaster.removeOtherPlayer(playerId);
     
-    // Show notification
     this.showNotification(`${username} has disconnected`, 'info');
-    
-    console.log(`Player ${username} left the game`);
   }
 
   /**
    * Handle match ended event from server
    */
   public onMatchEnded(data: any): void {
-    console.log('🚨 Match ended:', data);
+    console.log('🏁 Match ended:', data);
     
     // Stop the game immediately
     this.running = false;
     
-    // Show notification with the reason
-    let message = 'Match ended';
-    if (data.reason === 'player_disconnect' && data.disconnectedPlayer) {
-      message = data.message || `${data.disconnectedPlayer.username} has left the game. Match ended.`;
+    // Determine the match result and show appropriate UI
+    if (data.reason === 'player_death' && data.winnerId && data.ratingChanges) {
+      this.showVictoryScreen(data);
+    } else if (data.reason === 'player_disconnect' && data.disconnectedPlayer) {
+      const message = data.message || `${data.disconnectedPlayer.username} has left the game. Match ended.`;
+      this.showMatchEndedNotification(message);
+    } else {
+      this.showMatchEndedNotification('Match ended');
     }
-    
-    // Show a prominent notification that doesn't auto-hide
-    this.showMatchEndedNotification(message);
     
     // Disconnect from the network after a delay
     setTimeout(() => {
@@ -1819,7 +1697,113 @@ export class MainGameScene {
       
       // Redirect to lobby/main menu after notification
       this.returnToLobby();
-    }, 3000);
+    }, data.reason === 'player_death' ? 8000 : 3000); // Longer for victory screen
+  }
+
+  /**
+   * Show victory/defeat screen with rating changes
+   */
+  private showVictoryScreen(data: {
+    winnerId: string;
+    loserId: string;
+    winnerUsername: string;
+    loserUsername: string;
+    ratingChanges: { winner: number; loser: number };
+    finalRatings: { winner: number; loser: number };
+    matchDuration: number;
+  }): void {
+    const isWinner = data.winnerId === this.localPlayerId;
+    const playerRatingChange = isWinner ? data.ratingChanges.winner : data.ratingChanges.loser;
+    const playerFinalRating = isWinner ? data.finalRatings.winner : data.finalRatings.loser;
+    const opponentName = isWinner ? data.loserUsername : data.winnerUsername;
+    
+    // Create victory screen overlay
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.8);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 3000;
+      font-family: Arial, sans-serif;
+    `;
+
+    const content = document.createElement('div');
+    content.style.cssText = `
+      background: ${isWinner ? 'linear-gradient(135deg, #10b981, #059669)' : 'linear-gradient(135deg, #ef4444, #dc2626)'};
+      padding: 40px;
+      border-radius: 20px;
+      text-align: center;
+      color: white;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+      border: 3px solid ${isWinner ? '#34d399' : '#f87171'};
+      max-width: 500px;
+      width: 90%;
+    `;
+
+    const resultText = isWinner ? '🎉 VICTORY!' : '💀 DEFEAT';
+    const resultColor = isWinner ? '#ecfdf5' : '#fef2f2';
+    const ratingChangeText = playerRatingChange > 0 ? `+${playerRatingChange}` : `${playerRatingChange}`;
+    const ratingChangeColor = playerRatingChange > 0 ? '#10b981' : '#ef4444';
+
+    content.innerHTML = `
+      <div style="font-size: 48px; font-weight: bold; margin-bottom: 20px; color: ${resultColor};">
+        ${resultText}
+      </div>
+      <div style="font-size: 24px; margin-bottom: 15px;">
+        ${isWinner ? 'You defeated' : 'You were defeated by'}
+      </div>
+      <div style="font-size: 28px; font-weight: bold; margin-bottom: 30px; color: ${resultColor};">
+        ${opponentName}
+      </div>
+      <div style="background: rgba(255, 255, 255, 0.15); padding: 20px; border-radius: 10px; margin-bottom: 20px;">
+        <div style="font-size: 18px; margin-bottom: 10px;">Rating Change</div>
+        <div style="font-size: 36px; font-weight: bold; color: ${ratingChangeColor};">
+          ${ratingChangeText}
+        </div>
+        <div style="font-size: 16px; opacity: 0.9; margin-top: 8px;">
+          New Rating: ${playerFinalRating}
+        </div>
+      </div>
+      <div style="font-size: 14px; opacity: 0.8;">
+        Match Duration: ${Math.floor(data.matchDuration / 60)}:${(data.matchDuration % 60).toString().padStart(2, '0')}
+      </div>
+      <div style="font-size: 14px; opacity: 0.7; margin-top: 15px;">
+        Returning to lobby in <span id="countdown">8</span> seconds...
+      </div>
+    `;
+
+    overlay.appendChild(content);
+    document.body.appendChild(overlay);
+
+    // Countdown timer
+    let countdown = 8;
+    const countdownElement = content.querySelector('#countdown');
+    const countdownInterval = setInterval(() => {
+      countdown--;
+      if (countdownElement) {
+        countdownElement.textContent = countdown.toString();
+      }
+      if (countdown <= 0) {
+        clearInterval(countdownInterval);
+        document.body.removeChild(overlay);
+      }
+    }, 1000);
+
+    // Allow click to close early
+    overlay.addEventListener('click', () => {
+      clearInterval(countdownInterval);
+      document.body.removeChild(overlay);
+      this.networkManager.disconnect();
+      this.returnToLobby();
+    });
+
+    console.log(`🏆 ${isWinner ? 'Victory' : 'Defeat'} screen shown. Rating change: ${ratingChangeText}`);
   }
 
   /**
@@ -1880,7 +1864,7 @@ export class MainGameScene {
     console.log('🔄 Returning to lobby...');
     
     // Clear all game data
-    this.renderPlayers.clear();
+    // Sprites cleared below
     this.renderSprites.clear();
     this.stop();
     
@@ -1893,33 +1877,19 @@ export class MainGameScene {
     }
   }
   
-  private createDefaultPlayer(playerId: string, classType: ClassType = CT.BERSERKER): typeof this.renderPlayers extends Map<string, infer T> ? T : never {
-    return {
-      id: playerId,
-      position: { x: 10, y: 10 },
-      angle: 0,
-      classType: classType,
-      isMoving: false,
-      velocity: { x: 0, y: 0 },
-      health: 100,
-      armor: 50,
-      isAlive: true,
-      lastUpdate: Date.now()
-    };
-  }
 
   // NEW: Sprite management helper methods
   private createDefaultSprite(playerId: string, classType: ClassType = CT.BERSERKER): typeof this.renderSprites extends Map<string, infer T> ? T : never {
+    const defaultPos = { x: 10, y: 10 };
     return {
       id: playerId,
-      position: { x: 10, y: 10 },
+      position: defaultPos,
       angle: 0,
       classType: classType,
       health: 100,
       armor: 50,
       isAlive: true,
       isMoving: false,
-      velocity: { x: 0, y: 0 },
       lastUpdate: Date.now()
     };
   }
@@ -1932,24 +1902,64 @@ export class MainGameScene {
     armor: number;
     isAlive: boolean;
     isMoving: boolean;
-    velocity: { x: number; y: number };
     username: string;
   }>): void {
+    // CRITICAL: Never skip updates for any player except local
+    if (playerId === this.localPlayerId) return;
+    
     let sprite = this.renderSprites.get(playerId);
     
     if (!sprite) {
-      // Create new sprite if it doesn't exist
+      // Must have classType to create
       if (!updates.classType) {
-        console.warn(`🚨 Cannot create sprite for ${playerId} without classType`);
+        console.error(`Cannot create sprite without classType for ${playerId}`);
         return;
       }
-      sprite = this.createDefaultSprite(playerId, updates.classType);
-      console.log(`🎨 Created new sprite for ${playerId} with class ${updates.classType}`);
+      
+      // Create with server data or defaults
+      sprite = {
+        id: playerId,
+        position: updates.position || { x: 10, y: 10 },
+        angle: updates.angle || 0,
+        classType: updates.classType,
+        health: updates.health || 100,
+        armor: updates.armor || 50,
+        isAlive: updates.isAlive !== false,
+        isMoving: updates.isMoving || false,
+        lastUpdate: Date.now(),
+        username: updates.username
+      };
     }
-
-    // Update only provided fields
-    Object.assign(sprite, updates, { lastUpdate: Date.now() });
+    
+    // ALWAYS apply ALL updates from server
+    if (updates.position) {
+      sprite.position = { ...updates.position };
+    }
+    if (updates.angle !== undefined) {
+      sprite.angle = updates.angle;
+    }
+    if (updates.classType !== undefined) sprite.classType = updates.classType;
+    if (updates.health !== undefined) sprite.health = updates.health;
+    if (updates.armor !== undefined) sprite.armor = updates.armor;
+    if (updates.isAlive !== undefined) sprite.isAlive = updates.isAlive;
+    if (updates.isMoving !== undefined) sprite.isMoving = updates.isMoving;
+    if (updates.username !== undefined) sprite.username = updates.username;
+    
+    sprite.lastUpdate = Date.now();
     this.renderSprites.set(playerId, sprite);
+    
+    // CRITICAL FIX: Immediately update raycaster sprite position to eliminate lag
+    if (updates.position && this.raycaster) {
+      this.raycaster.persistSprite(
+        playerId,
+        updates.position.x,
+        updates.position.y,
+        updates.angle !== undefined ? updates.angle : sprite.angle,
+        sprite.classType,
+        null, // Frame will be updated in next render cycle
+        1.0
+      );
+    }
   }
 
   /**
@@ -1998,7 +2008,6 @@ export class MainGameScene {
 
   /**
    * Unified player update method - handles all player state changes
-   * This method replaces onPlayerMoved, onPlayerRotated, and consolidates player updates
    */
   public onPlayerUpdate(playerId: string, updateData: {
     position?: Vector2;
@@ -2016,81 +2025,12 @@ export class MainGameScene {
       console.warn(`⚠️ MainGameScene: Attempted to update local player ${playerId}. Ignoring.`);
       return;
     }
-
-    // Get or create player in unified state
-    let player = this.renderPlayers.get(playerId);
-    if (!player) {
-      if (!updateData.classType) {
-        console.error(`⚠️ MainGameScene: Cannot create player ${playerId} without class type!`);
-        return;
-      }
-      player = this.createDefaultPlayer(playerId, updateData.classType);
-    }
-
-    // Update player data with provided values
-    if (updateData.position !== undefined) {
-      player.position = { ...updateData.position };
-    }
-    if (updateData.angle !== undefined) {
-      player.angle = updateData.angle;
-    }
-    if (updateData.classType !== undefined) {
-      player.classType = updateData.classType;
-    }
-    if (updateData.isMoving !== undefined) {
-      player.isMoving = updateData.isMoving;
-    }
-    if (updateData.health !== undefined) {
-      player.health = updateData.health;
-    }
-    if (updateData.armor !== undefined) {
-      player.armor = updateData.armor;
-    }
-    if (updateData.isAlive !== undefined) {
-      player.isAlive = updateData.isAlive;
-    }
-    if (updateData.username !== undefined) {
-      player.username = updateData.username;
-    }
-    if (updateData.velocity !== undefined) {
-      player.velocity = { ...updateData.velocity };
-    }
-
-    player.lastUpdate = Date.now();
-    this.renderPlayers.set(playerId, player);
-
-    // Update unified sprite system
-    this.updateSprite(playerId, {
-      position: player.position,
-      angle: player.angle,
-      classType: player.classType,
-      health: player.health,
-      armor: player.armor,
-      isAlive: player.isAlive,
-      isMoving: player.isMoving,
-      velocity: player.velocity || { x: 0, y: 0 },
-      username: player.username
-    });
+    
+    // Use unified sprite system for all updates
+    this.updateSprite(playerId, updateData);
 
   }
 
-  public onPlayerMoved(playerId: string, position: Vector2, angle: number, classType?: ClassType, isMoving?: boolean): void {
-    // Use unified update method
-    this.onPlayerUpdate(playerId, {
-      position,
-      angle,
-      classType,
-      isMoving
-    });
-  }
-  
-  public onPlayerRotated(playerId: string, angle: number, classType?: ClassType): void {
-    // Use unified update method
-    this.onPlayerUpdate(playerId, {
-      angle,
-      classType
-    });
-  }
   
   /**
    * Update player ID when received from network manager
@@ -2120,28 +2060,19 @@ export class MainGameScene {
     
     // CRITICAL: Purge local player from rendering system
     // This handles the race condition where player:joined fired before localPlayerId was set
-    if (this.renderPlayers.has(this.localPlayerId)) {
-      console.log(`🧹 MainGameScene: Purging local player ${this.localPlayerId} from renderPlayers`);
-      this.renderPlayers.delete(this.localPlayerId);
+    if (this.renderSprites.has(this.localPlayerId)) {
+      console.log(`🧹 MainGameScene: Purging local player ${this.localPlayerId} from renderSprites`);
       this.removeSprite(this.localPlayerId);
     }
     
-    // CRITICAL: Remove local player from raycaster's otherPlayers
-    if (this.raycaster) {
-      this.raycaster.removeOtherPlayer(this.localPlayerId);
-      console.log(`🧹 MainGameScene: Removed local player ${this.localPlayerId} from raycaster`);
-    }
     
     // CRITICAL: Remove any sprites for the old player ID as well
     if (oldPlayerId && oldPlayerId !== this.localPlayerId) {
-      if (this.renderPlayers.has(oldPlayerId)) {
-        console.log(`🧹 MainGameScene: Purging old player ID ${oldPlayerId} from renderPlayers`);
-        this.renderPlayers.delete(oldPlayerId);
+      if (this.renderSprites.has(oldPlayerId)) {
+        console.log(`🧹 MainGameScene: Purging old player ID ${oldPlayerId} from renderSprites`);
+        this.removeSprite(oldPlayerId);
       }
       this.removeSprite(oldPlayerId);
-      if (this.raycaster) {
-        this.raycaster.removeOtherPlayer(oldPlayerId);
-      }
     }
   }
   
@@ -2204,22 +2135,16 @@ export class MainGameScene {
         
         // CRITICAL: Only add OTHER players, not ourselves
         if (playerId !== this.localPlayerId) {
-          console.log(`🎮 MainGameScene: Adding REMOTE player ${playerId} with class ${classType}`);
-          
-          // Add position data for immediate visibility
-          const playerData = {
-            username: player.username,
-            classType: classType,
+          // ALWAYS add sprite, even with minimal data
+          this.updateSprite(playerId, {
             position: player.position || this.getOpponentSpawnPosition(),
-            angle: player.angle || 0
-          };
-          console.log(`🎮 MainGameScene: Created playerData for ${playerId}:`, playerData);
-          this.onPlayerJoined(playerId, playerData);
-          
-          // Ensure sprite is immediately visible (not just on movement)
-          console.log(`🎯 Setting up sprite for existing player ${playerId} at position (${playerData.position.x}, ${playerData.position.y}) with class ${playerData.classType}`);
-        } else {
-          console.log(`🎮 MainGameScene: Skipping LOCAL player ${playerId} with class ${classType} - we don't render our own sprite`);
+            angle: player.angle || 0,
+            classType: classType,
+            health: player.health || 100,
+            armor: player.armor || 50,
+            isAlive: true,
+            username: player.username
+          });
         }
       });
     }
@@ -2236,36 +2161,54 @@ export class MainGameScene {
   
   /**
    * Handle game state update from server
+   * CRITICAL: This is the ONLY source of truth for remote player positions
    */
   public handleGameUpdate(gameUpdate: any) {
-    if (!gameUpdate || !gameUpdate.players) return;
+    if (!gameUpdate || !gameUpdate.players) {
+      console.warn('⚠️ handleGameUpdate: No game update or players data');
+      return;
+    }
     
-    // Process ALL player data in a single loop
+    // CRITICAL: Server is the ONLY source of truth
+    // Create a set of all player IDs from server
+    const serverPlayerIds = new Set<string>();
+    
+    // Process all players from server
     for (const playerData of gameUpdate.players) {
       if (playerData.id === this.localPlayerId) {
-        // Update our own health/armor from server (authoritative)
-        if (playerData.health !== undefined) {
-          this.playerHealth = playerData.health;
-        }
-        if (playerData.armor !== undefined) {
-          this.playerArmor = playerData.armor;
-        }
-        // Skip position update - we control our own movement
+        // Update our health/armor but skip position
+        if (playerData.health !== undefined) this.playerHealth = playerData.health;
+        if (playerData.armor !== undefined) this.playerArmor = playerData.armor;
         continue;
       }
       
-      // For remote players, update position and state
-      if (playerData.id) {
-        // Update position with server-authoritative data
-        this.onPlayerMoved(playerData.id, playerData.position, playerData.angle || 0, playerData.classType);
-        
-        // Store their health/armor for UI display in renderPlayers
-        let remotePlayer = this.renderPlayers.get(playerData.id);
-        if (remotePlayer) {
-          remotePlayer.health = playerData.health;
-          remotePlayer.armor = playerData.armor;
-          remotePlayer.isAlive = playerData.isAlive;
-        }
+      // Track this player as existing on server
+      serverPlayerIds.add(playerData.id);
+      
+      // ALWAYS update sprite with exact server data
+      if (playerData.id && playerData.position && playerData.classType) {
+        this.updateSprite(playerData.id, {
+          position: { x: playerData.position.x, y: playerData.position.y },
+          angle: playerData.rotation || playerData.angle || 0,
+          classType: playerData.classType,
+          health: playerData.health,
+          armor: playerData.armor,
+          isAlive: playerData.isAlive !== false, // Default to alive
+          isMoving: playerData.velocity && 
+                    (Math.abs(playerData.velocity.x) > 0.01 || 
+                     Math.abs(playerData.velocity.y) > 0.01),
+          username: playerData.username
+        });
+      }
+    }
+    
+    // ONLY remove sprites that are NOT in server update
+    // This is the ONLY place sprites should be removed
+    for (const [spriteId, sprite] of this.renderSprites) {
+      if (!serverPlayerIds.has(spriteId) && spriteId !== this.localPlayerId) {
+        // Server no longer knows about this player - remove them
+        this.removeSprite(spriteId);
+        console.log(`🗑️ Removed sprite ${spriteId} - not in server state`);
       }
     }
     
@@ -2279,10 +2222,8 @@ export class MainGameScene {
     
     // Handle player updates if present
     if (gameUpdate.players) {
-      if (this.debugCombat) {
-        console.log(`👥 [STEP 21B] Processing ${gameUpdate.players.length} players from game update:`, gameUpdate.players);
-      }
-      this.onPlayersUpdate(gameUpdate.players);
+      console.log(`👥 [GAME UPDATE] Processing ${gameUpdate.players.length} players from server`);
+      // Player positions are already handled above in this method
     }
     
     // Process game events (kills, damage, etc)
@@ -2390,47 +2331,6 @@ export class MainGameScene {
     console.log(`📊 Total projectiles after sync: ${this.renderProjectiles.size}`);
   }
 
-  /**
-   * Handle server player state updates (unified player sync)
-   */
-  public onPlayersUpdate(serverPlayers: any[]): void {
-    if (this.debugCombat) {
-      console.log(`👥 Processing ${serverPlayers.length} players from server (unified sync)`);
-    }
-    
-    // Get current players for comparison
-    const currentPlayerIds = new Set(this.renderPlayers.keys());
-    const serverPlayerIds = new Set(serverPlayers.map(p => p.id));
-    
-    // Remove players that are no longer on the server
-    for (const id of currentPlayerIds) {
-      if (!serverPlayerIds.has(id) && id !== this.localPlayerId) {
-        console.log(`🗑️ Removing remote player ${id} - not in server state`);
-        this.renderPlayers.delete(id);
-        this.removeSprite(id);
-      }
-    }
-    
-    // Add or update players from server using unified update method
-    for (const serverPlayer of serverPlayers) {
-      // Skip local player - we manage that separately
-      if (serverPlayer.id === this.localPlayerId) continue;
-      
-      // Use unified update method for all player changes
-      this.onPlayerUpdate(serverPlayer.id, {
-        position: serverPlayer.position,
-        angle: serverPlayer.angle,
-        classType: serverPlayer.classType,
-        health: serverPlayer.health,
-        armor: serverPlayer.armor,
-        isAlive: serverPlayer.isAlive,
-        isMoving: serverPlayer.isMoving,
-        username: serverPlayer.username
-      });
-    }
-    
-    console.log(`📊 Total players after sync: ${this.renderPlayers.size}`);
-  }
 
   /**
    * Get projectile color for raycaster rendering
@@ -2536,12 +2436,14 @@ export class MainGameScene {
     
     if (event.playerId === this.localPlayerId) {
       this.showNotification('You have been defeated!', 'warning');
-      // TODO: Handle local player death (respawn, end game, etc.)
     } else {
       this.showNotification(`Player ${event.playerId.substring(0, 8)} was defeated!`, 'info');
-      // Remove dead player from rendering
-      this.renderPlayers.delete(event.playerId);
-      this.removeSprite(event.playerId);
+      // DON'T REMOVE - let server handle it
+      // Instead, just update as not alive
+      const sprite = this.renderSprites.get(event.playerId);
+      if (sprite) {
+        sprite.isAlive = false;
+      }
     }
   }
 
@@ -2680,13 +2582,31 @@ export class MainGameScene {
   public onInitialGameState(data: any): void {
     console.log('🎮 MainGameScene: Received initial game state:', data);
     
-    // Set our health/armor from server
-    const ourPlayer = data.players?.find((p: any) => p.id === this.localPlayerId);
-    if (ourPlayer) {
-      this.playerHealth = ourPlayer.health;
-      this.playerMaxHealth = ourPlayer.maxHealth || 100;
-      this.playerArmor = ourPlayer.armor;
-      this.playerMaxArmor = ourPlayer.maxArmor || 50;
+    // Process all players from initial state
+    if (data.players && Array.isArray(data.players)) {
+      console.log(`📋 Initial state has ${data.players.length} players`);
+      for (const player of data.players) {
+        // Skip local player
+        if (player.id === this.localPlayerId) {
+          // Set our health/armor from server
+          this.playerHealth = player.health;
+          this.playerMaxHealth = player.maxHealth || 100;
+          this.playerArmor = player.armor;
+          this.playerMaxArmor = player.maxArmor || 50;
+        } else {
+          // Add remote player sprite
+          console.log(`➕ Adding initial sprite for player ${player.id}`);
+          this.updateSprite(player.id, {
+            position: player.position,
+            angle: player.rotation || 0,
+            classType: player.classType,
+            health: player.health,
+            armor: player.armor,
+            isAlive: player.isAlive,
+            username: player.username
+          });
+        }
+      }
     }
     
     // Start the game if ready

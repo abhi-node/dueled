@@ -178,6 +178,7 @@ export class Raycaster {
   }
   
   // Other players - complete player data
+  // @deprecated - Use sprites map instead to avoid dual-map confusion
   private otherPlayers: Map<string, { 
     x: number; 
     y: number; 
@@ -237,6 +238,10 @@ export class Raycaster {
   /**
    * Add or update another player with complete data
    */
+  /**
+   * @deprecated Use persistSprite directly instead to avoid dual-map confusion
+   * This method maintained a separate otherPlayers map which caused timing issues
+   */
   public updateOtherPlayer(
     playerId: string, 
     x: number, 
@@ -249,26 +254,16 @@ export class Raycaster {
     isAlive: boolean = true,
     color: string = '#ff0000'
   ): void {
+    console.warn(`⚠️ updateOtherPlayer is deprecated. Use persistSprite directly for ${playerId}`);
+    
     // CRITICAL: Never add local player to other players
     if (playerId === this.localPlayerId) {
       console.warn(`⚠️ Raycaster: Attempted to add local player ${playerId} to other players. Ignoring.`);
       return;
     }
     
-    this.otherPlayers.set(playerId, { 
-      x, 
-      y, 
-      angle,
-      classType,
-      isMoving,
-      health,
-      armor,
-      isAlive,
-      color 
-    });
-    
-    // Sprite updates are now handled by MainGameScene to avoid conflicts
-    // The raycaster will query the sprite renderer during rendering
+    // Forward to persistSprite to maintain single source of truth
+    this.persistSprite(playerId, x, y, angle, classType, null, 1.0);
   }
 
   /**
@@ -322,6 +317,7 @@ export class Raycaster {
   
   /**
    * Persist a sprite for 3D rendering
+   * CRITICAL: Uses exact server positions - no modifications
    */
   public persistSprite(
     id: string, 
@@ -332,11 +328,17 @@ export class Raycaster {
     spriteFrame: any | null,
     size: number = 1.0
   ): void {
-    // Only update if sprite doesn't exist or position/angle has changed
-    const existing = this.sprites.get(id);
-    if (!existing || existing.x !== x || existing.y !== y || existing.angle !== angle) {
-      this.sprites.set(id, { id, x, y, angle, classType, spriteFrame, size });
-    }
+    // CRITICAL: Store exact server position without any modifications
+    // This ensures sprites render at their authoritative server positions
+    this.sprites.set(id, { 
+      id, 
+      x: x,  // Exact server X coordinate
+      y: y,  // Exact server Y coordinate
+      angle, 
+      classType, 
+      spriteFrame, 
+      size 
+    });
   }
 
   /**
@@ -896,9 +898,18 @@ export class Raycaster {
 
       // NEW: Add sprites to render list - NO FOG for sprites
       for (const [spriteId, sprite] of this.sprites.entries()) {
-        const dx = sprite.x - this.playerX;
-        const dy = sprite.y - this.playerY;
+        // CRITICAL: Use exact server positions without modification
+        const spriteX = sprite.x;
+        const spriteY = sprite.y;
+        
+        const dx = spriteX - this.playerX;
+        const dy = spriteY - this.playerY;
         const distance = Math.sqrt(dx * dx + dy * dy);
+        
+        // Debug log for position verification
+        if (Math.random() < 0.001) { // Log rarely to avoid spam
+          console.log(`🎯 Rendering sprite ${spriteId} at server pos (${spriteX.toFixed(3)}, ${spriteY.toFixed(3)}), distance: ${distance.toFixed(2)}`);
+        }
         
         // Early exit conditions
         if (distance < 0.1 || distance > this.viewDistance) continue;
@@ -915,7 +926,7 @@ export class Raycaster {
         if (Math.abs(relativeAngle) > halfFov) continue;
         
         // Check line of sight after angle check for efficiency
-        if (!this.hasLineOfSight(this.playerX, this.playerY, sprite.x, sprite.y, map)) continue;
+        if (!this.hasLineOfSight(this.playerX, this.playerY, spriteX, spriteY, map)) continue;
         
         // Calculate screen position and size
         const screenX = halfWidth + (relativeAngle / halfFov) * halfWidth;
@@ -1270,8 +1281,8 @@ export class Raycaster {
     screenY: number,
     projectedSize: number
   ): void {
-    if (!sprite.spriteFrame || projectedSize < 1) {
-      return; // No frame or too small to render
+    if (projectedSize < 1) {
+      return; // Too small to render
     }
     
     this.ctx.save();
@@ -1283,8 +1294,30 @@ export class Raycaster {
     const renderSize = Math.max(8, projectedSize); // Minimum size for visibility
     const halfSize = renderSize / 2;
     
-    // Render the sprite frame
-    if (sprite.spriteFrame.canvas) {
+    // CRITICAL: Always render something, even with missing frame
+    if (!sprite.spriteFrame || !sprite.spriteFrame.canvas) {
+      // Render a colored square as fallback
+      const ctx = this.ctx;
+      
+      // Choose color based on class type
+      const colors: Record<ClassType, string> = {
+        'archer': '#4ade80',    // Green
+        'mage': '#60a5fa',      // Blue
+        'berserker': '#f87171', // Red
+        'bomber': '#fbbf24'     // Yellow
+      };
+      
+      ctx.fillStyle = colors[sprite.classType] || '#ffffff';
+      ctx.fillRect(screenX - halfSize, screenY - halfSize, renderSize, renderSize);
+      
+      // Add class initial
+      ctx.fillStyle = '#000000';
+      ctx.font = `${Math.max(12, renderSize / 4)}px Arial`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(sprite.classType[0], screenX, screenY);
+    } else {
+      // Normal sprite rendering
       this.ctx.drawImage(
         sprite.spriteFrame.canvas,
         screenX - halfSize,

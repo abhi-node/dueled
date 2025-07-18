@@ -21,6 +21,7 @@ import { redis } from './services/redis.js';
 import { matchmakingService, setGameHandler } from './services/matchmakingService.js';
 import { gameStateService } from './services/gameStateService.js';
 import { migrationService } from './services/migrations.js';
+import { matchFinalizationService } from './services/matchFinalizationService.js';
 
 dotenv.config();
 
@@ -258,6 +259,9 @@ setGameHandler(gameHandler);
 
 // Set gameHandler reference in game state service
 gameStateService.setGameHandler(gameHandler);
+
+// Set gameHandler reference in match finalization service
+matchFinalizationService.setGameHandler(gameHandler);
 
 // Enhanced Socket.IO configuration
 io.engine.on('connection_error', (err) => {

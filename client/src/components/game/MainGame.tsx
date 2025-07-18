@@ -73,11 +73,6 @@ export function MainGame() {
       }
     });
     
-    socket.on('player:moved', (data) => {
-      if (gameRef.current) {
-        gameRef.current.onPlayerMoved(data.playerId, data.position, data.angle, data.classType);
-      }
-    });
     
     socket.on('player:rotated', (data) => {
       if (gameRef.current && gameRef.current.onPlayerRotated) {

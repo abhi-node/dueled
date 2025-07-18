@@ -62,6 +62,19 @@ export class ProjectileSpriteManager extends BaseSpriteManager {
           // Create animation for this projectile type - use all frames (row 0)
           const animation = spriteSheet.createAnimation(WalkDirection.FORWARD, ProjectileSpriteManager.PROJECTILE_FRAME_TIME);
           
+          // SURGICAL CHANGE: Override animation frames to use all 16 frames instead of just row 0
+          const allFrames: SpriteFrame[] = [];
+          for (let row = 0; row < 4; row++) {
+            for (let col = 0; col < 4; col++) {
+              const frame = spriteSheet.getSprite(row, col);
+              if (frame) {
+                allFrames.push(frame);
+              }
+            }
+          }
+          animation.frames = allFrames;
+          console.log(`🎯 ProjectileSpriteManager: Created animation with ${allFrames.length} frames for ${projectileType.type}`);
+          
           const projectileSprite: ProjectileSprite = {
             type: projectileType.type,
             spriteSheet,
@@ -162,6 +175,19 @@ export class ProjectileSpriteManager extends BaseSpriteManager {
     spriteSheet.load(dataUrl).then(() => {
       // Create animation for this projectile type
       const animation = spriteSheet.createAnimation(WalkDirection.FORWARD, ProjectileSpriteManager.PROJECTILE_FRAME_TIME);
+      
+      // SURGICAL CHANGE: Override animation frames to use all 16 frames instead of just row 0
+      const allFrames: SpriteFrame[] = [];
+      for (let row = 0; row < 4; row++) {
+        for (let col = 0; col < 4; col++) {
+          const frame = spriteSheet.getSprite(row, col);
+          if (frame) {
+            allFrames.push(frame);
+          }
+        }
+      }
+      animation.frames = allFrames;
+      console.log(`🎯 ProjectileSpriteManager: Created fallback animation with ${allFrames.length} frames for ${type}`);
       
       const projectileSprite: ProjectileSprite = {
         type,

@@ -10,8 +10,6 @@ import type { Vector2, ClassType, MovePayload, RotatePayload, AttackPayload } fr
 export interface NetworkEventHandler {
   onPlayerJoined(playerId: string, data: any): void;
   onPlayerLeft(playerId: string, data?: any): void;
-  onPlayerMoved(playerId: string, position: Vector2, angle: number, classType?: ClassType, isMoving?: boolean): void;
-  onPlayerRotated?(playerId: string, angle: number, classType?: ClassType): void;
   onMatchEnded?(data: any): void;
   handleGameUpdate?(data: any): void;
   onProjectileUpdate?(projectiles: any[]): void;
@@ -241,58 +239,19 @@ export class MainNetworkManager {
       // Forward the entire match_joined data to the event handler
       if ('onMatchJoined' in this.eventHandler) {
         (this.eventHandler as any).onMatchJoined(data);
-      } else {
-        // Fallback: Handle existing players in the match
-        if (data.players) {
-          data.players.forEach((player: any) => {
-            if (player.playerId !== this.playerId) {
-              this.eventHandler.onPlayerJoined(player.playerId, player);
-            }
-          });
-        }
       }
+      // Removed fallback player processing - sprites now handled via game_update packets only
     });
     
-    this.socket.on('player:joined', (data) => {
-      // CRITICAL: Skip if this is our own player joining
-      if (data.playerId === this.playerId) {
-        console.log(`🔒 MainNetworkManager: Skipping player:joined for local player ${data.playerId}`);
-        return;
-      }
-      this.eventHandler.onPlayerJoined(data.playerId, data);
-    });
+    // Removed player:joined handler - sprites now handled via game_update packets only
     
     this.socket.on('player:left', (data) => {
       this.eventHandler.onPlayerLeft(data.playerId, data);
     });
     
-    this.socket.on(WSEvents.PLAYER_MOVED, (data) => {
-      // CRITICAL: Skip if this is our own player movement
-      if (data.playerId === this.playerId) {
-        return;
-      }
-      this.eventHandler.onPlayerMoved(
-        data.playerId,
-        data.position,
-        data.angle,
-        data.classType,
-        data.isMoving
-      );
-    });
+    // Removed player:moved handler - position updates now handled via game_update packets only
     
-    this.socket.on(WSEvents.PLAYER_ROTATED, (data) => {
-      // CRITICAL: Skip if this is our own player rotation
-      if (data.playerId === this.playerId) {
-        return;
-      }
-      if (this.eventHandler.onPlayerRotated) {
-        this.eventHandler.onPlayerRotated(
-          data.playerId,
-          data.angle,
-          data.classType
-        );
-      }
-    });
+    // Removed player:rotated handler - rotation updates now handled via game_update packets only
     
     this.socket.on('game:state', (gameState) => {
       // Handle full game state updates
@@ -331,22 +290,7 @@ export class MainNetworkManager {
         this.eventHandler.onInitialGameState(data);
       }
       
-      // Process players from initial state
-      if (data.players && this.eventHandler.onPlayerJoined) {
-        for (const player of data.players) {
-          // CRITICAL: Skip local player
-          if (player.id === this.playerId) {
-            console.log(`🔒 MainNetworkManager: Skipping initial_state player for local player ${player.id}`);
-            continue;
-          }
-          this.eventHandler.onPlayerJoined(player.id, {
-            username: player.username,
-            classType: player.classType,
-            position: player.position,
-            angle: player.rotation || 0
-          });
-        }
-      }
+      // Removed initial state player processing - sprites now handled via game_update packets only
     });
   }
   
