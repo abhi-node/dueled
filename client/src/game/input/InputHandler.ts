@@ -172,11 +172,11 @@ export class InputHandler {
     const keyDownHandler = (e: KeyboardEvent) => this.handleKeyDown(e);
     const keyUpHandler = (e: KeyboardEvent) => this.handleKeyUp(e);
     
-    document.addEventListener('keydown', keyDownHandler);
-    document.addEventListener('keyup', keyUpHandler);
+    document.addEventListener('keydown', keyDownHandler as EventListener);
+    document.addEventListener('keyup', keyUpHandler as EventListener);
     
-    this.boundEventListeners.set('keydown', keyDownHandler);
-    this.boundEventListeners.set('keyup', keyUpHandler);
+    this.boundEventListeners.set('keydown', keyDownHandler as EventListener);
+    this.boundEventListeners.set('keyup', keyUpHandler as EventListener);
     
     // Mouse events
     const mouseDownHandler = (e: MouseEvent) => this.handleMouseDown(e);
@@ -184,14 +184,14 @@ export class InputHandler {
     const mouseMoveHandler = (e: MouseEvent) => this.handleMouseMove(e);
     const contextMenuHandler = (e: Event) => e.preventDefault();
     
-    this.canvas.addEventListener('mousedown', mouseDownHandler);
-    this.canvas.addEventListener('mouseup', mouseUpHandler);
-    this.canvas.addEventListener('mousemove', mouseMoveHandler);
+    this.canvas.addEventListener('mousedown', mouseDownHandler as EventListener);
+    this.canvas.addEventListener('mouseup', mouseUpHandler as EventListener);
+    this.canvas.addEventListener('mousemove', mouseMoveHandler as EventListener);
     this.canvas.addEventListener('contextmenu', contextMenuHandler);
     
-    this.boundEventListeners.set('mousedown', mouseDownHandler);
-    this.boundEventListeners.set('mouseup', mouseUpHandler);
-    this.boundEventListeners.set('mousemove', mouseMoveHandler);
+    this.boundEventListeners.set('mousedown', mouseDownHandler as EventListener);
+    this.boundEventListeners.set('mouseup', mouseUpHandler as EventListener);
+    this.boundEventListeners.set('mousemove', mouseMoveHandler as EventListener);
     this.boundEventListeners.set('contextmenu', contextMenuHandler);
     
     // Pointer lock events

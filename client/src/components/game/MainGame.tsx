@@ -116,6 +116,16 @@ export function MainGame() {
       try {
         console.log('🎮 Initializing modular game system...');
         
+        // Create canvas element for WebGL rendering
+        const canvas = document.createElement('canvas');
+        canvas.width = containerRef.current.clientWidth;
+        canvas.height = containerRef.current.clientHeight;
+        canvas.style.position = 'absolute';
+        canvas.style.top = '0';
+        canvas.style.left = '0';
+        canvas.style.zIndex = '1';
+        containerRef.current.appendChild(canvas);
+        
         // Initialize game state manager
         gameStateRef.current = new GameStateManager();
         
@@ -124,14 +134,14 @@ export function MainGame() {
           networkManagerRef.current = new NetworkManager(socketRef.current);
         }
         
-        // Initialize input handler
-        inputHandlerRef.current = new InputHandler(containerRef.current);
+        // Initialize input handler with canvas
+        inputHandlerRef.current = new InputHandler(canvas);
         
-        // Initialize UI manager
-        uiManagerRef.current = new UIManager(containerRef.current);
+        // Initialize UI manager with container ID
+        uiManagerRef.current = new UIManager('main-game-container');
         
-        // Initialize game renderer
-        gameRendererRef.current = new GameRenderer(containerRef.current);
+        // Initialize game renderer with canvas
+        gameRendererRef.current = new GameRenderer(canvas);
         
         console.log('✅ Modular game system initialized successfully');
       } catch (error) {

@@ -7,7 +7,7 @@
 
 import { WebGLContext } from './webgl/WebGLContext.js';
 import { ShaderManager } from './webgl/ShaderManager.js';
-import { GPURaycaster, ViewState, createSimpleArenaMap } from './webgl/GPURaycaster.js';
+import { GPURaycaster, createSimpleArenaMap, type ViewState } from './webgl/GPURaycaster.js';
 import { WebGLSpriteRenderer } from './webgl/WebGLSpriteRenderer.js';
 import { TextureAtlas, createArenaSprites } from './webgl/TextureAtlas.js';
 

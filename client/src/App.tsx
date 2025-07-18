@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { MainMenu } from './components/lobby/MainMenu';
 import { AuthPage } from './components/auth/AuthPage';
-import { GamePage } from './components/game/GamePage';
+// GamePage removed in cleanup
 import { MainGame } from './components/game/MainGame';
 import { UserProfile } from './components/auth/UserProfile';
 import { Navbar } from './components/common/Navbar';
@@ -67,7 +67,7 @@ function App() {
               path="/game-old" 
               element={
                 <ProtectedRoute requireAuth={true} fallbackPath="/auth">
-                  <GamePage />
+                  <MainGame />
                 </ProtectedRoute>
               } 
             />

@@ -457,6 +457,49 @@ export class GameStateManager {
   }
   
   /**
+   * Update game state from server data
+   */
+  updateFromServer(gameUpdate: any): void {
+    try {
+      // Update players
+      if (gameUpdate.players) {
+        for (const [playerId, playerData] of Object.entries(gameUpdate.players as any)) {
+          this.updatePlayer({ ...playerData as any, id: playerId });
+        }
+      }
+      
+      // Update projectiles
+      if (gameUpdate.projectiles) {
+        this.state.projectiles.clear();
+        for (const [projectileId, projectileData] of Object.entries(gameUpdate.projectiles as any)) {
+          this.state.projectiles.set(projectileId, projectileData as ClientProjectile);
+        }
+      }
+      
+      // Update match state
+      if (gameUpdate.matchState) {
+        this.state.match = { ...this.state.match, ...gameUpdate.matchState };
+      }
+      
+      this.emitStateChange();
+    } catch (error) {
+      console.error('Error updating from server:', error);
+    }
+  }
+  
+  /**
+   * Update player rotation
+   */
+  updatePlayerRotation(playerId: string, angle: number): void {
+    const player = this.state.players.get(playerId);
+    if (player) {
+      player.rotation = angle;
+      player.lastUpdate = Date.now();
+      this.emitStateChange();
+    }
+  }
+
+  /**
    * Clean up resources
    */
   destroy(): void {

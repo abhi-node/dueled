@@ -577,6 +577,52 @@ export class UIManager {
   }
   
   /**
+   * Show match end screen
+   */
+  showMatchEndScreen(data: any): void {
+    try {
+      // Create match end overlay
+      const overlay = document.createElement('div');
+      overlay.className = 'fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50';
+      
+      const modal = document.createElement('div');
+      modal.className = 'bg-gray-900 p-8 rounded-lg text-center max-w-md mx-4';
+      
+      const title = document.createElement('h2');
+      title.className = 'text-3xl font-bold mb-4';
+      title.textContent = data.winner ? `${data.winner} Wins!` : 'Match Ended';
+      title.style.color = data.winner ? '#10b981' : '#ef4444';
+      
+      const details = document.createElement('div');
+      details.className = 'text-gray-300 mb-6';
+      details.innerHTML = `
+        <p>Final Score: ${data.score?.player1 || 0} - ${data.score?.player2 || 0}</p>
+        <p>Duration: ${data.duration || 'Unknown'}</p>
+      `;
+      
+      const button = document.createElement('button');
+      button.className = 'bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded text-white font-semibold';
+      button.textContent = 'Back to Lobby';
+      button.onclick = () => {
+        overlay.remove();
+        // Navigate back to lobby - this would typically use React router
+        window.location.href = '/';
+      };
+      
+      modal.appendChild(title);
+      modal.appendChild(details);
+      modal.appendChild(button);
+      overlay.appendChild(modal);
+      
+      this.container.appendChild(overlay);
+      
+      console.log('Match end screen shown:', data);
+    } catch (error) {
+      console.error('Error showing match end screen:', error);
+    }
+  }
+
+  /**
    * Clean up UI elements
    */
   destroy(): void {
