@@ -1,23 +1,26 @@
 /**
- * MainGame - React component wrapper for the main game
- * Manages the lifecycle of the ray-casted game scene
+ * MainGame - React component wrapper for the simplified modular game
+ * Manages the lifecycle of the new GameRenderer + modular systems
  */
 
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { io, Socket } from 'socket.io-client';
-// TODO: Replace MainGameScene with modular architecture
-// import { GameRenderer } from '../../game/rendering/GameRenderer';
-// import { GameStateManager } from '../../game/state/GameStateManager';
-// import { NetworkManager } from '../../game/network/NetworkManager';
-// import { InputHandler } from '../../game/input/InputHandler';
-// import { UIManager } from '../../game/ui/UIManager';
+import { GameRenderer } from '../../game/rendering/GameRenderer';
+import { GameStateManager } from '../../game/state/GameStateManager';
+import { NetworkManager } from '../../game/network/NetworkManager';
+import { InputHandler } from '../../game/input/InputHandler';
+import { UIManager } from '../../game/ui/UIManager';
 import { useAuthStore } from '../../store/authStore';
 import type { ClassType } from '@dueled/shared';
 
 export function MainGame() {
-  // TODO: Replace with modular system
-  const gameRef = useRef<any>(null);
+  // Modular system refs
+  const gameRendererRef = useRef<GameRenderer | null>(null);
+  const gameStateRef = useRef<GameStateManager | null>(null);
+  const networkManagerRef = useRef<NetworkManager | null>(null);
+  const inputHandlerRef = useRef<InputHandler | null>(null);
+  const uiManagerRef = useRef<UIManager | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<Socket | null>(null);
   const selectedClassRef = useRef<ClassType>('berserker' as ClassType);
@@ -74,26 +77,25 @@ export function MainGame() {
     });
     
     socket.on('game:update', (gameUpdate) => {
-      // TODO: Replace with modular system
-      // if (gameRef.current) {
-      //   gameRef.current.handleGameUpdate(gameUpdate);
-      // }
+      // Update game state with server data
+      if (gameStateRef.current) {
+        gameStateRef.current.updateFromServer(gameUpdate);
+      }
     });
     
-    
     socket.on('player:rotated', (data) => {
-      // TODO: Replace with modular system
-      // if (gameRef.current && gameRef.current.onPlayerRotated) {
-      //   gameRef.current.onPlayerRotated(data.playerId, data.angle, data.classType);
-      // }
+      // Update player rotation in game state
+      if (gameStateRef.current) {
+        gameStateRef.current.updatePlayerRotation(data.playerId, data.angle);
+      }
     });
     
     socket.on('match_ended', (data) => {
       console.log('Match ended:', data);
-      // TODO: Replace with modular system
-      // if (gameRef.current && gameRef.current.onMatchEnded) {
-      //   gameRef.current.onMatchEnded(data);
-      // }
+      // Handle match end through UI manager
+      if (uiManagerRef.current) {
+        uiManagerRef.current.showMatchEndScreen(data);
+      }
     });
     
     return () => {
@@ -109,25 +111,53 @@ export function MainGame() {
       return;
     }
     
-    // TODO: Initialize new modular game system
-    // Initialize game
-    if (containerRef.current && !gameRef.current) {
+    // Initialize modular game system
+    if (containerRef.current && !gameRendererRef.current) {
       try {
-        // gameRef.current = new MainGameScene('main-game-container', matchId, matchData, socketRef.current, selectedClassRef.current);
-        // gameRef.current.start();
-        console.log('Game initialization temporarily disabled during refactor');
+        console.log('🎮 Initializing modular game system...');
+        
+        // Initialize game state manager
+        gameStateRef.current = new GameStateManager();
+        
+        // Initialize network manager
+        if (socketRef.current) {
+          networkManagerRef.current = new NetworkManager(socketRef.current);
+        }
+        
+        // Initialize input handler
+        inputHandlerRef.current = new InputHandler(containerRef.current);
+        
+        // Initialize UI manager
+        uiManagerRef.current = new UIManager(containerRef.current);
+        
+        // Initialize game renderer
+        gameRendererRef.current = new GameRenderer(containerRef.current);
+        
+        console.log('✅ Modular game system initialized successfully');
       } catch (error) {
-        console.error('Failed to initialize game:', error);
+        console.error('❌ Failed to initialize modular game system:', error);
       }
     }
     
     // Cleanup
     return () => {
-      // TODO: Replace with modular system cleanup
-      // if (gameRef.current) {
-      //   gameRef.current.stop();
-      //   gameRef.current = null;
-      // }
+      if (gameRendererRef.current) {
+        gameRendererRef.current.destroy();
+        gameRendererRef.current = null;
+      }
+      if (inputHandlerRef.current) {
+        inputHandlerRef.current.destroy();
+        inputHandlerRef.current = null;
+      }
+      if (uiManagerRef.current) {
+        uiManagerRef.current.destroy();
+        uiManagerRef.current = null;
+      }
+      if (networkManagerRef.current) {
+        networkManagerRef.current.destroy();
+        networkManagerRef.current = null;
+      }
+      gameStateRef.current = null;
     };
   }, [isAuthenticated, user, navigate, matchId, matchData, connectionStatus, selectedClass]);
   
