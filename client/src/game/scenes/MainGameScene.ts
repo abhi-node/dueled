@@ -5,7 +5,7 @@
 
 import Phaser from 'phaser';
 import { Socket } from 'socket.io-client';
-import { Raycaster } from '../renderer/Raycaster.js';
+import { GPURaycaster } from '../rendering/webgl/GPURaycaster.js';
 import { GameMap } from '../world/GameMap.js';
 import { MainNetworkManager } from '../network/MainNetworkManager.js';
 import { TextureManager } from '../renderer/TextureManager.js';
@@ -21,7 +21,7 @@ import { spriteSheetManager } from '../renderer/SpriteSheetManager';
 
 export class MainGameScene {
   private canvas: HTMLCanvasElement;
-  private raycaster: Raycaster;
+  private raycaster: GPURaycaster;
   private gameMap: GameMap;
   private networkManager: MainNetworkManager;
   private textureManager: TextureManager;
@@ -1047,6 +1047,7 @@ export class MainGameScene {
   
   /**
    * Process player input
+   * @deprecated Use InputHandler.ts instead - complex input processing will be removed in Phase 6
    */
   private processInput(): void {
     let forward = 0;
@@ -1357,6 +1358,7 @@ export class MainGameScene {
 
   /**
    * Enhanced render method with combat visuals
+   * @deprecated Use GameRenderer.ts instead - monolithic rendering will be removed in Phase 6
    */
   private render(): void {
     try {
@@ -1749,6 +1751,9 @@ export class MainGameScene {
   
   /**
    * Handle network events
+   */
+  /**
+   * @deprecated Use NetworkManager.ts instead - complex network handling will be removed in Phase 6
    */
   public onPlayerJoined(playerId: string, data: any): void {
     // SAFETY CHECK: Never add ourselves as a remote player

@@ -6,12 +6,18 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { io, Socket } from 'socket.io-client';
-import { MainGameScene } from '../../game/scenes/MainGameScene';
+// TODO: Replace MainGameScene with modular architecture
+// import { GameRenderer } from '../../game/rendering/GameRenderer';
+// import { GameStateManager } from '../../game/state/GameStateManager';
+// import { NetworkManager } from '../../game/network/NetworkManager';
+// import { InputHandler } from '../../game/input/InputHandler';
+// import { UIManager } from '../../game/ui/UIManager';
 import { useAuthStore } from '../../store/authStore';
 import type { ClassType } from '@dueled/shared';
 
 export function MainGame() {
-  const gameRef = useRef<MainGameScene | null>(null);
+  // TODO: Replace with modular system
+  const gameRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<Socket | null>(null);
   const selectedClassRef = useRef<ClassType>('berserker' as ClassType);
@@ -68,23 +74,26 @@ export function MainGame() {
     });
     
     socket.on('game:update', (gameUpdate) => {
-      if (gameRef.current) {
-        gameRef.current.handleGameUpdate(gameUpdate);
-      }
+      // TODO: Replace with modular system
+      // if (gameRef.current) {
+      //   gameRef.current.handleGameUpdate(gameUpdate);
+      // }
     });
     
     
     socket.on('player:rotated', (data) => {
-      if (gameRef.current && gameRef.current.onPlayerRotated) {
-        gameRef.current.onPlayerRotated(data.playerId, data.angle, data.classType);
-      }
+      // TODO: Replace with modular system
+      // if (gameRef.current && gameRef.current.onPlayerRotated) {
+      //   gameRef.current.onPlayerRotated(data.playerId, data.angle, data.classType);
+      // }
     });
     
     socket.on('match_ended', (data) => {
       console.log('Match ended:', data);
-      if (gameRef.current && gameRef.current.onMatchEnded) {
-        gameRef.current.onMatchEnded(data);
-      }
+      // TODO: Replace with modular system
+      // if (gameRef.current && gameRef.current.onMatchEnded) {
+      //   gameRef.current.onMatchEnded(data);
+      // }
     });
     
     return () => {
@@ -100,11 +109,13 @@ export function MainGame() {
       return;
     }
     
+    // TODO: Initialize new modular game system
     // Initialize game
     if (containerRef.current && !gameRef.current) {
       try {
-        gameRef.current = new MainGameScene('main-game-container', matchId, matchData, socketRef.current, selectedClassRef.current);
-        gameRef.current.start();
+        // gameRef.current = new MainGameScene('main-game-container', matchId, matchData, socketRef.current, selectedClassRef.current);
+        // gameRef.current.start();
+        console.log('Game initialization temporarily disabled during refactor');
       } catch (error) {
         console.error('Failed to initialize game:', error);
       }
@@ -112,10 +123,11 @@ export function MainGame() {
     
     // Cleanup
     return () => {
-      if (gameRef.current) {
-        gameRef.current.stop();
-        gameRef.current = null;
-      }
+      // TODO: Replace with modular system cleanup
+      // if (gameRef.current) {
+      //   gameRef.current.stop();
+      //   gameRef.current = null;
+      // }
     };
   }, [isAuthenticated, user, navigate, matchId, matchData, connectionStatus, selectedClass]);
   

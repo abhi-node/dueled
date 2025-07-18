@@ -17,10 +17,10 @@ export interface Vector2 {
 }
 
 export enum ClassType {
-  BERSERKER = 'berserker',
-  MAGE = 'mage',
-  BOMBER = 'bomber',
-  ARCHER = 'archer'
+  ARCHER = 'archer',
+  BERSERKER = 'berserker'
+  // MAGE = 'mage',       // Phase 4: Simplified to 2 active classes
+  // BOMBER = 'bomber'    // Architecture ready for expansion to 4 classes
 }
 
 /**

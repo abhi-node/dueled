@@ -7,21 +7,19 @@ import { Server as SocketIOServer } from 'socket.io';
 import dotenv from 'dotenv';
 import rateLimit from 'express-rate-limit';
 
-import { authRoutes } from './controllers/authController.js';
-import { playerRoutes } from './controllers/playerController.js';
-import { matchmakingRoutes } from './controllers/matchmakingController.js';
-import { GameHandler } from './websocket/GameHandler.js';
+import { simpleAuthRoutes } from './controllers/SimpleAuthController.js';
+import { simplePlayerRoutes } from './controllers/SimplePlayerController.js';
+import { simpleMatchmakingRoutes } from './controllers/SimpleMatchmakingController.js';
+import { SimpleGameHandler } from './websocket/SimpleGameHandler.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { securityHeaders, requestLogger } from './middleware/validation.js';
-import { SessionService } from './services/sessionService.js';
-import { PasswordService } from './services/passwordService.js';
+import { SimpleAuth } from './services/auth/SimpleAuth.js';
+import { SimpleMatchmaking } from './services/matchmaking/SimpleMatchmaking.js';
+import { SimpleConnectionManager } from './services/connection/SimpleConnectionManager.js';
 import { logger } from './utils/logger.js';
 import { db } from './services/database.js';
 import { redis } from './services/redis.js';
-import { matchmakingService, setGameHandler } from './services/matchmakingService.js';
-import { gameStateService } from './services/gameStateService.js';
 import { migrationService } from './services/migrations.js';
-import { matchFinalizationService } from './services/matchFinalizationService.js';
 
 dotenv.config();
 
@@ -179,9 +177,9 @@ app.use((req, res, next) => {
 });
 
 // API routes
-app.use('/api/auth', authRoutes);
-app.use('/api/player', playerRoutes);
-app.use('/api/matchmaking', matchmakingRoutes);
+app.use('/api/auth', simpleAuthRoutes);
+app.use('/api/player', simplePlayerRoutes);
+app.use('/api/matchmaking', simpleMatchmakingRoutes);
 
 // Health check endpoint with detailed status
 app.get('/health', async (req, res) => {
@@ -214,54 +212,28 @@ app.get('/health', async (req, res) => {
   }
 });
 
-// Metrics endpoint for monitoring
-app.get('/metrics', (req, res) => {
-  try {
-    const gameHandler = (io as any).gameHandler;
-    const stats = gameHandler ? gameHandler.getConnectionStats() : null;
-    
-    const metrics = {
-      timestamp: new Date().toISOString(),
-      uptime: process.uptime(),
-      memory: process.memoryUsage(),
-      websocket: stats || {
-        totalConnections: 0,
-        authenticatedPlayers: 0,
-        activeMatches: 0,
-        playersInMatches: 0,
-      },
-      database: {
-        connected: db.isConnected(),
-      },
-      redis: {
-        connected: redis.getConnectionStatus(),
-      },
-    };
-    
-    res.json(metrics);
-  } catch (error) {
-    logger.error('Metrics error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to get metrics',
-    });
-  }
+// Simple health endpoint for basic monitoring
+app.get('/simple-metrics', (req, res) => {
+  res.json({
+    status: 'ok',
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString()
+  });
 });
 
-// WebSocket game handler with enhanced configuration
-const gameHandler = new GameHandler(io);
+// Initialize simplified services
+const simpleMatchmaking = new SimpleMatchmaking();
+const simpleConnectionManager = new SimpleConnectionManager();
+
+// WebSocket game handler with simplified configuration
+const gameHandler = new SimpleGameHandler(
+  io,
+  simpleMatchmaking,
+  simpleConnectionManager
+);
 
 // Store gameHandler reference for metrics
 (io as any).gameHandler = gameHandler;
-
-// Set gameHandler reference in matchmaking service
-setGameHandler(gameHandler);
-
-// Set gameHandler reference in game state service
-gameStateService.setGameHandler(gameHandler);
-
-// Set gameHandler reference in match finalization service
-matchFinalizationService.setGameHandler(gameHandler);
 
 // Enhanced Socket.IO configuration
 io.engine.on('connection_error', (err) => {
@@ -371,14 +343,7 @@ async function startServer() {
       }
     }, 30000); // Check every 30 seconds
     
-    // Setup periodic matchmaking queue processing
-    setInterval(async () => {
-      try {
-        await matchmakingService.processQueue();
-      } catch (error) {
-        logger.error('Error processing matchmaking queue:', error);
-      }
-    }, 500); // Process queue every 500ms for faster matching
+    // Simple matchmaking processes queue automatically
     
   } catch (error) {
     logger.error('Failed to start server:', error);
@@ -400,7 +365,7 @@ const gracefulShutdown = async (signal: string) => {
   server.close(async () => {
     try {
       // Clean up WebSocket connections
-      gameHandler.cleanup();
+      gameHandler.destroy();
       
       // Close database connections
       await db.close();

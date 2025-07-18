@@ -1,433 +1,545 @@
-import { io, Socket } from 'socket.io-client';
-import type { GameAction, Vector2, ClassType } from '@dueled/shared';
+/**
+ * NetworkManager - Clean WebSocket event handling for 1v1 arena combat
+ * 
+ * Replaces monolithic MainGameScene network handling with specialized system
+ * Designed for Archer vs Berserker combat with server-authoritative state
+ */
 
-export class NetworkManager extends Phaser.Events.EventEmitter {
-  private socket: Socket | null = null;
-  private scene: Phaser.Scene;
-  private playerId: string = '';
-  private isConnected: boolean = false;
-  private reconnectAttempts: number = 0;
-  private maxReconnectAttempts: number = 5;
-  private reconnectDelay: number = 1000;
-  private lastPingTime: number = 0;
-  private latency: number = 0;
-  private serverUrl: string = 'http://localhost:3000';
-  private messageQueue: any[] = [];
-  private isAuthenticated: boolean = false;
+import { Socket } from 'socket.io-client';
+import type { ClassType } from '@dueled/shared';
 
-  constructor(scene: Phaser.Scene) {
-    super();
-    this.scene = scene;
-  }
+export interface PlayerUpdate {
+  id: string;
+  x: number;
+  y: number;
+  angle: number;
+  classType: ClassType;
+  health: number;
+  armor: number;
+  isAlive: boolean;
+  isMoving: boolean;
+  username?: string;
+}
 
-  public initialize(): void {
-    this.setupConnection();
-    this.setupEventHandlers();
-  }
+export interface ProjectileUpdate {
+  id: string;
+  x: number;
+  y: number;
+  type: string;
+  rotation: number;
+  velocity: { x: number; y: number };
+  ownerId: string;
+  createdAt: number;
+}
 
-  private setupConnection(): void {
-    const token = this.getAuthToken();
-    if (!token) {
-      console.error('No authentication token found');
-      return;
+export interface GameEvent {
+  type: 'damage' | 'death' | 'respawn' | 'ability_used' | 'round_start' | 'round_end';
+  playerId?: string;
+  data?: any;
+  timestamp: number;
+}
+
+export interface MatchData {
+  matchId: string;
+  yourPlayerId: string;
+  players: PlayerUpdate[];
+  roundNumber: number;
+  roundTimeLeft: number;
+  status: 'waiting' | 'in_progress' | 'ended';
+}
+
+export interface NetworkCallbacks {
+  onPlayerUpdate?: (player: PlayerUpdate) => void;
+  onPlayerJoined?: (player: PlayerUpdate) => void;
+  onPlayerLeft?: (playerId: string) => void;
+  onProjectileUpdate?: (projectiles: ProjectileUpdate[]) => void;
+  onProjectileRemoved?: (projectileId: string) => void;
+  onGameEvent?: (event: GameEvent) => void;
+  onMatchUpdate?: (data: MatchData) => void;
+  onMatchEnded?: (data: { winner: string; reason: string }) => void;
+  onConnectionError?: (error: string) => void;
+  onDisconnected?: (reason: string) => void;
+  onReconnected?: () => void;
+}
+
+export interface NetworkStats {
+  connected: boolean;
+  ping: number;
+  packetsReceived: number;
+  packetsSent: number;
+  lastHeartbeat: number;
+  reconnectAttempts: number;
+}
+
+/**
+ * NetworkManager - Simplified WebSocket communication
+ */
+export class NetworkManager {
+  private socket: Socket | null;
+  private callbacks: NetworkCallbacks;
+  
+  private localPlayerId: string = '';
+  private matchId: string = '';
+  private connected: boolean = false;
+  
+  // Network statistics
+  private stats: NetworkStats = {
+    connected: false,
+    ping: 0,
+    packetsReceived: 0,
+    packetsSent: 0,
+    lastHeartbeat: 0,
+    reconnectAttempts: 0
+  };
+  
+  // Throttling for movement updates
+  private lastMovementUpdate: number = 0;
+  private movementUpdateInterval: number = 50; // 20 FPS for movement
+  
+  private lastRotationUpdate: number = 0;
+  private rotationUpdateInterval: number = 100; // 10 FPS for rotation
+  
+  // Event listener cleanup
+  private setupComplete: boolean = false;
+  
+  constructor(socket: Socket | null = null) {
+    this.socket = socket;
+    this.callbacks = {};
+    
+    if (this.socket) {
+      this.setupEventListeners();
     }
-
-    this.socket = io(`${this.serverUrl}/game`, {
-      auth: {
-        token,
-      },
-      autoConnect: true,
-      reconnection: true,
-      reconnectionDelay: this.reconnectDelay,
-      reconnectionAttempts: this.maxReconnectAttempts,
-    });
-
-    this.setupSocketEvents();
+    
+    console.log('NetworkManager initialized');
   }
-
-  private setupSocketEvents(): void {
-    if (!this.socket) return;
-
-    this.socket.on('connect', () => {
-      console.log('Connected to game server');
-      this.isConnected = true;
-      this.reconnectAttempts = 0;
-      this.emit('connected');
-      this.flushMessageQueue();
-    });
-
-    this.socket.on('disconnect', (reason) => {
-      console.log('Disconnected from game server:', reason);
-      this.isConnected = false;
-      this.emit('disconnected', reason);
-    });
-
-    this.socket.on('connect_error', (error) => {
-      console.error('Connection error:', error);
-      this.handleConnectionError(error);
-    });
-
-    this.socket.on('reconnect', (attemptNumber) => {
-      console.log(`Reconnected after ${attemptNumber} attempts`);
-      this.reconnectAttempts = 0;
-      this.emit('reconnected', attemptNumber);
-    });
-
-    this.socket.on('reconnect_error', (error) => {
-      console.error('Reconnection error:', error);
-      this.reconnectAttempts++;
-      if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-        this.emit('reconnection-failed');
-      }
-    });
-
-    // Authentication events
-    this.socket.on('connected', (data) => {
-      console.log('Authentication successful:', data);
-      this.isAuthenticated = true;
-      this.playerId = data.playerId;
-      this.emit('authenticated', data);
-    });
-
-    this.socket.on('authentication_required', (data) => {
-      console.error('Authentication required:', data);
-      this.emit('authentication-required', data);
-    });
-
+  
+  /**
+   * Set socket and setup event listeners
+   */
+  setSocket(socket: Socket): void {
+    if (this.socket && this.setupComplete) {
+      this.removeEventListeners();
+    }
+    
+    this.socket = socket;
+    this.setupEventListeners();
+  }
+  
+  /**
+   * Set network callbacks
+   */
+  setCallbacks(callbacks: NetworkCallbacks): void {
+    this.callbacks = { ...callbacks };
+  }
+  
+  /**
+   * Setup all socket event listeners
+   */
+  private setupEventListeners(): void {
+    if (!this.socket || this.setupComplete) return;
+    
+    // Connection events
+    this.socket.on('connect', () => this.handleConnect());
+    this.socket.on('disconnect', (reason) => this.handleDisconnect(reason));
+    this.socket.on('connect_error', (error) => this.handleConnectionError(error));
+    this.socket.on('reconnect', () => this.handleReconnect());
+    
+    // Player events
+    this.socket.on('player_update', (data) => this.handlePlayerUpdate(data));
+    this.socket.on('player_joined', (data) => this.handlePlayerJoined(data));
+    this.socket.on('player_left', (data) => this.handlePlayerLeft(data));
+    
+    // Projectile events
+    this.socket.on('projectile_update', (data) => this.handleProjectileUpdate(data));
+    this.socket.on('projectile_removed', (data) => this.handleProjectileRemoved(data));
+    
     // Game events
-    this.socket.on('match_found', (data) => {
-      console.log('Match found:', data);
-      this.emit('match-found', data);
-    });
-
-    this.socket.on('match_joined', (data) => {
-      console.log('Match joined:', data);
-      this.emit('match-joined', data);
-    });
-
-    this.socket.on('player_joined', (data) => {
-      console.log('Player joined:', data);
-      this.emit('player-joined', data);
-    });
-
-    this.socket.on('player_left', (data) => {
-      console.log('Player left:', data);
-      this.emit('player-left', data);
-    });
-
-    this.socket.on('player_moved', (data) => {
-      this.emit('player-moved', data);
-    });
-
-    this.socket.on('player_ready', (data) => {
-      console.log('Player ready:', data);
-      this.emit('player-ready', data);
-    });
-
-    this.socket.on('game_start', (data) => {
-      console.log('Game started:', data);
-      this.emit('game-start', data);
-    });
-
-    this.socket.on('game_update', (data) => {
-      this.emit('game-update', data);
-    });
-
-    this.socket.on('action_acknowledged', (data) => {
-      this.emit('action-acknowledged', data);
-    });
-
-    this.socket.on('action_rejected', (data) => {
-      console.warn('Action rejected:', data);
-      this.emit('action-rejected', data);
-    });
-
-    this.socket.on('move_acknowledged', (data) => {
-      this.emit('move-acknowledged', data);
-    });
-
-    this.socket.on('move_rejected', (data) => {
-      console.warn('Move rejected:', data);
-      this.emit('move-rejected', data);
-    });
-
-    // Connection quality events
-    this.socket.on('heartbeat', (data) => {
-      this.handleHeartbeat(data);
-    });
-
-    this.socket.on('latency', (data) => {
-      this.latency = data.latency;
-      this.emit('latency-update', data);
-    });
-
-    // Error events
-    this.socket.on('error', (data) => {
-      console.error('Socket error:', data);
-      this.emit('error', data);
-    });
-
-    // Reconnection events
-    this.socket.on('reconnected', (data) => {
-      console.log('Reconnected to match:', data);
-      this.emit('reconnected-to-match', data);
-    });
-
-    this.socket.on('missed_events', (data) => {
-      console.log('Received missed events:', data);
-      this.emit('missed-events', data);
-    });
+    this.socket.on('game_event', (data) => this.handleGameEvent(data));
+    this.socket.on('match_update', (data) => this.handleMatchUpdate(data));
+    this.socket.on('match_ended', (data) => this.handleMatchEnded(data));
+    this.socket.on('initial_game_state', (data) => this.handleInitialGameState(data));
+    
+    // Network monitoring
+    this.socket.on('pong', (latency) => this.handlePong(latency));
+    
+    this.setupComplete = true;
+    console.log('NetworkManager event listeners setup complete');
   }
-
-  private setupEventHandlers(): void {
-    // Handle authentication required
-    this.on('authentication-required', () => {
-      this.handleAuthenticationRequired();
-    });
-
-    // Handle connection loss
-    this.on('disconnected', (reason) => {
-      this.handleDisconnection(reason);
-    });
-
-    // Handle reconnection
-    this.on('reconnected', () => {
-      this.handleReconnection();
-    });
+  
+  /**
+   * Remove all socket event listeners
+   */
+  private removeEventListeners(): void {
+    if (!this.socket) return;
+    
+    this.socket.off('connect');
+    this.socket.off('disconnect');
+    this.socket.off('connect_error');
+    this.socket.off('reconnect');
+    this.socket.off('player_update');
+    this.socket.off('player_joined');
+    this.socket.off('player_left');
+    this.socket.off('projectile_update');
+    this.socket.off('projectile_removed');
+    this.socket.off('game_event');
+    this.socket.off('match_update');
+    this.socket.off('match_ended');
+    this.socket.off('initial_game_state');
+    this.socket.off('pong');
+    
+    this.setupComplete = false;
+    console.log('NetworkManager event listeners removed');
   }
-
+  
+  /**
+   * Handle connection established
+   */
+  private handleConnect(): void {
+    this.connected = true;
+    this.stats.connected = true;
+    this.stats.reconnectAttempts = 0;
+    this.localPlayerId = this.socket?.id || '';
+    
+    console.log('NetworkManager connected:', this.localPlayerId);
+    
+    if (this.callbacks.onReconnected) {
+      this.callbacks.onReconnected();
+    }
+  }
+  
+  /**
+   * Handle disconnection
+   */
+  private handleDisconnect(reason: string): void {
+    this.connected = false;
+    this.stats.connected = false;
+    
+    console.log('NetworkManager disconnected:', reason);
+    
+    if (this.callbacks.onDisconnected) {
+      this.callbacks.onDisconnected(reason);
+    }
+  }
+  
+  /**
+   * Handle connection error
+   */
   private handleConnectionError(error: any): void {
-    console.error('Connection error:', error);
-    this.emit('connection-error', error);
-  }
-
-  private handleAuthenticationRequired(): void {
-    // Try to re-authenticate
-    const token = this.getAuthToken();
-    if (token && this.socket) {
-      this.socket.auth = { token };
-      this.socket.disconnect();
-      this.socket.connect();
-    } else {
-      this.emit('authentication-failed');
+    console.error('NetworkManager connection error:', error);
+    this.stats.reconnectAttempts++;
+    
+    if (this.callbacks.onConnectionError) {
+      this.callbacks.onConnectionError(error.message || 'Connection failed');
     }
   }
-
-  private handleDisconnection(reason: string): void {
-    this.isConnected = false;
-    this.isAuthenticated = false;
+  
+  /**
+   * Handle reconnection
+   */
+  private handleReconnect(): void {
+    console.log('NetworkManager reconnected');
+    this.stats.reconnectAttempts = 0;
     
-    // Show disconnection message
-    this.emit('connection-lost', reason);
+    if (this.callbacks.onReconnected) {
+      this.callbacks.onReconnected();
+    }
   }
-
-  private handleReconnection(): void {
-    // Flush any queued messages
-    this.flushMessageQueue();
+  
+  /**
+   * Handle player update from server
+   */
+  private handlePlayerUpdate(data: PlayerUpdate): void {
+    this.stats.packetsReceived++;
     
-    // Request state synchronization
-    this.requestStateSync();
+    if (this.callbacks.onPlayerUpdate) {
+      this.callbacks.onPlayerUpdate(data);
+    }
   }
-
-  private handleHeartbeat(data: any): void {
-    // Respond to heartbeat
+  
+  /**
+   * Handle player joined
+   */
+  private handlePlayerJoined(data: PlayerUpdate): void {
+    this.stats.packetsReceived++;
+    
+    if (this.callbacks.onPlayerJoined) {
+      this.callbacks.onPlayerJoined(data);
+    }
+  }
+  
+  /**
+   * Handle player left
+   */
+  private handlePlayerLeft(data: { playerId: string }): void {
+    this.stats.packetsReceived++;
+    
+    if (this.callbacks.onPlayerLeft) {
+      this.callbacks.onPlayerLeft(data.playerId);
+    }
+  }
+  
+  /**
+   * Handle projectile updates
+   */
+  private handleProjectileUpdate(data: ProjectileUpdate[]): void {
+    this.stats.packetsReceived++;
+    
+    if (this.callbacks.onProjectileUpdate) {
+      this.callbacks.onProjectileUpdate(data);
+    }
+  }
+  
+  /**
+   * Handle projectile removed
+   */
+  private handleProjectileRemoved(data: { projectileId: string }): void {
+    this.stats.packetsReceived++;
+    
+    if (this.callbacks.onProjectileRemoved) {
+      this.callbacks.onProjectileRemoved(data.projectileId);
+    }
+  }
+  
+  /**
+   * Handle game events
+   */
+  private handleGameEvent(data: GameEvent): void {
+    this.stats.packetsReceived++;
+    
+    if (this.callbacks.onGameEvent) {
+      this.callbacks.onGameEvent(data);
+    }
+  }
+  
+  /**
+   * Handle match updates
+   */
+  private handleMatchUpdate(data: MatchData): void {
+    this.stats.packetsReceived++;
+    this.matchId = data.matchId;
+    this.localPlayerId = data.yourPlayerId;
+    
+    if (this.callbacks.onMatchUpdate) {
+      this.callbacks.onMatchUpdate(data);
+    }
+  }
+  
+  /**
+   * Handle match ended
+   */
+  private handleMatchEnded(data: { winner: string; reason: string }): void {
+    this.stats.packetsReceived++;
+    
+    if (this.callbacks.onMatchEnded) {
+      this.callbacks.onMatchEnded(data);
+    }
+  }
+  
+  /**
+   * Handle initial game state
+   */
+  private handleInitialGameState(data: MatchData): void {
+    this.stats.packetsReceived++;
+    this.matchId = data.matchId;
+    this.localPlayerId = data.yourPlayerId;
+    
+    console.log('NetworkManager received initial game state:', {
+      matchId: data.matchId,
+      yourPlayerId: data.yourPlayerId,
+      players: data.players.length
+    });
+    
+    if (this.callbacks.onMatchUpdate) {
+      this.callbacks.onMatchUpdate(data);
+    }
+  }
+  
+  /**
+   * Handle pong response for latency measurement
+   */
+  private handlePong(latency: number): void {
+    this.stats.ping = latency;
+    this.stats.lastHeartbeat = Date.now();
+  }
+  
+  /**
+   * Send movement update to server (throttled)
+   */
+  sendMovementUpdate(x: number, y: number, classType: ClassType): void {
+    if (!this.connected || !this.socket) return;
+    
+    const now = Date.now();
+    if (now - this.lastMovementUpdate < this.movementUpdateInterval) return;
+    
+    this.socket.emit('player_move', {
+      x,
+      y,
+      classType,
+      timestamp: now
+    });
+    
+    this.stats.packetsSent++;
+    this.lastMovementUpdate = now;
+  }
+  
+  /**
+   * Send rotation update to server (throttled)
+   */
+  sendRotationUpdate(angle: number): void {
+    if (!this.connected || !this.socket) return;
+    
+    const now = Date.now();
+    if (now - this.lastRotationUpdate < this.rotationUpdateInterval) return;
+    
+    this.socket.emit('player_rotate', {
+      angle,
+      timestamp: now
+    });
+    
+    this.stats.packetsSent++;
+    this.lastRotationUpdate = now;
+  }
+  
+  /**
+   * Send primary attack
+   */
+  sendPrimaryAttack(): void {
+    if (!this.connected || !this.socket) return;
+    
+    this.socket.emit('primary_attack', {
+      timestamp: Date.now()
+    });
+    
+    this.stats.packetsSent++;
+  }
+  
+  /**
+   * Send special ability
+   */
+  sendSpecialAbility(): void {
+    if (!this.connected || !this.socket) return;
+    
+    this.socket.emit('special_ability', {
+      timestamp: Date.now()
+    });
+    
+    this.stats.packetsSent++;
+  }
+  
+  /**
+   * Send dash action
+   */
+  sendDash(direction: { x: number; y: number }): void {
+    if (!this.connected || !this.socket) return;
+    
+    this.socket.emit('dash', {
+      direction,
+      timestamp: Date.now()
+    });
+    
+    this.stats.packetsSent++;
+  }
+  
+  /**
+   * Send ready signal
+   */
+  sendReady(): void {
+    if (!this.connected || !this.socket) return;
+    
+    this.socket.emit('player_ready', {
+      timestamp: Date.now()
+    });
+    
+    this.stats.packetsSent++;
+  }
+  
+  /**
+   * Leave match
+   */
+  leaveMatch(): void {
+    if (!this.connected || !this.socket) return;
+    
+    this.socket.emit('leave_match', {
+      matchId: this.matchId,
+      timestamp: Date.now()
+    });
+    
+    this.stats.packetsSent++;
+  }
+  
+  /**
+   * Get local player ID
+   */
+  getLocalPlayerId(): string {
+    return this.localPlayerId;
+  }
+  
+  /**
+   * Get match ID
+   */
+  getMatchId(): string {
+    return this.matchId;
+  }
+  
+  /**
+   * Get connection status
+   */
+  isConnected(): boolean {
+    return this.connected && this.socket?.connected === true;
+  }
+  
+  /**
+   * Get network statistics
+   */
+  getStats(): NetworkStats {
+    return { ...this.stats };
+  }
+  
+  /**
+   * Update throttling settings
+   */
+  updateThrottling(movementInterval: number, rotationInterval: number): void {
+    this.movementUpdateInterval = movementInterval;
+    this.rotationUpdateInterval = rotationInterval;
+  }
+  
+  /**
+   * Reset statistics
+   */
+  resetStats(): void {
+    this.stats = {
+      connected: this.connected,
+      ping: 0,
+      packetsReceived: 0,
+      packetsSent: 0,
+      lastHeartbeat: 0,
+      reconnectAttempts: 0
+    };
+  }
+  
+  /**
+   * Disconnect and clean up
+   */
+  disconnect(): void {
     if (this.socket) {
-      this.socket.emit('heartbeat_response', {
-        timestamp: data.timestamp,
-        clientTime: Date.now(),
-      });
-    }
-  }
-
-  private getAuthToken(): string | null {
-    // First try localStorage (primary source)
-    const localToken = localStorage.getItem('authToken');
-    if (localToken) {
-      return localToken;
-    }
-    
-    // Try to get from Zustand store if available
-    try {
-      const storeData = localStorage.getItem('dueled-auth');
-      if (storeData) {
-        const parsed = JSON.parse(storeData);
-        if (parsed.state && parsed.state.token) {
-          return parsed.state.token;
-        }
-      }
-    } catch (error) {
-      console.warn('Failed to parse auth store data:', error);
-    }
-    
-    return null;
-  }
-
-  private flushMessageQueue(): void {
-    while (this.messageQueue.length > 0) {
-      const message = this.messageQueue.shift();
-      if (this.socket && this.isConnected) {
-        this.socket.emit(message.event, message.data);
-      }
-    }
-  }
-
-  private queueMessage(event: string, data: any): void {
-    if (this.messageQueue.length < 100) { // Limit queue size
-      this.messageQueue.push({ event, data });
-    }
-  }
-
-  private requestStateSync(): void {
-    if (this.socket && this.isConnected) {
-      this.socket.emit('request_state_sync');
-    }
-  }
-
-  // Public methods
-  public joinQueue(classType: ClassType): void {
-    if (this.socket && this.isConnected) {
-      this.socket.emit('join_queue', { classType });
-    } else {
-      this.queueMessage('join_queue', { classType });
-    }
-  }
-
-  public leaveQueue(): void {
-    if (this.socket && this.isConnected) {
-      this.socket.emit('leave_queue');
-    } else {
-      this.queueMessage('leave_queue', {});
-    }
-  }
-
-  public getQueueStatus(): void {
-    if (this.socket && this.isConnected) {
-      this.socket.emit('queue_status');
-    } else {
-      this.queueMessage('queue_status', {});
-    }
-  }
-
-  public joinMatch(matchId: string, classType: ClassType): void {
-    if (this.socket && this.isConnected) {
-      this.socket.emit('join_match', { matchId, classType });
-    } else {
-      this.queueMessage('join_match', { matchId, classType });
-    }
-  }
-
-  public leaveMatch(matchId: string): void {
-    if (this.socket && this.isConnected) {
-      this.socket.emit('leave_match', { matchId });
-    } else {
-      this.queueMessage('leave_match', { matchId });
-    }
-  }
-
-  public sendGameReady(matchId: string): void {
-    if (this.socket && this.isConnected) {
-      this.socket.emit('game_ready', { matchId });
-    } else {
-      this.queueMessage('game_ready', { matchId });
-    }
-  }
-
-  public sendPlayerAction(action: GameAction): void {
-    if (this.socket && this.isConnected) {
-      this.socket.emit('player_action', {
-        ...action,
-        timestamp: Date.now(),
-      });
-    } else {
-      this.queueMessage('player_action', {
-        ...action,
-        timestamp: Date.now(),
-      });
-    }
-  }
-
-  public sendPlayerMove(position: Vector2, velocity: Vector2, rotation?: number, important: boolean = false): void {
-    if (this.socket && this.isConnected) {
-      this.socket.emit('player_move', {
-        position,
-        velocity,
-        rotation,
-        important,
-        timestamp: Date.now(),
-      });
-    } else if (important) {
-      // Only queue important moves
-      this.queueMessage('player_move', {
-        position,
-        velocity,
-        rotation,
-        important,
-        timestamp: Date.now(),
-      });
-    }
-  }
-
-  public sendChatMessage(message: string, type: 'all' | 'team' = 'all'): void {
-    if (this.socket && this.isConnected) {
-      this.socket.emit('chat_message', {
-        message,
-        type,
-        timestamp: Date.now(),
-      });
-    } else {
-      this.queueMessage('chat_message', {
-        message,
-        type,
-        timestamp: Date.now(),
-      });
-    }
-  }
-
-  public ping(): void {
-    if (this.socket && this.isConnected) {
-      this.lastPingTime = Date.now();
-      this.socket.emit('ping', { timestamp: this.lastPingTime });
-    }
-  }
-
-  // Getters
-  public isConnectedToServer(): boolean {
-    return this.isConnected;
-  }
-
-  public isUserAuthenticated(): boolean {
-    return this.isAuthenticated;
-  }
-
-  public getPlayerId(): string {
-    return this.playerId;
-  }
-
-  public getLatency(): number {
-    return this.latency;
-  }
-
-  public getConnectionStatus(): string {
-    if (!this.socket) return 'disconnected';
-    if (this.isConnected && this.isAuthenticated) return 'connected';
-    if (this.isConnected) return 'authenticating';
-    return 'connecting';
-  }
-
-  // Cleanup
-  public disconnect(): void {
-    if (this.socket) {
+      this.removeEventListeners();
       this.socket.disconnect();
-      this.socket = null;
     }
-    this.isConnected = false;
-    this.isAuthenticated = false;
-    this.playerId = '';
-    this.messageQueue = [];
+    
+    this.connected = false;
+    this.stats.connected = false;
+    this.localPlayerId = '';
+    this.matchId = '';
+    
+    console.log('NetworkManager disconnected');
   }
-
-  public destroy(): void {
+  
+  /**
+   * Clean up resources
+   */
+  destroy(): void {
     this.disconnect();
-    this.removeAllListeners();
+    this.callbacks = {};
+    console.log('NetworkManager destroyed');
   }
 }
