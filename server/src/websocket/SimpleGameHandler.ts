@@ -168,22 +168,21 @@ export class SimpleGameHandler {
     try {
       playerSocket.classType = data.classType;
       
-      const result = await this.simpleMatchmaking.addToQueue(playerId, data.classType);
+      await this.simpleMatchmaking.joinQueue({
+        playerId,
+        username: playerSocket.username || `Player_${playerId}`,
+        rating: 1000, // Default rating for now
+        classType: data.classType,
+        queuedAt: Date.now()
+      });
       
-      if (result.success) {
-        socket.emit('queue_joined', { 
+      socket.emit('queue_joined', { 
           message: 'Added to queue',
           classType: data.classType,
-          estimatedWait: result.estimatedWait 
+          estimatedWait: 30 // Simple estimated wait time
         });
         
-        // Check for immediate match
-        if (result.matchFound) {
-          this.handleMatchFound(result.matchId!, result.players!);
-        }
-      } else {
-        socket.emit('queue_error', { message: result.error });
-      }
+        logger.info(`Player ${playerId} joined queue with class ${data.classType}`);
       
     } catch (error) {
       logger.error(`Error joining queue for player ${playerId}:`, error);
@@ -199,7 +198,7 @@ export class SimpleGameHandler {
     if (!playerId) return;
     
     try {
-      await this.simpleMatchmaking.removeFromQueue(playerId);
+      await this.simpleMatchmaking.leaveQueue(playerId);
       socket.emit('queue_left', { message: 'Left queue' });
       
     } catch (error) {
@@ -230,18 +229,9 @@ export class SimpleGameHandler {
     if (!playerId) return;
     
     try {
-      const result = await this.simpleMatchmaking.acceptMatch(data.matchId, playerId);
-      
-      if (result.success) {
-        socket.emit('match_accepted', { matchId: data.matchId });
-        
-        if (result.allAccepted) {
-          // Start the match
-          this.startMatch(data.matchId, result.players!);
-        }
-      } else {
-        socket.emit('match_error', { message: result.error });
-      }
+      // Simple matchmaking auto-accepts matches, no manual acceptance needed
+      logger.info(`Player ${playerId} acknowledged match ${data.matchId}`);
+      socket.emit('match_accepted', { matchId: data.matchId });
       
     } catch (error) {
       logger.error(`Error accepting match for player ${playerId}:`, error);
@@ -435,7 +425,7 @@ export class SimpleGameHandler {
       
       // Clean up
       await this.simpleConnectionManager.removeConnection(playerId);
-      await this.simpleMatchmaking.removeFromQueue(playerId);
+      await this.simpleMatchmaking.leaveQueue(playerId);
       this.removePlayerSocket(playerId);
       
       logger.info(`Player ${playerId} disconnected: ${reason}`);
