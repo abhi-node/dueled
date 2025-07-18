@@ -11,6 +11,7 @@ import { MainNetworkManager } from '../network/MainNetworkManager.js';
 import { TextureManager } from '../renderer/TextureManager.js';
 import { CombatManager } from '../combat/CombatManager.js';
 import { ArcherCombat } from '../combat/ArcherCombat.js';
+import { BerserkerCombat } from '../combat/BerserkerCombat.js';
 import { Projectile } from '../combat/Projectile.js';
 import type { Vector2, ClassType, ClassConfig } from '@dueled/shared';
 import { getClassConfig, calculateDashCooldown, ClassType as CT } from '@dueled/shared';
@@ -28,6 +29,7 @@ export class MainGameScene {
   // Combat system
   private combatManager: CombatManager;
   private archerCombat: ArcherCombat;
+  private berserkerCombat: BerserkerCombat;
   
   // Direct projectile management for rendering (bypasses CombatManager)
   private renderProjectiles: Map<string, {
@@ -194,6 +196,7 @@ export class MainGameScene {
     // Initialize combat systems
     this.combatManager = new CombatManager();
     this.archerCombat = new ArcherCombat(this.combatManager);
+    this.berserkerCombat = new BerserkerCombat(this.combatManager);
     
     // Create UI elements
     this.createUI(container);
@@ -356,6 +359,40 @@ export class MainGameScene {
           font-weight: bold;
           text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
         ">${current}/${max}</div>
+      </div>
+    `;
+  }
+
+  /**
+   * Create active ability bar (for rage mode etc)
+   */
+  private createActiveAbilityBar(label: string, color: string): string {
+    const barWidth = 150;
+    
+    return `
+      <div style="
+        width: ${barWidth}px;
+        height: 14px;
+        background-color: ${color};
+        border: 2px solid #ffffff;
+        border-radius: 6px;
+        overflow: hidden;
+        position: relative;
+        margin: 2px 0;
+        box-shadow: 0 0 10px ${color};
+        animation: pulse 1s infinite;
+      ">
+        <div style="
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          font-size: 8px;
+          font-weight: bold;
+          color: #ffffff;
+          text-shadow: 0 0 3px rgba(0,0,0,0.5);
+          white-space: nowrap;
+        ">${label}</div>
       </div>
     `;
   }
@@ -790,8 +827,66 @@ export class MainGameScene {
           attackType: 'basic'
         });
       }
+    } else if (this.localPlayerClass === CT.BERSERKER) {
+      // Berserker basic attack
+      const playerState = this.raycaster.getPlayerState();
+      const range = getClassConfig(CT.BERSERKER).weapon.range;
+      
+      // Validate player state
+      if (!playerState || typeof playerState.angle !== 'number' || Number.isNaN(playerState.angle)) {
+        console.error('🚨 Invalid player angle, cannot attack:', { playerState, angle: playerState?.angle });
+        this.showNotification('Attack failed - invalid camera angle', 'warning');
+        return;
+      }
+      
+      const targetPosition = {
+        x: playerState.x + Math.cos(playerState.angle) * range,
+        y: playerState.y + Math.sin(playerState.angle) * range
+      };
+      
+      // Use the BerserkerCombat system which has proper cooldown handling
+      const success = this.berserkerCombat.tryBasicAttack(this.localPlayerId, targetPosition);
+      
+      if (!success) {
+        const cooldowns = this.berserkerCombat.getCooldowns(this.localPlayerId);
+        if (cooldowns.basic > 0) {
+          this.showNotification(`Attack cooling down: ${cooldowns.basic.toFixed(1)}s`, 'warning');
+        }
+        return;
+      }
+      
+      // If BerserkerCombat succeeded, send to server
+      const direction = {
+        x: Math.cos(playerState.angle),
+        y: Math.sin(playerState.angle)
+      };
+      
+      // Validate direction
+      if (Number.isNaN(direction.x) || Number.isNaN(direction.y)) {
+        console.error('🚨 Invalid direction calculated, cannot attack:', { direction, angle: playerState.angle });
+        this.showNotification('Attack failed - invalid direction', 'warning');
+        return;
+      }
+      
+      console.log(`📤 [BERSERKER] Sending attack to server:`, {
+        playerId: this.localPlayerId,
+        playerClass: this.localPlayerClass,
+        position: { x: playerState.x, y: playerState.y },
+        direction,
+        targetPosition,
+        attackType: 'basic'
+      });
+      
+      // Send attack to server for authoritative processing  
+      if (this.networkManager.isConnectedToServer()) {
+        this.networkManager.sendAttack({
+          direction: direction,
+          targetPosition: targetPosition,
+          attackType: 'basic'
+        });
+      }
     }
-    // TODO: Add other class basic attacks
+    // TODO: Add other class basic attacks (mage, bomber)
   }
 
   /**
@@ -848,8 +943,22 @@ export class MainGameScene {
           }
         }, archerState.specialAttackCooldown * 1000);
       }
+    } else if (this.localPlayerClass === CT.BERSERKER) {
+      // Berserker rage mode is passive and activates automatically at <50% health
+      const berserkerState = this.berserkerCombat.getBerserkerState(this.localPlayerId);
+      if (!berserkerState) return;
+      
+      if (berserkerState.rageMode) {
+        this.showNotification('Rage Mode already active!', 'info');
+      } else if (berserkerState.health / berserkerState.maxHealth >= 0.5) {
+        this.showNotification('Rage Mode activates automatically when health drops below 50%', 'info');
+      } else {
+        this.showNotification('Rage Mode is ready to activate!', 'info');
+      }
+      
+      // No need to send to server - rage mode is handled automatically
     }
-    // TODO: Add other class special abilities
+    // TODO: Add other class special abilities (mage, bomber)
   }
   
   /**
@@ -1101,6 +1210,14 @@ export class MainGameScene {
       const cooldowns = this.archerCombat.getCooldowns(this.localPlayerId);
       basicAttackRemaining = cooldowns.basic;
       specialAbilityRemaining = cooldowns.special;
+    } else if (this.localPlayerClass === CT.BERSERKER && this.localPlayerId) {
+      const cooldowns = this.berserkerCombat.getCooldowns(this.localPlayerId);
+      basicAttackRemaining = cooldowns.basic;
+      // Berserker rage mode is passive, no special cooldown to display
+      const berserkerState = this.berserkerCombat.getBerserkerState(this.localPlayerId);
+      if (berserkerState && berserkerState.rageMode) {
+        specialAbilityRemaining = -1; // Signal that rage mode is active
+      }
     }
     
     // Update enhanced player stats
@@ -1123,7 +1240,10 @@ export class MainGameScene {
         <div style="font-size: 12px; color: #34d399; margin-bottom: 2px;">Abilities</div>
         ${this.createCooldownBar(dashRemainingTime, this.dashCooldownTime, 'Dash (Q/E)', '#10b981')}
         ${this.createCooldownBar(basicAttackRemaining, this.classConfig.weapon.attackSpeed ? 1.0 / this.classConfig.weapon.attackSpeed : 1.0, 'Attack (LMB)', '#f59e0b')}
-        ${this.createCooldownBar(specialAbilityRemaining, this.specialCooldownTime, this.classConfig.specialAbility.name.substring(0, 8), '#8b5cf6')}
+        ${this.localPlayerClass === CT.BERSERKER && specialAbilityRemaining === -1 
+          ? this.createActiveAbilityBar('RAGE MODE ACTIVE', '#dc143c')
+          : this.createCooldownBar(specialAbilityRemaining, this.specialCooldownTime, this.classConfig.specialAbility.name.substring(0, 8), '#8b5cf6')
+        }
       </div>
     `;
   }
@@ -1464,6 +1584,10 @@ export class MainGameScene {
       console.log(`🏹 Registering archer ${this.localPlayerId} at position:`, position, 'angle:', playerState.angle);
       this.archerCombat.registerArcher(this.localPlayerId, position, playerState.angle);
       console.log(`🏹 Archer combat initialized for ${this.localPlayerId}`);
+    } else if (this.localPlayerClass === CT.BERSERKER) {
+      console.log(`⚔️ Registering berserker ${this.localPlayerId} at position:`, position, 'angle:', playerState.angle);
+      this.berserkerCombat.initializeBerserker(this.localPlayerId, position, playerState.angle);
+      console.log(`⚔️ Berserker combat initialized for ${this.localPlayerId}`);
     }
     
     console.log(`⚔️ Combat system initialized for ${this.classConfig.name}`);
@@ -1484,6 +1608,11 @@ export class MainGameScene {
     // Update class-specific combat
     if (this.localPlayerClass === CT.ARCHER) {
       this.archerCombat.updateArcherPosition(this.localPlayerId, position, playerState.angle);
+    } else if (this.localPlayerClass === CT.BERSERKER) {
+      // Get current health to check for rage mode activation
+      const playerSprite = this.renderSprites.get(this.localPlayerId);
+      const health = playerSprite?.health || this.classConfig.health;
+      this.berserkerCombat.updateBerserker(this.localPlayerId, position, playerState.angle, health);
     }
   }
   

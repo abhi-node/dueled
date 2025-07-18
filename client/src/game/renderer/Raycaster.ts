@@ -404,6 +404,9 @@ export class Raycaster {
       case 'fire_bomb':
         this.renderFireBombProjectile(renderSize, projectile.color);
         break;
+      case 'slash':
+        this.renderSlashProjectile(renderSize, projectile.color);
+        break;
       default:
         this.renderDefaultProjectile(renderSize, projectile.color);
     }
@@ -567,6 +570,56 @@ export class Raycaster {
         this.ctx.arc(x, y, bombRadius * 0.3, 0, Math.PI * 2);
         this.ctx.fill();
       }
+      this.ctx.globalAlpha = 1;
+    }
+  }
+
+  /**
+   * Render a slash wave projectile
+   */
+  private renderSlashProjectile(size: number, color?: string): void {
+    // Get sprite frame from projectile sprite manager
+    const frame = projectileSpriteManager.getProjectileFrame('slash', Date.now());
+    
+    if (frame && frame.canvas) {
+      // Render sprite - scale horizontally for wide effect
+      this.ctx.save();
+      this.ctx.scale(2.0, 1.0); // Make it twice as wide
+      this.ctx.drawImage(
+        frame.canvas,
+        -size / 2,
+        -size / 2,
+        size,
+        size
+      );
+      this.ctx.restore();
+    } else {
+      // Fallback - glowing energy wave
+      const waveWidth = size * 2;
+      const waveHeight = size * 0.6;
+      
+      // Create gradient for energy wave effect
+      const gradient = this.ctx.createLinearGradient(-waveWidth/2, 0, waveWidth/2, 0);
+      gradient.addColorStop(0, 'rgba(220, 20, 60, 0.6)');
+      gradient.addColorStop(0.5, '#DC143C');
+      gradient.addColorStop(1, 'rgba(220, 20, 60, 0.6)');
+      
+      this.ctx.fillStyle = gradient;
+      this.ctx.strokeStyle = '#8B0000';
+      this.ctx.lineWidth = 2;
+      
+      // Wave shape
+      this.ctx.beginPath();
+      this.ctx.ellipse(0, 0, waveWidth/2, waveHeight/2, 0, 0, Math.PI * 2);
+      this.ctx.fill();
+      this.ctx.stroke();
+      
+      // Inner energy glow
+      this.ctx.globalAlpha = 0.8;
+      this.ctx.fillStyle = '#FF6347';
+      this.ctx.beginPath();
+      this.ctx.ellipse(0, 0, waveWidth/3, waveHeight/3, 0, 0, Math.PI * 2);
+      this.ctx.fill();
       this.ctx.globalAlpha = 1;
     }
   }

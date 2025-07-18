@@ -38,7 +38,7 @@ export interface AttackData {
   attackerId: string;
   targetPosition: Vector2;
   classType: ClassType;
-  attackType: 'basic' | 'special';
+  attackType?: 'basic' | 'special';
   timestamp: number;
 }
 
@@ -51,6 +51,36 @@ export class CombatManager {
   private static readonly PLAYER_RADIUS = 0.5; // tiles
   private static readonly TILE_SIZE = 32; // pixels per tile
   
+  /**
+   * Handle attack routing based on class type
+   */
+  public handleAttack(attackData: AttackData): Projectile | null | boolean {
+    const attackType = attackData.attackType || 'basic';
+    
+    switch (attackData.classType) {
+      case 'archer':
+        if (attackType === 'basic') {
+          return this.archerBasicAttack(attackData);
+        } else if (attackType === 'special') {
+          return this.archerSpecialAttack(attackData);
+        }
+        break;
+      case 'berserker':
+        if (attackType === 'basic') {
+          return this.berserkerBasicAttack(attackData);
+        } else if (attackType === 'special') {
+          return this.berserkerSpecialAbility(attackData);
+        }
+        break;
+      // Add other classes here (mage, bomber)
+      default:
+        console.warn(`Unhandled class type: ${attackData.classType}`);
+        return null;
+    }
+    
+    return null;
+  }
+
   /**
    * Register a player for combat tracking
    */
@@ -263,6 +293,93 @@ export class CombatManager {
     
     
     return projectile;
+  }
+
+  /**
+   * Handle berserker basic attack (slash wave projectile)
+   */
+  public berserkerBasicAttack(attackData: AttackData): Projectile | null {
+    const attacker = this.playerHitboxes.get(attackData.attackerId);
+    if (!attacker || !attacker.isAlive) {
+      return null;
+    }
+    
+    const classConfig = getClassConfig(attackData.classType);
+    const weapon = classConfig.weapon;
+    
+    // Calculate attack direction
+    const dx = attackData.targetPosition.x - attacker.position.x;
+    const dy = attackData.targetPosition.y - attacker.position.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    
+    if (distance === 0) return null;
+    
+    // Normalize direction and set projectile speed
+    const direction = { x: dx / distance, y: dy / distance };
+    const projectileSpeed = 0.8; // Slower than arrows for visual impact
+    
+    // Get berserker state to check for rage mode
+    let damageMultiplier = 1.0;
+    const berserkerHitbox = this.playerHitboxes.get(attackData.attackerId);
+    if (berserkerHitbox && berserkerHitbox.health / berserkerHitbox.maxHealth < 0.5) {
+      damageMultiplier = 1.1; // 10% damage boost when below 50% health
+    }
+    
+    // Calculate damage with rage mode multiplier
+    const baseDamage = calculateEffectiveDamage(weapon.damage, 90); // Berserker strength
+    const finalDamage = baseDamage * damageMultiplier;
+    
+    // Create slash wave projectile configuration
+    const projectileConfig: ProjectileConfig = {
+      id: `slash_wave_${++this.lastProjectileId}`,
+      type: 'slash' as any, // Using slash type for the slash_sheet.png
+      damage: finalDamage,
+      speed: 0.8,
+      range: weapon.range, // 2.5 tiles as specified
+      size: { width: 2.0, height: 1.0 }, // Very wide projectile
+      piercing: true, // Can hit multiple enemies
+      homing: false,
+      armorPenetration: 0, // No inherent armor pen
+      effects: weapon.effects,
+      spriteSheet: {
+        path: '/assets/projectiles/slash_sheet.png',
+        frameWidth: 48,
+        frameHeight: 48,
+        totalFrames: 16
+      }
+    };
+    
+    // Create projectile state
+    const projectileState: ProjectileState = {
+      id: projectileConfig.id,
+      position: { 
+        x: attacker.position.x + direction.x * CombatManager.PLAYER_RADIUS, 
+        y: attacker.position.y + direction.y * CombatManager.PLAYER_RADIUS 
+      },
+      velocity: { x: direction.x * projectileSpeed, y: direction.y * projectileSpeed },
+      rotation: Math.atan2(direction.y, direction.x),
+      distanceTraveled: 0,
+      isActive: true,
+      ownerId: attackData.attackerId,
+      createdAt: attackData.timestamp,
+      lastUpdate: attackData.timestamp
+    };
+    
+    // Create and register projectile
+    const projectile = new Projectile(projectileConfig, projectileState);
+    this.projectiles.set(projectileConfig.id, projectile);
+    
+    return projectile;
+  }
+
+  /**
+   * Handle berserker special ability (Rage Mode - passive, no projectile)
+   */
+  public berserkerSpecialAbility(attackData: AttackData): boolean {
+    // Rage mode is handled automatically in BerserkerCombat when health drops below 50%
+    // This method exists for consistency but doesn't create a projectile
+    console.log(`Berserker ${attackData.attackerId} rage mode is passive - activates automatically at <50% health`);
+    return true;
   }
 
   /**

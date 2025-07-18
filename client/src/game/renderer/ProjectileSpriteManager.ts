@@ -40,7 +40,8 @@ export class ProjectileSpriteManager extends BaseSpriteManager {
       { type: 'arrow', path: '/assets/projectiles/arrow_sheet.png', frames: 16 },
       { type: 'ice_shard', path: '/assets/projectiles/ice_shard_sheet.png', frames: 16 },
       { type: 'fire_bomb', path: '/assets/projectiles/fire_bomb_sheet.png', frames: 16 },
-      { type: 'magic_missile', path: '/assets/projectiles/magic_missile_sheet.png', frames: 16 }
+      { type: 'magic_missile', path: '/assets/projectiles/magic_missile_sheet.png', frames: 16 },
+      { type: 'slash', path: '/assets/projectiles/slash_sheet.png', frames: 16 }
     ];
     
     const loadPromises: Promise<void>[] = [];
@@ -122,7 +123,8 @@ export class ProjectileSpriteManager extends BaseSpriteManager {
       arrow: '#8B4513',      // Brown
       ice_shard: '#00FFFF',  // Cyan
       fire_bomb: '#FF4500',  // Orange Red
-      magic_missile: '#9370DB' // Medium Purple
+      magic_missile: '#9370DB', // Medium Purple
+      slash: '#DC143C'       // Crimson Red for Berserker
     };
     
     const color = colors[type] || '#FFFFFF';
