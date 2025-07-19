@@ -1,5 +1,5 @@
 import axios, { AxiosError } from 'axios';
-import type { AuthRequest, AuthResponse, Player } from '@dueled/shared';
+import type { AuthResponse, Player } from '@dueled/shared';
 
 // Configure axios instance for API calls
 const api = axios.create({

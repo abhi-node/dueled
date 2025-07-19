@@ -3,15 +3,15 @@ import { useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../store/authStore';
 import { io, Socket } from 'socket.io-client';
-import { MatchFoundNotification } from '../common/MatchFoundNotification';
+// Removed MatchFoundNotification import - now handled by socket events
 import type { ClassType } from '@dueled/shared';
 
 export function MainMenu() {
   const [isInQueue, setIsInQueue] = useState(false);
-  // Only allow selection of available classes (berserker or archer)
-  const [selectedClass, setSelectedClass] = useState<ClassType>('berserker' as ClassType);
+  // Only allow selection of available classes (archer only for now)
+  const [selectedClass, setSelectedClass] = useState<ClassType>('archer' as ClassType);
   // Keep the latest class in a ref so socket callbacks always use the up-to-date value
-  const selectedClassRef = useRef<ClassType>('berserker' as ClassType);
+  const selectedClassRef = useRef<ClassType>('archer' as ClassType);
   const [queueStatus, setQueueStatus] = useState<{
     inQueue: boolean;
     estimatedWait: number;
@@ -275,28 +275,6 @@ export function MainMenu() {
 
   return (
     <div className="flex flex-col items-center justify-center min-h-[80vh]">
-      {/* Debug test button */}
-      <button 
-        onClick={() => {
-          console.log('🔴 TEST BUTTON CLICKED!');
-          alert('Button clicked successfully!');
-        }}
-        style={{
-          position: 'fixed' as 'fixed',
-          top: '10px',
-          left: '10px',
-          padding: '10px 20px',
-          backgroundColor: 'red',
-          color: 'white',
-          border: 'none',
-          borderRadius: '5px',
-          cursor: 'pointer',
-          zIndex: 9999
-        }}
-      >
-        TEST CLICK
-      </button>
-      
       <div className="text-center mb-12">
         <h1 className="text-6xl font-bold text-dueled-500 mb-4 text-shadow font-game">
           DUELED
@@ -418,7 +396,7 @@ export function MainMenu() {
         <h3 className="text-xl font-bold text-arena-300 mb-4">Choose Your Class</h3>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-4xl">
           {[
-            { name: 'Berserker', icon: '⚔️', color: 'text-red-500', type: 'berserker' as ClassType, available: true },
+            { name: 'Berserker', icon: '⚔️', color: 'text-red-500', type: 'berserker' as ClassType, available: false },
             { name: 'Mage', icon: '🧙', color: 'text-blue-500', type: 'mage' as ClassType, available: false },
             { name: 'Bomber', icon: '💣', color: 'text-orange-500', type: 'bomber' as ClassType, available: false },
             { name: 'Archer', icon: '🏹', color: 'text-green-500', type: 'archer' as ClassType, available: true },

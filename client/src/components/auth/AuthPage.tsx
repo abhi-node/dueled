@@ -338,19 +338,6 @@ export function AuthPage() {
           >
             {mode === 'login' ? 'Login' : 'Register'}
           </LoadingButton>
-          
-          {/* Debug info for development */}
-          {process.env.NODE_ENV === 'development' && (
-            <div className="mt-2 p-2 bg-gray-800 text-xs">
-              <div>Form Valid: {isFormValid ? 'Yes' : 'No'}</div>
-              {Object.entries(formValidation).map(([field, validation]) => (
-                <div key={field}>
-                  {field}: {validation.isValid ? '✓' : '✗'} 
-                  {validation.error && ` (${validation.error})`}
-                </div>
-              ))}
-            </div>
-          )}
         </form>
 
         <div className="mt-6 space-y-4">

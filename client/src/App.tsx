@@ -10,8 +10,8 @@ import { ProtectedRoute } from './components/common/ProtectedRoute';
 import { ToastContainer } from './components/common/Toast';
 import { useAuthStore } from './store/authStore';
 import { setupTokenRefresh } from './store/authStore';
-import { AuthDebug } from './components/debug/AuthDebug';
-import { ErrorBoundary } from './components/debug/ErrorBoundary';
+// Removed AuthDebug import
+// Removed ErrorBoundary import
 
 function App() {
   const { initializeAuth } = useAuthStore();
@@ -31,8 +31,7 @@ function App() {
   }, [initializeAuth]);
 
   return (
-    <ErrorBoundary>
-      <Router>
+    <Router>
         <div className="min-h-screen bg-arena-900">
           <Navbar />
           <main className="container mx-auto px-4 py-8">
@@ -99,12 +98,8 @@ function App() {
         
         {/* Global toast notifications */}
         <ToastContainer />
-        
-        {/* Debug component - remove in production */}
-        <AuthDebug />
       </div>
     </Router>
-    </ErrorBoundary>
   );
 }
 

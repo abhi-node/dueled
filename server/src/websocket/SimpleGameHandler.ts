@@ -1,8 +1,7 @@
 /**
- * SimpleGameHandler - Clean WebSocket management for 1v1 arena combat
+ * SimpleGameHandler - Clean WebSocket management for matchmaking handoff
  * 
- * Replaces complex GameHandler with simplified socket handling
- * Only includes essential events for Archer vs Berserker combat
+ * Simplified to preserve authentication and matchmaking while removing game logic
  */
 
 import { Server, Socket } from 'socket.io';
@@ -10,9 +9,10 @@ import { logger } from '../utils/logger.js';
 import { SimpleMatchmaking, MatchPair } from '../services/matchmaking/SimpleMatchmaking.js';
 import { SimpleConnectionManager } from '../services/connection/SimpleConnectionManager.js';
 import { SimpleAuth } from '../services/auth/SimpleAuth.js';
-import { SimpleGameState } from '../services/game/SimpleGameState.js';
-import { RoundSystem, RoundCallbacks } from '../game/arena/RoundSystem.js';
 import { verifyToken } from '../utils/jwt.js';
+import { MatchManager, type MatchManagerCallbacks } from '../game/match/MatchManager.js';
+import { createArenaMap } from '../game/maps/ArenaMap.js';
+import { GAME_CONSTANTS } from '../game/types.js';
 import type { ClassType } from '@dueled/shared';
 
 export interface PlayerSocket {
@@ -33,7 +33,7 @@ export interface SimpleGameHandlerConfig {
 }
 
 /**
- * SimpleGameHandler - Streamlined WebSocket management
+ * SimpleGameHandler - Streamlined WebSocket management for auth + matchmaking
  */
 export class SimpleGameHandler {
   private io: Server;
@@ -43,18 +43,17 @@ export class SimpleGameHandler {
   private playerSockets: Map<string, PlayerSocket> = new Map(); // playerId -> socket info
   private socketToPlayer: Map<string, string> = new Map();      // socketId -> playerId
   
-  // Active matches and round systems
-  private activeMatches: Map<string, RoundSystem> = new Map();  // matchId -> RoundSystem
+  // Active matches (minimal tracking)
+  private activeMatches: Map<string, { matchId: string; players: string[] }> = new Map();
+  private matchInitializationStatus: Map<string, 'initializing' | 'ready'> = new Map();
   
-  // Pending join requests queue
-  private pendingJoins: Map<string, Array<{socket: Socket, data: any, timestamp: number}>> = new Map();  // matchId -> pending joins
-  private matchInitializationStatus: Map<string, 'initializing' | 'ready'> = new Map();  // matchId -> status
+  // MatchManager integration
+  private matchManagers: Map<string, MatchManager> = new Map(); // matchId -> MatchManager
   
   // Service integrations
   private simpleMatchmaking: SimpleMatchmaking;
   private simpleConnectionManager: SimpleConnectionManager;
   private simpleAuth: SimpleAuth;
-  private simpleGameState: SimpleGameState;
   
   // Heartbeat management
   private heartbeatTimer: NodeJS.Timeout | null = null;
@@ -63,14 +62,12 @@ export class SimpleGameHandler {
     io: Server,
     simpleMatchmaking: SimpleMatchmaking,
     simpleConnectionManager: SimpleConnectionManager,
-    simpleGameState: SimpleGameState,
     simpleAuth?: SimpleAuth,
     config?: Partial<SimpleGameHandlerConfig>
   ) {
     this.io = io;
     this.simpleMatchmaking = simpleMatchmaking;
     this.simpleConnectionManager = simpleConnectionManager;
-    this.simpleGameState = simpleGameState;
     this.simpleAuth = simpleAuth || new SimpleAuth();
     
     this.config = {
@@ -82,10 +79,9 @@ export class SimpleGameHandler {
     
     this.setupSocketHandling();
     this.setupMatchmakingIntegration();
-    this.setupGameStateCallbacks();
     this.startHeartbeatMonitoring();
     
-    logger.info('SimpleGameHandler initialized');
+    logger.info('SimpleGameHandler initialized (minimal version)');
   }
   
   /**
@@ -98,60 +94,20 @@ export class SimpleGameHandler {
       // Authentication required for all operations
       socket.on('authenticate', (data) => this.handleAuthentication(socket, data));
       
-      // Core game events (require authentication)
+      // Core matchmaking events (require authentication)
       socket.on('join_queue', (data) => this.handleJoinQueue(socket, data));
       socket.on('leave_queue', () => this.handleLeaveQueue(socket));
       socket.on('accept_match', (data) => this.handleAcceptMatch(socket, data));
       socket.on('join_match', (data) => this.handleJoinMatch(socket, data));
-      
-      // In-game events
-      socket.on('player_move', (data) => this.handlePlayerMove(socket, data));
-      socket.on('player_rotate', (data) => this.handlePlayerRotate(socket, data));
-      socket.on('primary_attack', (data) => this.handlePrimaryAttack(socket, data));
-      socket.on('special_ability', (data) => this.handleSpecialAbility(socket, data));
-      socket.on('dash', (data) => this.handleDash(socket, data));
-      socket.on('player_ready', (data) => this.handlePlayerReady(socket, data));
       socket.on('leave_match', (data) => this.handleLeaveMatch(socket, data));
       
-      // Delta compression events
-      socket.on('delta_ack', (data) => this.handleDeltaAck(socket, data));
-      socket.on('request_full_sync', (data) => this.handleRequestFullSync(socket, data));
+      // Game input events (require authentication and active match)
+      socket.on('input_batch', (data) => this.handleInputBatch(socket, data));
       
       // Connection management
       socket.on('heartbeat', () => this.handleHeartbeat(socket));
       socket.on('disconnect', (reason) => this.handleDisconnect(socket, reason));
     });
-  }
-
-  /**
-   * Setup game state callbacks for broadcasting updates
-   */
-  private setupGameStateCallbacks(): void {
-    this.simpleGameState.setCallbacks({
-      onDeltaUpdate: (delta) => {
-        this.io.to(delta.header.matchId).emit('game_state_delta', delta);
-        
-        logger.debug(`📡 Delta update`, {
-          match: delta.header.matchId,
-          seq: delta.header.sequence,
-          players: delta.players?.length || 0,
-          projectiles: delta.projectiles?.length || 0
-        });
-      },
-      
-      onFullSync: (fullState) => {
-        this.io.to(fullState.header.matchId).emit('game_state_full_sync', fullState);
-        
-        logger.debug(`📡 Full sync`, {
-          match: fullState.header.matchId,
-          seq: fullState.header.sequence,
-          players: fullState.players.length,
-          projectiles: fullState.projectiles.length
-        });
-      }
-    });
-    
-    logger.info('Game state callbacks configured with delta compression');
   }
 
   /**
@@ -220,21 +176,7 @@ export class SimpleGameHandler {
         message: 'Authentication successful' 
       });
       
-      // Check if player has a match that's already ready and send initialization complete signal
-      const existingMatchId = this.getPlayerMatchId(playerId);
-      if (existingMatchId) {
-        const matchStatus = this.matchInitializationStatus.get(existingMatchId);
-        if (matchStatus === 'ready') {
-          logger.info(`🎯 Player ${playerId} authenticated for already-ready match ${existingMatchId}, sending immediate signal`);
-          socket.emit('match_initialization_complete', {
-            matchId: existingMatchId,
-            message: 'Match is ready - you can now join!',
-            timestamp: Date.now()
-          });
-        }
-      }
-      
-      logger.info(`✅ Player ${playerId} (${username}) authenticated successfully - socket mappings updated`);
+      logger.info(`✅ Player ${playerId} (${username}) authenticated successfully`);
       
     } catch (error) {
       logger.error(`❌ Authentication failed for socket ${socket.id}:`, error);
@@ -264,12 +206,12 @@ export class SimpleGameHandler {
       });
       
       socket.emit('queue_joined', { 
-          message: 'Added to queue',
-          classType: data.classType,
-          estimatedWait: 30 // Simple estimated wait time
-        });
-        
-        logger.info(`Player ${playerId} joined queue with class ${data.classType}`);
+        message: 'Added to queue',
+        classType: data.classType,
+        estimatedWait: 30 // Simple estimated wait time
+      });
+      
+      logger.info(`Player ${playerId} joined queue with class ${data.classType}`);
       
     } catch (error) {
       logger.error(`Error joining queue for player ${playerId}:`, error);
@@ -300,9 +242,9 @@ export class SimpleGameHandler {
     const players = [match.player1.playerId, match.player2.playerId];
     logger.info(`Match found: ${match.matchId} - ${match.player1.username} vs ${match.player2.username}`);
     
-    // Mark match as initializing immediately to handle early join_match requests
-    logger.info(`🔄 Setting match ${match.matchId} status to 'initializing' (immediately after match_found)`);
-    this.matchInitializationStatus.set(match.matchId, 'initializing');
+    // Mark match as ready (simplified - no complex initialization)
+    this.matchInitializationStatus.set(match.matchId, 'ready');
+    this.activeMatches.set(match.matchId, { matchId: match.matchId, players });
     
     // Send match found notification with opponent details
     for (const playerId of players) {
@@ -319,6 +261,10 @@ export class SimpleGameHandler {
           countdown: 5000, // 5 seconds countdown
           message: 'Match found! Preparing game...'
         });
+        
+        // Add player to match room
+        playerSocket.socket.join(match.matchId);
+        playerSocket.matchId = match.matchId;
       } else {
         logger.warn(`Player ${playerId} not found in connected sockets for match ${match.matchId}`);
       }
@@ -327,162 +273,16 @@ export class SimpleGameHandler {
     // Auto-start match after 5 seconds
     setTimeout(() => {
       logger.info(`🚀 Auto-starting match ${match.matchId} after countdown`);
-      this.autoStartMatch(match);
+      this.startSimpleMatch(match);
     }, 5000);
   }
 
   /**
-   * Automatically start match and create game lobby with round system
+   * Start simple match (just notify players, no complex game state)
    */
-  private autoStartMatch(match: MatchPair): void {
+  private startSimpleMatch(match: MatchPair): void {
     const { matchId, player1, player2 } = match;
     
-    logger.info(`🎮 autoStartMatch called for ${matchId}`);
-    
-    // Verify both players are still connected
-    const player1Socket = this.playerSockets.get(player1.playerId);
-    const player2Socket = this.playerSockets.get(player2.playerId);
-    
-    if (!player1Socket || !player2Socket) {
-      logger.warn(`Cannot start match ${matchId}: Player(s) disconnected`);
-      // TODO: Handle player disconnect - could re-queue remaining player
-      return;
-    }
-    
-    logger.info(`✅ Both players connected for match ${matchId}, proceeding with initialization`);
-
-    // Create round system for this match
-    const roundSystem = new RoundSystem(matchId, player1.playerId, player2.playerId, {
-      maxRounds: 3,
-      roundDuration: 60,
-      intermissionDuration: 10,
-      suddenDeathDuration: 30
-    });
-
-    // Set up round system callbacks
-    const callbacks: RoundCallbacks = {
-      onRoundStart: (roundNumber: number) => {
-        this.io.to(matchId).emit('round_start', {
-          roundNumber,
-          message: `Round ${roundNumber} starting!`
-        });
-        logger.info(`Round ${roundNumber} started for match ${matchId}`);
-      },
-      
-      onRoundEnd: (result) => {
-        this.io.to(matchId).emit('round_end', {
-          roundNumber: result.roundNumber,
-          winnerId: result.winnerId,
-          reason: result.reason,
-          finalHealths: result.finalHealths
-        });
-        logger.info(`Round ${result.roundNumber} ended for match ${matchId}: winner=${result.winnerId}`);
-      },
-      
-      onMatchEnd: (result) => {
-        this.io.to(matchId).emit('match_end', {
-          matchId: result.matchId,
-          winnerId: result.winnerId,
-          finalScore: result.finalScore,
-          totalDuration: result.totalDuration,
-          reason: result.reason
-        });
-        
-        // Clean up match
-        this.activeMatches.delete(matchId);
-        this.matchInitializationStatus.delete(matchId);
-        this.pendingJoins.delete(matchId);
-        
-        // Remove players from match room
-        player1Socket.socket.leave(matchId);
-        player2Socket.socket.leave(matchId);
-        player1Socket.matchId = undefined;
-        player2Socket.matchId = undefined;
-        
-        logger.info(`Match ${matchId} completed: winner=${result.winnerId}`);
-      },
-      
-      onStateChange: (state, timeLeft) => {
-        const gameState = roundSystem.getState();
-        this.io.to(matchId).emit('game_state_update', {
-          state,
-          timeLeft,
-          currentRound: gameState.currentRound,
-          score: gameState.score
-        });
-      }
-    };
-
-    roundSystem.setCallbacks(callbacks);
-    this.activeMatches.set(matchId, roundSystem);
-
-    // Add players to match room
-    player1Socket.socket.join(matchId);
-    player2Socket.socket.join(matchId);
-    player1Socket.matchId = matchId;
-    player2Socket.matchId = matchId;
-
-    // Mark match as initializing
-    logger.info(`🔄 Setting match ${matchId} status to 'initializing'`);
-    this.matchInitializationStatus.set(matchId, 'initializing');
-    
-    // Initialize game state for this match
-    logger.info(`🎮 Creating game state for match ${matchId}`);
-    const gameStateCreated = this.simpleGameState.createMatch(
-      matchId,
-      { id: player1.playerId, username: player1.username, classType: player1.classType },
-      { id: player2.playerId, username: player2.username, classType: player2.classType }
-    );
-    
-    if (!gameStateCreated) {
-      logger.error(`❌ Failed to create game state for match ${matchId} - aborting match setup`);
-      // Clean up partial state
-      this.activeMatches.delete(matchId);
-      this.matchInitializationStatus.delete(matchId);
-      this.pendingJoins.delete(matchId);
-      
-      // Notify players of match failure
-      player1Socket.socket.emit('match_error', {
-        matchId,
-        error: 'Failed to initialize game state',
-        code: 'GAME_STATE_CREATION_FAILED'
-      });
-      player2Socket.socket.emit('match_error', {
-        matchId,
-        error: 'Failed to initialize game state', 
-        code: 'GAME_STATE_CREATION_FAILED'
-      });
-      
-      return;
-    }
-    
-    logger.info(`✅ Game state created successfully for match ${matchId}`);
-    
-    // Mark match as ready and process any pending joins
-    logger.info(`✅ Setting match ${matchId} status to 'ready'`);
-    this.matchInitializationStatus.set(matchId, 'ready');
-    
-    // Notify both players that match initialization is complete and they can join
-    logger.info(`📢 Emitting match_initialization_complete to both players for match ${matchId}`);
-    const initCompleteData = {
-      matchId,
-      message: 'Match is ready - you can now join!',
-      timestamp: Date.now()
-    };
-    
-    // Send to individual player sockets (more reliable than room broadcast)
-    player1Socket.socket.emit('match_initialization_complete', initCompleteData);
-    player2Socket.socket.emit('match_initialization_complete', initCompleteData);
-    
-    logger.info(`📤 Sent match_initialization_complete to players:`, {
-      player1: player1.playerId,
-      player2: player2.playerId,
-      socketIds: [player1Socket.id, player2Socket.id]
-    });
-    
-    logger.info(`📋 Processing pending joins for match ${matchId}`);
-    this.processPendingJoins(matchId);
-
     // Send match ready event to both players
     this.io.to(matchId).emit('match_ready', {
       matchId,
@@ -500,13 +300,17 @@ export class SimpleGameHandler {
           rating: player2.rating
         }
       ],
-      message: 'Match starting! Prepare for battle!'
+      message: 'Match starting! Game logic ready for implementation.'
     });
 
-    // Start the round system
-    roundSystem.startMatch();
-    
-    logger.info(`Match ${matchId} started with round system: ${player1.username} vs ${player2.username}`);
+    // Send initialization complete signal
+    this.io.to(matchId).emit('match_initialization_complete', {
+      matchId,
+      message: 'Match is ready - you can now join!',
+      timestamp: Date.now()
+    });
+
+    logger.info(`Simple match ${matchId} started: ${player1.username} vs ${player2.username}`);
   }
   
   /**
@@ -517,7 +321,6 @@ export class SimpleGameHandler {
     if (!playerId) return;
     
     try {
-      // Simple matchmaking auto-accepts matches, no manual acceptance needed
       logger.info(`Player ${playerId} acknowledged match ${data.matchId}`);
       socket.emit('match_accepted', { matchId: data.matchId });
       
@@ -528,286 +331,227 @@ export class SimpleGameHandler {
   }
   
   /**
-   * Start match and notify players
-   */
-  private startMatch(matchId: string, players: string[]): void {
-    for (const playerId of players) {
-      const playerSocket = this.playerSockets.get(playerId);
-      if (playerSocket) {
-        playerSocket.matchId = matchId;
-        playerSocket.socket.join(matchId); // Join socket room
-        
-        playerSocket.socket.emit('match_start', {
-          matchId,
-          yourPlayerId: playerId,
-          players: players.map(id => ({
-            id,
-            username: this.playerSockets.get(id)?.username || 'Unknown',
-            classType: this.playerSockets.get(id)?.classType || 'archer'
-          }))
-        });
-      }
-    }
-    
-    logger.info(`Match ${matchId} started with players: ${players.join(', ')}`);
-  }
-  
-  /**
-   * Handle player movement
-   */
-  private handlePlayerMove(socket: Socket, data: { x: number; y: number; classType: ClassType; timestamp: number }): void {
-    const playerId = this.getPlayerIdFromSocket(socket);
-    const playerSocket = this.playerSockets.get(playerId!);
-    if (!playerId || !playerSocket?.matchId) return;
-    
-    console.log('📥 Server received movement update:', { playerId, x: data.x, y: data.y, timestamp: data.timestamp });
-    
-    // Basic server-side validation
-    if (typeof data.x !== 'number' || typeof data.y !== 'number' || 
-        isNaN(data.x) || isNaN(data.y) || 
-        Math.abs(data.x) > 100 || Math.abs(data.y) > 100) {
-      console.warn('⚠️ Invalid movement data received:', data);
-      return;
-    }
-    
-    // Update server-side game state (server-authoritative)
-    const updated = this.simpleGameState.updatePlayerPosition(playerId, data.x, data.y, 0);
-    
-    if (updated) {
-      console.log('✅ Player position updated on server, broadcasting to other players');
-      
-      // Broadcast to ALL players in match (including sender for echo confirmation)
-      this.io.to(playerSocket.matchId).emit('player_update', {
-        id: playerId,
-        x: data.x,
-        y: data.y,
-        angle: 0, // We'll update this with rotation events
-        classType: data.classType,
-        health: 100, // Get from game state
-        armor: 50,
-        isAlive: true,
-        isMoving: true,
-        timestamp: data.timestamp
-      });
-      
-      console.log('📡 Broadcasted movement to match:', playerSocket.matchId);
-    } else {
-      console.warn('❌ Failed to update player position on server');
-    }
-  }
-  
-  /**
-   * Handle player rotation
-   */
-  private handlePlayerRotate(socket: Socket, data: { angle: number; timestamp: number }): void {
-    const playerId = this.getPlayerIdFromSocket(socket);
-    const playerSocket = this.playerSockets.get(playerId!);
-    if (!playerId || !playerSocket?.matchId) return;
-    
-    console.log('📥 Server received rotation update:', { playerId, angle: data.angle, timestamp: data.timestamp });
-    
-    // Basic validation for angle
-    if (typeof data.angle !== 'number' || isNaN(data.angle)) {
-      console.warn('⚠️ Invalid rotation data received:', data);
-      return;
-    }
-    
-    // Update server-side game state with rotation
-    const updated = this.simpleGameState.updatePlayerRotation(playerId, data.angle);
-    
-    if (updated) {
-      // Broadcast to ALL players in match (including sender for echo confirmation)
-      this.io.to(playerSocket.matchId).emit('player_update', {
-        id: playerId,
-        angle: data.angle,
-        timestamp: data.timestamp
-      });
-      
-      console.log('📡 Broadcasted rotation to match:', playerSocket.matchId);
-    }
-  }
-  
-  /**
-   * Handle primary attack
-   */
-  private handlePrimaryAttack(socket: Socket, data: { targetX: number; targetY: number; timestamp: number }): void {
-    const playerId = this.getPlayerIdFromSocket(socket);
-    const playerSocket = this.playerSockets.get(playerId!);
-    if (!playerId || !playerSocket?.matchId) return;
-    
-    // Process server-side attack logic
-    const attackResult = this.simpleGameState.handlePlayerAttack(playerId, data.targetX, data.targetY);
-    
-    if (attackResult) {
-      // Broadcast attack event to all players in match
-      this.io.to(playerSocket.matchId).emit('player_attack', {
-        playerId,
-        attackType: 'primary',
-        targetX: data.targetX,
-        targetY: data.targetY,
-        timestamp: data.timestamp
-      });
-    }
-  }
-  
-  /**
-   * Handle special ability
-   */
-  private handleSpecialAbility(socket: Socket, data: { timestamp: number }): void {
-    const playerId = this.getPlayerIdFromSocket(socket);
-    const playerSocket = this.playerSockets.get(playerId!);
-    if (!playerId || !playerSocket?.matchId) return;
-    
-    socket.to(playerSocket.matchId).emit('player_ability', {
-      playerId,
-      timestamp: data.timestamp
-    });
-  }
-  
-  /**
-   * Handle dash movement
-   */
-  private handleDash(socket: Socket, data: { direction: { x: number; y: number }; timestamp: number }): void {
-    const playerId = this.getPlayerIdFromSocket(socket);
-    const playerSocket = this.playerSockets.get(playerId!);
-    if (!playerId || !playerSocket?.matchId) return;
-    
-    socket.to(playerSocket.matchId).emit('player_dash', {
-      playerId,
-      direction: data.direction,
-      timestamp: data.timestamp
-    });
-  }
-  
-  /**
-   * Handle player ready signal
-   */
-  private handlePlayerReady(socket: Socket, data: { timestamp: number }): void {
-    const playerId = this.getPlayerIdFromSocket(socket);
-    const playerSocket = this.playerSockets.get(playerId!);
-    if (!playerId || !playerSocket?.matchId) return;
-    
-    socket.to(playerSocket.matchId).emit('player_ready', {
-      playerId,
-      timestamp: data.timestamp
-    });
-  }
-  
-
-  /**
-   * Process pending join requests for a match that is now ready
-   */
-  private processPendingJoins(matchId: string): void {
-    const pendingJoins = this.pendingJoins.get(matchId);
-    if (!pendingJoins || pendingJoins.length === 0) {
-      return;
-    }
-    
-    logger.info(`Processing ${pendingJoins.length} pending joins for match ${matchId}`);
-    
-    // Process all pending joins
-    for (const {socket, data} of pendingJoins) {
-      this.handleJoinMatchInternal(socket, data);
-    }
-    
-    // Clear pending joins for this match
-    this.pendingJoins.delete(matchId);
-  }
-  
-  /**
-   * Handle join match (reconnection)
+   * Handle join match (handoff to game)
    */
   private handleJoinMatch(socket: Socket, data: { matchId: string; classType?: string }): void {
-    const matchStatus = this.matchInitializationStatus.get(data.matchId);
+    logger.info(`📥 [DEBUG] handleJoinMatch received`, { matchId: data.matchId, classType: data.classType, socketId: socket.id });
     
-    logger.info(`🎯 handleJoinMatch called:`, {
-      socketId: socket.id,
-      matchId: data.matchId,
-      matchStatus,
-      allMatchStatuses: Array.from(this.matchInitializationStatus.entries())
+    const playerId = this.getPlayerIdFromSocket(socket);
+    const playerSocket = this.playerSockets.get(playerId!);
+    if (!playerId || !playerSocket) {
+      logger.error(`❌ [DEBUG] No player ID or socket found`, { playerId, hasPlayerSocket: !!playerSocket });
+      return;
+    }
+    
+    logger.info(`🎮 [DEBUG] Player ${playerId} joining match ${data.matchId}`);
+    
+    // Get or create MatchManager for this match
+    let matchManager = this.matchManagers.get(data.matchId);
+    const activeMatch = this.activeMatches.get(data.matchId);
+    
+    logger.info(`🔍 [DEBUG] Match state check`, { 
+      hasMatchManager: !!matchManager, 
+      hasActiveMatch: !!activeMatch,
+      activeMatchPlayers: activeMatch?.players 
     });
     
-    if (matchStatus !== 'ready') {
-      // Match is 'initializing' or still undefined – queue the request
-      logger.info(`Match ${data.matchId} not ready yet (status: ${matchStatus}), queuing join request for socket ${socket.id}`);
+    if (!matchManager && activeMatch) {
+      logger.info(`🏗️ [DEBUG] Creating new MatchManager for match ${data.matchId}`);
       
-      if (!this.pendingJoins.has(data.matchId)) {
-        this.pendingJoins.set(data.matchId, []);
-      }
+      // Create MatchManager instance for this match
+      const playerIds = activeMatch.players;
+      const player1Data = this.playerSockets.get(playerIds[0]);
+      const player2Data = this.playerSockets.get(playerIds[1]);
       
-      this.pendingJoins.get(data.matchId)!.push({
-        socket,
-        data,
-        timestamp: Date.now()
+      logger.info(`👥 [DEBUG] Player data retrieved`, {
+        player1Id: playerIds[0],
+        player2Id: playerIds[1],
+        hasPlayer1Data: !!player1Data,
+        hasPlayer2Data: !!player2Data
       });
       
-      return;
+      if (player1Data && player2Data) {
+        logger.info(`🎯 [DEBUG] Starting MatchManager creation for match ${data.matchId}`);
+        
+        try {
+          // Create arena map
+          logger.info(`🗺️ [DEBUG] Creating arena map`);
+          const mapData = createArenaMap();
+          logger.info(`✅ [DEBUG] Arena map created with ${mapData.walls.length} walls`);
+          
+          // Create MatchManager with player data
+          logger.info(`🏗️ [DEBUG] Instantiating MatchManager`);
+          matchManager = new MatchManager(
+            data.matchId,
+            {
+              id: player1Data.playerId,
+              username: player1Data.username || 'Player1',
+              classType: (player1Data.classType || 'archer') as ClassType,
+              rating: 1000 // Default rating for now
+            },
+            {
+              id: player2Data.playerId,
+              username: player2Data.username || 'Player2',
+              classType: (player2Data.classType || 'archer') as ClassType,
+              rating: 1000 // Default rating for now
+            },
+            mapData,
+            this.createMatchManagerCallbacks(data.matchId)
+          );
+          
+          this.matchManagers.set(data.matchId, matchManager);
+          logger.info(`🎉 [DEBUG] MatchManager created and stored successfully for match ${data.matchId}`);
+        } catch (error) {
+          logger.error(`💥 [DEBUG] Failed to create MatchManager:`, error);
+          socket.emit('match_error', { message: 'Failed to create match', error: error instanceof Error ? error.message : 'Unknown error' });
+          return;
+        }
+      } else {
+        logger.error(`❌ [DEBUG] Missing player data, cannot create MatchManager`);
+      }
+    }
+    
+    if (matchManager) {
+      logger.info(`🔗 [DEBUG] Connecting player ${playerId} to MatchManager`);
+      
+      // Connect player to the match
+      const connected = matchManager.connectPlayer(playerId);
+      logger.info(`📋 [DEBUG] Player connection result: ${connected}`);
+      
+      // Send connection confirmation for game engine
+      logger.info(`📡 [DEBUG] Sending connection_confirmed to client`);
+      socket.emit('connection_confirmed', {
+        playerId: playerId,
+        serverTime: Date.now()
+      });
+      
+      // Send match start data
+      logger.info(`🚀 [DEBUG] Getting match state and sending match_start`);
+      const matchState = matchManager.getMatchState();
+      const activeMatch = this.activeMatches.get(data.matchId);
+      
+      logger.info(`📊 [DEBUG] Match state retrieved, sending to client`, { 
+        hasMapData: !!matchState.gameState.mapData,
+        playerCount: matchState.players.length,
+        activeMatchPlayers: activeMatch?.players
+      });
+      
+      // Find opponent ID
+      const opponentId = activeMatch?.players.find(pId => pId !== playerId) || 'unknown';
+      
+      // Convert server MapData to ClientMapData format
+      const clientMapData = {
+        bounds: matchState.gameState.mapData.bounds,
+        walls: matchState.gameState.mapData.walls,
+        spawnPoints: matchState.gameState.mapData.spawnPoints
+      };
+      
+      // Send proper MatchStartData structure
+      socket.emit('match_start', {
+        matchId: data.matchId,
+        yourPlayerId: playerId,
+        opponentId: opponentId,
+        mapData: clientMapData,
+        roundDuration: GAME_CONSTANTS.ROUND_DURATION * 1000, // Convert to milliseconds
+        maxRounds: GAME_CONSTANTS.MAX_ROUNDS
+      });
+      logger.info(`✅ [DEBUG] match_start event sent to client with proper structure`);
+      
+      // Start the match if both players are connected
+      const allPlayersConnected = Array.from(this.activeMatches.get(data.matchId)?.players || [])
+        .every(pId => this.playerSockets.get(pId)?.socket.connected);
+      
+      if (allPlayersConnected) {
+        logger.info(`🎯 Starting match ${data.matchId} - both players connected`);
+        matchManager.start();
+      }
+      
+      logger.info(`✅ Player ${playerId} joined match ${data.matchId} via MatchManager`);
     } else {
-      // Match is ready, process immediately
-      this.handleJoinMatchInternal(socket, data);
+      logger.error(`❌ Could not create MatchManager for match ${data.matchId}`);
+      socket.emit('match_error', { 
+        message: 'Failed to initialize match',
+        matchId: data.matchId 
+      });
     }
   }
   
   /**
-   * Internal handler for join match (after match is ready)
+   * Create MatchManager callbacks for handling game events
    */
-  private handleJoinMatchInternal(socket: Socket, data: { matchId: string; classType?: string }): void {
-    logger.info(`🎮 handleJoinMatchInternal called:`, {
-      socketId: socket.id,
-      matchId: data.matchId,
-      classType: data.classType,
-      socketConnected: socket.connected,
-      socketHandshake: socket.handshake?.auth
-    });
+  private createMatchManagerCallbacks(matchId: string): MatchManagerCallbacks {
+    return {
+      onMatchStart: (matchId: string) => {
+        logger.info(`🎯 Match ${matchId} started`);
+        this.broadcastToMatch(matchId, 'match_started', { matchId });
+      },
+      
+      onMatchEnd: (result) => {
+        logger.info(`🏁 Match ${matchId} ended`, result);
+        this.broadcastToMatch(matchId, 'match_ended', result);
+        
+        // Cleanup MatchManager
+        this.matchManagers.delete(matchId);
+        this.activeMatches.delete(matchId);
+        this.matchInitializationStatus.delete(matchId);
+      },
+      
+      onPlayerDisconnected: (matchId: string, playerId: string) => {
+        logger.info(`🔌 Player ${playerId} disconnected from match ${matchId}`);
+        this.broadcastToMatch(matchId, 'player_disconnected', { playerId });
+      },
+      
+      onDeltaUpdate: (matchId: string, delta) => {
+        // Broadcast delta update to all players in the match
+        this.broadcastToMatch(matchId, 'game_state_delta', delta);
+      },
+      
+      onRoundStart: (matchId: string, roundNumber: number) => {
+        logger.info(`⚡ Round ${roundNumber} started in match ${matchId}`);
+        this.broadcastToMatch(matchId, 'round_started', { roundNumber });
+      },
+      
+      onRoundEnd: (matchId: string, winnerId: string, reason: string) => {
+        logger.info(`🎌 Round ended in match ${matchId}: ${winnerId} wins (${reason})`);
+        this.broadcastToMatch(matchId, 'round_ended', { winnerId, reason });
+      }
+    };
+  }
+  
+  /**
+   * Broadcast event to all players in a match
+   */
+  private broadcastToMatch(matchId: string, event: string, data: any): void {
+    const activeMatch = this.activeMatches.get(matchId);
+    if (!activeMatch) return;
     
-    // Debug socket mappings
-    logger.info(`🔍 Socket mapping debug:`, {
-      socketToPlayerSize: this.socketToPlayer.size,
-      playerSocketsSize: this.playerSockets.size,
-      socketToPlayerEntries: Array.from(this.socketToPlayer.entries()),
-      playerSocketIds: Array.from(this.playerSockets.values()).map(ps => ({
-        socketId: ps.id,
-        playerId: ps.playerId,
-        authenticated: ps.authenticated,
-        username: ps.username
-      }))
-    });
-    
+    for (const playerId of activeMatch.players) {
+      const playerSocket = this.playerSockets.get(playerId);
+      if (playerSocket && playerSocket.socket.connected) {
+        playerSocket.socket.emit(event, data);
+      }
+    }
+  }
+  
+  /**
+   * Handle input batch from client
+   */
+  private handleInputBatch(socket: Socket, data: { matchId: string; commands: any[] }): void {
     const playerId = this.getPlayerIdFromSocket(socket);
-    const playerSocket = this.playerSockets.get(playerId!);
+    if (!playerId) return;
     
-    logger.info(`🔍 Player lookup result:`, {
-      playerId,
-      hasPlayerSocket: !!playerSocket,
-      playerSocketAuthenticated: playerSocket?.authenticated,
-      playerSocketUsername: playerSocket?.username,
-      allPlayerIds: Array.from(this.playerSockets.keys())
-    });
-    
-    if (!playerId || !playerSocket) {
-      logger.error(`❌ Player not found for join_match:`, {
-        socketId: socket.id,
-        playerId,
-        hasPlayerSocket: !!playerSocket
-      });
+    const matchManager = this.matchManagers.get(data.matchId);
+    if (!matchManager) {
+      logger.warn(`No MatchManager found for match ${data.matchId}`);
       return;
     }
     
-    playerSocket.matchId = data.matchId;
-    socket.join(data.matchId);
-    
-    // Send initial full sync to joining player
-    this.simpleGameState.forceFullSync(data.matchId);
-    
-    // Send player ID separately for initialization
-    socket.emit('player_id_assigned', {
-      matchId: data.matchId,
-      yourPlayerId: playerId
-    });
-    
-    logger.info(`✅ Player ${playerId} joined match ${data.matchId}`);
+    // Forward input commands to MatchManager
+    for (const command of data.commands) {
+      matchManager.queueInput(playerId, command);
+    }
   }
-  
+
   /**
    * Handle leave match
    */
@@ -815,6 +559,12 @@ export class SimpleGameHandler {
     const playerId = this.getPlayerIdFromSocket(socket);
     const playerSocket = this.playerSockets.get(playerId!);
     if (!playerId || !playerSocket) return;
+    
+    // Disconnect from MatchManager
+    const matchManager = this.matchManagers.get(data.matchId);
+    if (matchManager) {
+      matchManager.disconnectPlayer(playerId);
+    }
     
     socket.leave(data.matchId);
     playerSocket.matchId = undefined;
@@ -827,39 +577,6 @@ export class SimpleGameHandler {
     
     socket.emit('match_left', { message: 'Left match' });
     logger.info(`Player ${playerId} left match ${data.matchId}`);
-  }
-  
-  /**
-   * Handle delta acknowledgment from client
-   */
-  private handleDeltaAck(socket: Socket, data: { matchId: string; sequence: number }): void {
-    const playerId = this.getPlayerIdFromSocket(socket);
-    if (!playerId) return;
-    
-    // Track client sequence for delta compression optimization
-    this.simpleGameState.trackClientSequence(data.matchId, playerId, data.sequence);
-    
-    logger.debug(`Delta acknowledgment received`, {
-      playerId,
-      matchId: data.matchId,
-      sequence: data.sequence
-    });
-  }
-  
-  /**
-   * Handle client request for full sync
-   */
-  private handleRequestFullSync(socket: Socket, data: { matchId: string; reason?: string }): void {
-    const playerId = this.getPlayerIdFromSocket(socket);
-    if (!playerId) return;
-    
-    logger.info(`Full sync requested by player ${playerId}`, {
-      matchId: data.matchId,
-      reason: data.reason || 'client_request'
-    });
-    
-    // Force full sync for this match
-    this.simpleGameState.forceFullSync(data.matchId);
   }
   
   /**
@@ -884,8 +601,14 @@ export class SimpleGameHandler {
     if (playerId) {
       const playerSocket = this.playerSockets.get(playerId);
       
-      // Notify match if player was in one
+      // Disconnect from MatchManager if player was in a match
       if (playerSocket?.matchId) {
+        const matchManager = this.matchManagers.get(playerSocket.matchId);
+        if (matchManager) {
+          matchManager.disconnectPlayer(playerId);
+        }
+        
+        // Notify other players in match
         socket.to(playerSocket.matchId).emit('player_disconnected', {
           playerId,
           reason
@@ -906,14 +629,6 @@ export class SimpleGameHandler {
    */
   private getPlayerIdFromSocket(socket: Socket): string | null {
     return this.socketToPlayer.get(socket.id) || null;
-  }
-  
-  /**
-   * Get match ID for a player (if they're in a match)
-   */
-  private getPlayerMatchId(playerId: string): string | null {
-    const playerSocket = this.playerSockets.get(playerId);
-    return playerSocket?.matchId || null;
   }
   
   /**
@@ -954,13 +669,6 @@ export class SimpleGameHandler {
   }
   
   /**
-   * Broadcast game update to match
-   */
-  broadcastGameUpdate(matchId: string, update: any): void {
-    this.io.to(matchId).emit('game_update', update);
-  }
-  
-  /**
    * Get connection statistics
    */
   getConnectionStats(): {
@@ -975,11 +683,7 @@ export class SimpleGameHandler {
     const playersInMatches = Array.from(this.playerSockets.values())
       .filter(ps => ps.matchId).length;
     
-    const activeMatches = new Set(
-      Array.from(this.playerSockets.values())
-        .map(ps => ps.matchId)
-        .filter(Boolean)
-    ).size;
+    const activeMatches = this.activeMatches.size;
     
     return {
       totalConnections: this.playerSockets.size,
@@ -1002,7 +706,6 @@ export class SimpleGameHandler {
     this.socketToPlayer.clear();
     this.activeMatches.clear();
     this.matchInitializationStatus.clear();
-    this.pendingJoins.clear();
     
     logger.info('SimpleGameHandler destroyed');
   }
