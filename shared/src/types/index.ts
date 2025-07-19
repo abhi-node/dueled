@@ -18,9 +18,9 @@ export interface Vector2 {
 
 export enum ClassType {
   ARCHER = 'archer',
-  BERSERKER = 'berserker'
-  // MAGE = 'mage',       // Phase 4: Simplified to 2 active classes
-  // BOMBER = 'bomber'    // Architecture ready for expansion to 4 classes
+  BERSERKER = 'berserker',
+  MAGE = 'mage',
+  BOMBER = 'bomber'
 }
 
 /**
@@ -99,7 +99,8 @@ export enum DamageType {
   PHYSICAL = 'physical',
   FIRE = 'fire',
   ICE = 'ice',
-  PIERCING = 'piercing'
+  PIERCING = 'piercing',
+  MAGICAL = 'magical'
 }
 
 // Authentication types
@@ -133,7 +134,8 @@ export enum MatchStatus {
   WAITING = 'waiting',
   IN_PROGRESS = 'in_progress',
   COMPLETED = 'completed',
-  CANCELLED = 'cancelled'
+  CANCELLED = 'cancelled',
+  ENDED = 'ended'
 }
 
 // Matchmaking types
@@ -156,6 +158,19 @@ export interface GameAction {
   playerId: string;
   data: any;
   timestamp: number;
+  movement?: {
+    x: number;
+    y: number;
+    angle?: number;
+  };
+  attack?: {
+    direction: Vector2;
+    target?: Vector2;
+  };
+  ability?: {
+    direction?: Vector2;
+    target?: Vector2;
+  };
 }
 
 export enum ActionType {

@@ -48,6 +48,13 @@ export type RoundState =
   | 'ending'         // Round just ended
   | 'completed';     // Match completed
 
+export interface MatchState {
+  currentRound: number;
+  timeLeft: number;
+  score: { player1: number; player2: number };
+  state: RoundState;
+}
+
 export interface RoundCallbacks {
   onRoundStart?: (roundNumber: number) => void;
   onRoundEnd?: (result: RoundResult) => void;
@@ -421,6 +428,38 @@ export class RoundSystem {
   /**
    * Update configuration
    */
+  /**
+   * Update round timer and state
+   */
+  update(deltaTime: number): void {
+    if (this.state === 'active' && this.timer) {
+      this.timeLeft = Math.max(0, this.timeLeft - deltaTime / 1000);
+      
+      if (this.timeLeft <= 0) {
+        this.endRound(null, 'timeout', { player1: 50, player2: 50 });
+      }
+    }
+  }
+
+  /**
+   * Check if match is complete
+   */
+  isMatchComplete(): boolean {
+    return this.isMatchCompleted;
+  }
+
+  /**
+   * Get current match state for spectators
+   */
+  getMatchState(): MatchState {
+    return {
+      currentRound: this.currentRound,
+      timeLeft: this.timeLeft,
+      score: { ...this.score },
+      state: this.state
+    };
+  }
+
   updateConfig(newConfig: Partial<RoundConfig>): void {
     if (this.state !== 'waiting') {
       logger.warn('Cannot update config: Match already started');

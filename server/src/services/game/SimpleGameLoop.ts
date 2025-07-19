@@ -6,25 +6,12 @@ import {
   GameAction,
   ActionType
 } from '@dueled/shared';
-
 /**
  * SimpleGameLoop - Scalable foundation for 1v1 arena combat
  * 
  * Architecture designed for 2 classes (Berserker, Mage) with scalability to 4
  * Focus: Simple, efficient, server-authoritative game state management
  */
-
-export interface SimpleGameState {
-  matchId: string;
-  players: Map<string, SimplePlayer>;
-  projectiles: Map<string, SimpleProjectile>;
-  arena: SimpleArena;
-  gameTime: number;
-  status: MatchStatus;
-  lastUpdate: number;
-  tickRate: number; // 60 ticks per second for smooth gameplay
-  roundSystem: RoundState;
-}
 
 export interface SimplePlayer {
   id: string;
@@ -36,10 +23,20 @@ export interface SimplePlayer {
   maxHealth: number;
   isAlive: boolean;
   lastInputTime: number;
-  // Simplified abilities - one per class
   abilityState: SimpleAbilityState;
-  // Basic stats only
   stats: SimplePlayerStats;
+}
+
+export interface SimpleGameState {
+  matchId: string;
+  players: Map<string, SimplePlayer>;
+  projectiles: Map<string, SimpleProjectile>;
+  arena: SimpleArena;
+  gameTime: number;
+  status: MatchStatus;
+  lastUpdate: number;
+  tickRate: number; // 60 ticks per second for smooth gameplay
+  roundSystem: RoundState;
 }
 
 export interface SimplePlayerStats {
@@ -159,7 +156,7 @@ export class SimpleGameLoop {
       projectiles: new Map(),
       arena,
       gameTime: 0,
-      status: 'waiting',
+      status: MatchStatus.WAITING,
       lastUpdate: Date.now(),
       tickRate: this.TICK_RATE,
       roundSystem: {
@@ -558,7 +555,7 @@ export class SimpleGameLoop {
     const requiredWins = Math.ceil(round.maxRounds / 2);
     
     if (maxScore >= requiredWins) {
-      gameState.status = 'ended';
+      gameState.status = MatchStatus.ENDED;
       logger.info(`Match ${gameState.matchId} ended`);
     } else {
       // Start next round
@@ -628,7 +625,7 @@ export class SimpleGameLoop {
       }
     };
     
-    return arenas[arenaId] || arenas['arena_1'];
+    return (arenas as Record<string, SimpleArena>)[arenaId] || arenas['arena_1'];
   }
 
   /**
@@ -636,6 +633,14 @@ export class SimpleGameLoop {
    */
   getGameState(matchId: string): SimpleGameState | null {
     return this.gameStates.get(matchId) || null;
+  }
+
+  /**
+   * Destroy all game states
+   */
+  destroy(): void {
+    this.gameStates.clear();
+    logger.info('SimpleGameLoop destroyed');
   }
 
   /**

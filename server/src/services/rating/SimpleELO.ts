@@ -181,7 +181,7 @@ export class SimpleELO {
       'Master': '#FF6B00',
       'Grandmaster': '#FF1744'
     };
-    return colors[tier] || '#C0C0C0';
+    return colors[tier as keyof typeof colors] || '#C0C0C0';
   }
 
   /**

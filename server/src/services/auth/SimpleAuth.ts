@@ -1,8 +1,8 @@
 import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
 import { logger } from '../../utils/logger.js';
 import { db } from '../database.js';
+import { createSession, SessionTokens, verifyToken, JwtPayload } from '../../utils/jwt.js';
 
 /**
  * SimpleAuth - Scalable authentication for 1v1 arena game
@@ -105,7 +105,7 @@ export class SimpleAuth {
       });
 
       // Generate token
-      const token = this.generateToken({
+      const tokens = await this.generateToken({
         userId: user.id,
         username: user.username,
         isGuest: false
@@ -124,7 +124,7 @@ export class SimpleAuth {
       
       return {
         success: true,
-        token,
+        token: tokens.accessToken,
         user: simpleUser
       };
 
@@ -152,7 +152,7 @@ export class SimpleAuth {
       }
 
       // Generate token
-      const token = this.generateToken({
+      const tokens = await this.generateToken({
         userId: user.id,
         username: user.username,
         isGuest: false
@@ -171,7 +171,7 @@ export class SimpleAuth {
 
       return {
         success: true,
-        token,
+        token: tokens.accessToken,
         user: simpleUser
       };
 
@@ -202,7 +202,7 @@ export class SimpleAuth {
       });
 
       // Generate token
-      const token = this.generateToken({
+      const tokens = await this.generateToken({
         userId: user.id,
         username: user.username,
         isGuest: true
@@ -220,7 +220,7 @@ export class SimpleAuth {
 
       return {
         success: true,
-        token,
+        token: tokens.accessToken,
         user: simpleUser
       };
 
@@ -235,16 +235,23 @@ export class SimpleAuth {
    */
   async verifyToken(token: string): Promise<TokenPayload | null> {
     try {
-      const decoded = jwt.verify(token, this.config.jwtSecret) as TokenPayload;
+      const decoded = verifyToken<JwtPayload>(token);
       
       // Additional validation - check if user still exists
-      const user = await this.findById(decoded.userId);
+      const user = await this.findById(decoded.sub);
       if (!user) {
-        logger.warn(`Token verification failed: user ${decoded.userId} not found`);
+        logger.warn(`Token verification failed: user ${decoded.sub} not found`);
         return null;
       }
 
-      return decoded;
+      // Convert JwtPayload to TokenPayload for compatibility
+      return {
+        userId: decoded.sub,
+        username: decoded.username || user.username,
+        isGuest: user.isGuest,
+        iat: decoded.iat || 0,
+        exp: decoded.exp || 0
+      };
 
     } catch (error) {
       logger.warn('Token verification failed:', error);
@@ -350,16 +357,8 @@ export class SimpleAuth {
   /**
    * Private helper methods
    */
-  private generateToken(payload: { userId: string; username: string; isGuest: boolean }): string {
-    return jwt.sign(
-      {
-        userId: payload.userId,
-        username: payload.username,
-        isGuest: payload.isGuest
-      },
-      this.config.jwtSecret,
-      { expiresIn: this.config.jwtExpiration }
-    );
+  private async generateToken(payload: { userId: string; username: string; isGuest: boolean }): Promise<SessionTokens> {
+    return await createSession(payload.userId, 'user');
   }
 
   private validateRegistrationData(data: RegisterData): { isValid: boolean; error?: string } {
@@ -462,7 +461,10 @@ export class SimpleAuth {
   private async findByUsername(username: string): Promise<SimpleUser | null> {
     try {
       const result = await db.query(
-        'SELECT id, username, password_hash, email, is_guest, created_at, rating FROM players WHERE username = $1',
+        `SELECT p.id, p.username, p.password_hash, p.email, p.is_anonymous, p.created_at, ps.rating 
+         FROM players p 
+         LEFT JOIN player_stats ps ON p.id = ps.player_id 
+         WHERE p.username = $1`,
         [username]
       );
       
@@ -476,7 +478,7 @@ export class SimpleAuth {
         username: row.username,
         passwordHash: row.password_hash,
         email: row.email || undefined,
-        isGuest: row.is_guest || false,
+        isGuest: row.is_anonymous || false,
         createdAt: row.created_at,
         rating: row.rating || 1000
       };
@@ -489,7 +491,10 @@ export class SimpleAuth {
   private async findById(id: string): Promise<SimpleUser | null> {
     try {
       const result = await db.query(
-        'SELECT id, username, password_hash, email, is_guest, created_at, rating FROM players WHERE id = $1',
+        `SELECT p.id, p.username, p.password_hash, p.email, p.is_anonymous, p.created_at, ps.rating 
+         FROM players p 
+         LEFT JOIN player_stats ps ON p.id = ps.player_id 
+         WHERE p.id = $1`,
         [id]
       );
       
@@ -503,7 +508,7 @@ export class SimpleAuth {
         username: row.username,
         passwordHash: row.password_hash,
         email: row.email || undefined,
-        isGuest: row.is_guest || false,
+        isGuest: row.is_anonymous || false,
         createdAt: row.created_at,
         rating: row.rating || 1000
       };
@@ -515,22 +520,29 @@ export class SimpleAuth {
 
   private async createPlayer(data: any): Promise<SimpleUser> {
     try {
-      const result = await db.query(
-        `INSERT INTO players (id, username, password_hash, email, is_guest, created_at, rating) 
-         VALUES ($1, $2, $3, $4, $5, $6, $7) 
-         RETURNING id, username, password_hash, email, is_guest, created_at, rating`,
-        [data.id, data.username, data.passwordHash, data.email || null, data.isGuest || false, new Date(), data.rating || 1000]
+      // Insert player record
+      const playerResult = await db.query(
+        `INSERT INTO players (id, username, password_hash, email, is_anonymous) 
+         VALUES ($1, $2, $3, $4, $5) 
+         RETURNING id, username, password_hash, email, is_anonymous, created_at`,
+        [data.id, data.username, data.passwordHash, data.email || null, data.isGuest || false]
       );
       
-      const row = result.rows[0];
+      // Insert player stats record
+      await db.query(
+        `INSERT INTO player_stats (player_id, rating) VALUES ($1, $2)`,
+        [data.id, data.rating || 1000]
+      );
+      
+      const row = playerResult.rows[0];
       return {
         id: row.id,
         username: row.username,
         passwordHash: row.password_hash,
         email: row.email || undefined,
-        isGuest: row.is_guest || false,
+        isGuest: row.is_anonymous || false,
         createdAt: row.created_at,
-        rating: row.rating || 1000
+        rating: data.rating || 1000
       };
     } catch (error) {
       logger.error('Error creating player:', error);
@@ -541,7 +553,7 @@ export class SimpleAuth {
   private async updateRating(userId: string, rating: number): Promise<void> {
     try {
       await db.query(
-        'UPDATE players SET rating = $1 WHERE id = $2',
+        'UPDATE player_stats SET rating = $1 WHERE player_id = $2',
         [rating, userId]
       );
     } catch (error) {

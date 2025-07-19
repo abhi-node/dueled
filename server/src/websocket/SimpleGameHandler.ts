@@ -10,6 +10,7 @@ import { logger } from '../utils/logger.js';
 import { SimpleMatchmaking } from '../services/matchmaking/SimpleMatchmaking.js';
 import { SimpleConnectionManager } from '../services/connection/SimpleConnectionManager.js';
 import { SimpleAuth } from '../services/auth/SimpleAuth.js';
+import { SimpleGameState } from '../services/game/SimpleGameState.js';
 import { verifyToken } from '../utils/jwt.js';
 import type { ClassType } from '@dueled/shared';
 
@@ -45,6 +46,7 @@ export class SimpleGameHandler {
   private simpleMatchmaking: SimpleMatchmaking;
   private simpleConnectionManager: SimpleConnectionManager;
   private simpleAuth: SimpleAuth;
+  private simpleGameState: SimpleGameState;
   
   // Heartbeat management
   private heartbeatTimer: NodeJS.Timeout | null = null;
@@ -53,12 +55,14 @@ export class SimpleGameHandler {
     io: Server,
     simpleMatchmaking: SimpleMatchmaking,
     simpleConnectionManager: SimpleConnectionManager,
+    simpleGameState: SimpleGameState,
     simpleAuth?: SimpleAuth,
     config?: Partial<SimpleGameHandlerConfig>
   ) {
     this.io = io;
     this.simpleMatchmaking = simpleMatchmaking;
     this.simpleConnectionManager = simpleConnectionManager;
+    this.simpleGameState = simpleGameState;
     this.simpleAuth = simpleAuth || new SimpleAuth();
     
     this.config = {
@@ -116,8 +120,8 @@ export class SimpleGameHandler {
     
     try {
       const decoded = verifyToken(data.token);
-      const playerId = decoded.playerId;
-      const username = decoded.username;
+      const playerId = decoded.sub;
+      const username = decoded.username || 'Unknown';
       
       // Remove existing connection if player reconnecting
       const existingSocket = this.playerSockets.get(playerId);
@@ -139,7 +143,7 @@ export class SimpleGameHandler {
       this.socketToPlayer.set(socket.id, playerId);
       
       // Register with connection manager
-      await this.simpleConnectionManager.addConnection(playerId, socket.id);
+      this.simpleConnectionManager.addConnection(playerId, username, socket);
       
       socket.emit('authenticated', { 
         playerId, 
@@ -272,12 +276,17 @@ export class SimpleGameHandler {
     const playerSocket = this.playerSockets.get(playerId!);
     if (!playerId || !playerSocket?.matchId) return;
     
-    // Broadcast to other players in match
-    socket.to(playerSocket.matchId).emit('player_update', {
-      playerId,
-      position: { x: data.x, y: data.y },
-      timestamp: data.timestamp
-    });
+    // Update server-side game state (server-authoritative)
+    const updated = this.simpleGameState.updatePlayerPosition(playerId, data.x, data.y, 0);
+    
+    if (updated) {
+      // Broadcast to other players in match
+      socket.to(playerSocket.matchId).emit('player_update', {
+        playerId,
+        position: { x: data.x, y: data.y },
+        timestamp: data.timestamp
+      });
+    }
   }
   
   /**
@@ -298,16 +307,24 @@ export class SimpleGameHandler {
   /**
    * Handle primary attack
    */
-  private handlePrimaryAttack(socket: Socket, data: { timestamp: number }): void {
+  private handlePrimaryAttack(socket: Socket, data: { targetX: number; targetY: number; timestamp: number }): void {
     const playerId = this.getPlayerIdFromSocket(socket);
     const playerSocket = this.playerSockets.get(playerId!);
     if (!playerId || !playerSocket?.matchId) return;
     
-    socket.to(playerSocket.matchId).emit('player_attack', {
-      playerId,
-      attackType: 'primary',
-      timestamp: data.timestamp
-    });
+    // Process server-side attack logic
+    const attackResult = this.simpleGameState.handlePlayerAttack(playerId, data.targetX, data.targetY);
+    
+    if (attackResult) {
+      // Broadcast attack event to all players in match
+      this.io.to(playerSocket.matchId).emit('player_attack', {
+        playerId,
+        attackType: 'primary',
+        targetX: data.targetX,
+        targetY: data.targetY,
+        timestamp: data.timestamp
+      });
+    }
   }
   
   /**

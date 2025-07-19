@@ -78,7 +78,7 @@ export class SimpleAuthController {
       
       // Check if user already exists
       const existingUser = await db.query(
-        'SELECT id FROM users WHERE username = $1 OR email = $2',
+        'SELECT id FROM players WHERE username = $1 OR email = $2',
         [username, email]
       );
       
@@ -93,12 +93,21 @@ export class SimpleAuthController {
       // Hash password
       const hashedPassword = await bcrypt.hash(password, 12);
       
-      // Create user
+      // Create user with proper UUID
+      const { v4: uuidv4 } = await import('uuid');
+      const userId = uuidv4();
+      
       const result = await db.query(
-        `INSERT INTO users (username, email, password_hash, elo_rating, created_at) 
-         VALUES ($1, $2, $3, $4, NOW()) 
-         RETURNING id, username, email, elo_rating, created_at`,
-        [username, email, hashedPassword, 1000] // Starting ELO rating
+        `INSERT INTO players (id, username, email, password_hash, is_anonymous) 
+         VALUES ($1, $2, $3, $4, $5) 
+         RETURNING id, username, email, is_anonymous, created_at`,
+        [userId, username, email, hashedPassword, false]
+      );
+      
+      // Create player stats
+      await db.query(
+        `INSERT INTO player_stats (player_id, rating) VALUES ($1, $2)`,
+        [userId, 1000]
       );
       
       const user = result.rows[0];
@@ -119,7 +128,8 @@ export class SimpleAuthController {
             id: user.id,
             username: user.username,
             email: user.email,
-            eloRating: user.elo_rating,
+            rating: 1000,
+            isAnonymous: user.is_anonymous,
             createdAt: user.created_at
           },
           token
@@ -152,9 +162,12 @@ export class SimpleAuthController {
       
       const { username, password } = validation.data;
       
-      // Get user
+      // Get user with rating from player_stats
       const result = await db.query(
-        'SELECT id, username, email, password_hash, elo_rating, created_at FROM users WHERE username = $1',
+        `SELECT p.id, p.username, p.email, p.password_hash, p.is_anonymous, p.created_at, ps.rating 
+         FROM players p 
+         LEFT JOIN player_stats ps ON p.id = ps.player_id 
+         WHERE p.username = $1`,
         [username]
       );
       
@@ -187,7 +200,7 @@ export class SimpleAuthController {
       
       // Update last login
       await db.query(
-        'UPDATE users SET last_login = NOW() WHERE id = $1',
+        'UPDATE players SET last_login = NOW() WHERE id = $1',
         [user.id]
       );
       
@@ -200,7 +213,8 @@ export class SimpleAuthController {
             id: user.id,
             username: user.username,
             email: user.email,
-            eloRating: user.elo_rating,
+            rating: user.rating || 1000,
+            isAnonymous: user.is_anonymous,
             createdAt: user.created_at
           },
           token

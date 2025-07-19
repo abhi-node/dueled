@@ -395,7 +395,7 @@ export class SimplePhysics {
       }
     };
 
-    return constraints[classType] || constraints['BERSERKER'];
+    return constraints[classType as keyof typeof constraints] || constraints['BERSERKER'];
   }
 
   /**

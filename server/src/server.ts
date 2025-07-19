@@ -11,6 +11,7 @@ import { simpleAuthRoutes } from './controllers/SimpleAuthController.js';
 import { simplePlayerRoutes } from './controllers/SimplePlayerController.js';
 import { simpleMatchmakingRoutes } from './controllers/SimpleMatchmakingController.js';
 import { SimpleGameHandler } from './websocket/SimpleGameHandler.js';
+import { SimpleGameState } from './services/game/SimpleGameState.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { securityHeaders, requestLogger } from './middleware/validation.js';
 import { SimpleAuth } from './services/auth/SimpleAuth.js';
@@ -224,12 +225,16 @@ app.get('/simple-metrics', (req, res) => {
 // Initialize simplified services
 const simpleMatchmaking = new SimpleMatchmaking();
 const simpleConnectionManager = new SimpleConnectionManager();
+const simpleGameState = new SimpleGameState();
 
 // WebSocket game handler with simplified configuration
 const gameHandler = new SimpleGameHandler(
   io,
   simpleMatchmaking,
-  simpleConnectionManager
+  simpleConnectionManager,
+  simpleGameState,
+  undefined, // SimpleAuth will use default
+  { heartbeatInterval: 30000, connectionTimeout: 60000, maxPlayersPerMatch: 2 }
 );
 
 // Store gameHandler reference for metrics

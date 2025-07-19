@@ -39,7 +39,7 @@ async function cleanDatabase() {
     logger.info('Database cleanup completed successfully');
     
     // Close connections
-    await db.end();
+    await db.close();
     await redis.quit();
     
     process.exit(0);

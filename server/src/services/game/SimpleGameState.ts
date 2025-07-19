@@ -8,24 +8,13 @@
 import { SimpleGameLoop, type SimplePlayer } from './SimpleGameLoop.js';
 import { BasicCombat } from './BasicCombat.js';
 import { ArenaMap, type ArenaConfig } from '../../game/arena/ArenaMap.js';
-import { RoundSystem, type MatchState } from '../../game/arena/RoundSystem.js';
+import { RoundSystem } from '../../game/arena/RoundSystem.js';
 import { SimpleProjectileFlow } from '../../game/projectiles/SimpleProjectileFlow.js';
-import { SimpleSpriteCoordinator } from '../../game/sprites/SimpleSpriteCoordinator.js';
+import { SimpleSpriteCoordinator } from '../../game/rendering/SimpleSpriteCoordinator.js';
+import { SimpleProjectiles, type ProjectileData } from '../../game/projectiles/SimpleProjectiles.js';
 import { logger } from '../../utils/logger.js';
 import type { ClassType } from '@dueled/shared';
 
-export interface ProjectileData {
-  id: string;
-  ownerId: string;
-  type: string;
-  x: number;
-  y: number;
-  targetX: number;
-  targetY: number;
-  speed: number;
-  damage: number;
-  createdAt: number;
-}
 
 export interface GameStateConfig {
   maxPlayers: number;           // Always 2 for 1v1
@@ -128,8 +117,12 @@ export class SimpleGameState {
       const gameLoop = new SimpleGameLoop();
       const projectiles = new SimpleProjectiles();
       const combat = new BasicCombat();
-      const arena = ArenaMap.getArenaConfig(this.config.arenaType);
-      const roundSystem = new RoundSystem(matchId, { bestOf: 3 });
+      const arena = ArenaMap.getArena(this.config.arenaType);
+      if (!arena) {
+        logger.error(`Arena ${this.config.arenaType} not found`);
+        return false;
+      }
+      const roundSystem = new RoundSystem(matchId, player1.id, player2.id, { maxRounds: 3 });
       
       // Create projectile flow system
       const projectileFlow = new SimpleProjectileFlow(projectiles, combat);
@@ -141,25 +134,20 @@ export class SimpleGameState {
       // Create players
       const players = new Map<string, SimplePlayer>();
       
-      // Add player 1
-      const p1 = gameLoop.addPlayer(player1.id, player1.username, player1.classType);
-      if (p1) {
-        p1.x = arena.spawnPoints[0].x;
-        p1.y = arena.spawnPoints[0].y;
-        players.set(player1.id, p1);
-        this.playerToMatch.set(player1.id, matchId);
+      // Create simple game state for this match
+      const gameState = gameLoop.createGameState(
+        matchId,
+        [player1, player2],
+        this.config.arenaType
+      );
+      
+      // Extract players from game state
+      for (const [playerId, player] of gameState.players) {
+        players.set(playerId, player);
+        this.playerToMatch.set(playerId, matchId);
       }
       
-      // Add player 2
-      const p2 = gameLoop.addPlayer(player2.id, player2.username, player2.classType);
-      if (p2) {
-        p2.x = arena.spawnPoints[1].x;
-        p2.y = arena.spawnPoints[1].y;
-        players.set(player2.id, p2);
-        this.playerToMatch.set(player2.id, matchId);
-      }
-      
-      if (!p1 || !p2) {
+      if (players.size !== 2) {
         logger.error(`Failed to create players for match ${matchId}`);
         return false;
       }
@@ -167,22 +155,24 @@ export class SimpleGameState {
       // Setup callbacks
       projectileFlow.setCallbacks({
         onProjectileHit: (hit) => {
-          if (this.callbacks.onPlayerDied && players.get(hit.targetId)?.health <= 0) {
-            const killerId = projectiles.getProjectile(hit.projectileId)?.ownerId;
+          const targetPlayer = players.get(hit.targetId);
+          if (this.callbacks.onPlayerDied && targetPlayer && targetPlayer.health <= 0) {
+            const killerProjectile = projectiles.getProjectile(hit.projectileId);
+            const killerId = killerProjectile?.ownerId;
             this.callbacks.onPlayerDied(hit.targetId, killerId);
           }
         }
       });
       
       roundSystem.setCallbacks({
-        onRoundEnd: (winner) => {
+        onRoundEnd: (result) => {
           if (this.callbacks.onRoundEnded) {
-            this.callbacks.onRoundEnded(matchId, winner);
+            this.callbacks.onRoundEnded(matchId, result.winnerId || 'draw');
           }
         },
-        onMatchEnd: (winner) => {
+        onMatchEnd: (result) => {
           if (this.callbacks.onMatchEnded) {
-            this.callbacks.onMatchEnded(matchId, winner);
+            this.callbacks.onMatchEnded(matchId, result.winnerId || 'draw');
           }
           this.endMatch(matchId);
         }
@@ -233,10 +223,10 @@ export class SimpleGameState {
     const validX = Math.max(0, Math.min(match.arena.size.x, x));
     const validY = Math.max(0, Math.min(match.arena.size.y, y));
     
-    player.x = validX;
-    player.y = validY;
+    player.position.x = validX;
+    player.position.y = validY;
     player.rotation = rotation;
-    player.lastUpdate = Date.now();
+    player.lastInputTime = Date.now();
     
     return true;
   }
@@ -258,7 +248,7 @@ export class SimpleGameState {
     const projectileRequest = {
       playerId,
       projectileType: player.classType === 'archer' ? 'arrow' : 'berserker_projectile',
-      startPosition: { x: player.x, y: player.y },
+      startPosition: { x: player.position.x, y: player.position.y },
       targetPosition: { x: targetX, y: targetY },
       timestamp: Date.now(),
       sequence: 0
@@ -287,7 +277,7 @@ export class SimpleGameState {
       const projectileRequest = {
         playerId,
         projectileType: 'powershot_arrow',
-        startPosition: { x: player.x, y: player.y },
+        startPosition: { x: player.position.x, y: player.position.y },
         targetPosition: { x: targetX, y: targetY },
         timestamp: Date.now(),
         sequence: 0
@@ -329,8 +319,13 @@ export class SimpleGameState {
     // Check for round end conditions
     const alivePlayers = Array.from(match.players.values()).filter(p => p.isAlive);
     if (alivePlayers.length <= 1 && match.roundSystem.getState().state === 'active') {
-      const winner = alivePlayers.length === 1 ? alivePlayers[0].id : 'draw';
-      match.roundSystem.endRound(winner);
+      const winnerId = alivePlayers.length === 1 ? alivePlayers[0].id : null;
+      const allPlayers = Array.from(match.players.values());
+      const finalHealths = {
+        player1: allPlayers[0]?.health || 0,
+        player2: allPlayers[1]?.health || 0
+      };
+      match.roundSystem.endRound(winnerId, 'elimination', finalHealths);
       
       // Respawn players for next round if match continues
       if (!match.roundSystem.isMatchComplete()) {
@@ -356,8 +351,8 @@ export class SimpleGameState {
     for (const player of match.players.values()) {
       player.health = player.maxHealth;
       player.isAlive = true;
-      player.x = match.arena.spawnPoints[spawnIndex].x;
-      player.y = match.arena.spawnPoints[spawnIndex].y;
+      player.position.x = match.arena.spawnPoints[spawnIndex].position.x;
+      player.position.y = match.arena.spawnPoints[spawnIndex].position.y;
       spawnIndex = (spawnIndex + 1) % match.arena.spawnPoints.length;
     }
     
@@ -378,14 +373,14 @@ export class SimpleGameState {
     const playerStates: PlayerState[] = Array.from(match.players.values()).map(player => ({
       id: player.id,
       username: player.username,
-      x: player.x,
-      y: player.y,
+      x: player.position.x,
+      y: player.position.y,
       rotation: player.rotation,
       health: player.health,
       maxHealth: player.maxHealth,
       classType: player.classType,
       isAlive: player.isAlive,
-      lastUpdate: player.lastUpdate
+      lastUpdate: player.lastInputTime
     }));
     
     // Get projectiles

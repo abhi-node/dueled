@@ -5,7 +5,7 @@
  * Designed for 1v1 arena combat with straightforward mechanics
  */
 
-import { SimplePlayer } from '../core/SimpleGameLoop.js';
+import { SimplePlayer } from '../../services/game/SimpleGameLoop.js';
 import { SimpleProjectiles, ProjectileData } from '../projectiles/SimpleProjectiles.js';
 import { logger } from '../../utils/logger.js';
 
@@ -123,7 +123,7 @@ export class BasicAbilities {
     
     // Check range
     const distance = Math.sqrt(
-      Math.pow(targetX - player.x, 2) + Math.pow(targetY - player.y, 2)
+      Math.pow(targetX - player.position.x, 2) + Math.pow(targetY - player.position.y, 2)
     );
     
     if (distance > ability.range) {
@@ -164,7 +164,7 @@ export class BasicAbilities {
     // Execute ability
     switch (abilityName) {
       case 'charge':
-        return this.executeBerserkerCharge(player, targetX || player.x, targetY || player.y, ability);
+        return this.executeBerserkerCharge(player, targetX || player.position.x, targetY || player.position.y, ability);
       case 'whirlwind':
         return this.executeWhirlwind(player, ability);
       default:
@@ -182,28 +182,24 @@ export class BasicAbilities {
     ability: AbilityConfig
   ): AbilityResult {
     // Calculate direction
-    const dx = targetX - player.x;
-    const dy = targetY - player.y;
+    const dx = targetX - player.position.x;
+    const dy = targetY - player.position.y;
     const distance = Math.sqrt(dx * dx + dy * dy);
     
     const dirX = dx / distance;
     const dirY = dy / distance;
     
-    // Create high-damage arrow projectile
-    const projectileData: ProjectileData = {
-      id: `powershot_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      x: player.x,
-      y: player.y,
-      velocityX: dirX * 18.0, // Faster than normal arrow
-      velocityY: dirY * 18.0,
-      damage: ability.damage,
-      type: 'powershot_arrow',
-      ownerId: player.id,
-      piercing: true, // Pierces through armor
-      lifespan: 3.0
-    };
+    // Create high-damage arrow projectile using SimpleProjectiles
+    const projectileId = this.simpleProjectiles.createProjectile(
+      player.id,
+      'powershot_arrow',
+      player.position.x,
+      player.position.y,
+      targetX,
+      targetY
+    );
     
-    this.simpleProjectiles.createProjectile(projectileData);
+    // Projectile already created above
     this.recordAbilityUse(player.id, ability.name);
     
     logger.info(`${player.id} used Power Shot dealing ${ability.damage} damage`);
@@ -211,7 +207,7 @@ export class BasicAbilities {
     return {
       success: true,
       damage: ability.damage,
-      projectileId: projectileData.id,
+      projectileId: projectileId || 'failed',
       effects: ['piercing'],
       message: 'Power Shot fired!'
     };
@@ -227,8 +223,8 @@ export class BasicAbilities {
     ability: AbilityConfig
   ): AbilityResult {
     // Calculate base direction
-    const dx = targetX - player.x;
-    const dy = targetY - player.y;
+    const dx = targetX - player.position.x;
+    const dy = targetY - player.position.y;
     const distance = Math.sqrt(dx * dx + dy * dy);
     
     const baseAngle = Math.atan2(dy, dx);
@@ -242,20 +238,22 @@ export class BasicAbilities {
       const dirX = Math.cos(angle);
       const dirY = Math.sin(angle);
       
-      const projectileData: ProjectileData = {
-        id: `multishot_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 9)}`,
-        x: player.x,
-        y: player.y,
-        velocityX: dirX * 15.0,
-        velocityY: dirY * 15.0,
-        damage: ability.damage,
-        type: 'multishot_arrow',
-        ownerId: player.id,
-        lifespan: 2.5
-      };
+      // Calculate target position based on angle
+      const range = 10; // 10 tiles range
+      const targetPosX = player.position.x + dirX * range;
+      const targetPosY = player.position.y + dirY * range;
       
-      this.simpleProjectiles.createProjectile(projectileData);
-      projectileIds.push(projectileData.id);
+      const projectileId = this.simpleProjectiles.createProjectile(
+        player.id,
+        'multishot_arrow',
+        player.position.x,
+        player.position.y,
+        targetPosX,
+        targetPosY
+      );
+      
+      // Projectile already created above
+      if (projectileId) projectileIds.push(projectileId);
     }
     
     this.recordAbilityUse(player.id, ability.name);
@@ -280,8 +278,8 @@ export class BasicAbilities {
     ability: AbilityConfig
   ): AbilityResult {
     // Calculate charge direction
-    const dx = targetX - player.x;
-    const dy = targetY - player.y;
+    const dx = targetX - player.position.x;
+    const dy = targetY - player.position.y;
     const distance = Math.sqrt(dx * dx + dy * dy);
     
     if (distance < 2.0) {
@@ -293,8 +291,8 @@ export class BasicAbilities {
     const dirY = dy / distance;
     
     // Move player forward
-    const newX = player.x + dirX * maxChargeDistance;
-    const newY = player.y + dirY * maxChargeDistance;
+    const newX = player.position.x + dirX * maxChargeDistance;
+    const newY = player.position.y + dirY * maxChargeDistance;
     
     // Apply charge effect
     this.applyEffect(player.id, 'berserker_charge', ability.duration || 2.0);

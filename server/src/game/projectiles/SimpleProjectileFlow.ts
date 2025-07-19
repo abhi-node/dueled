@@ -8,7 +8,7 @@
 import { SimpleProjectiles, type ProjectileData } from './SimpleProjectiles.js';
 import { BasicCombat } from '../../services/game/BasicCombat.js';
 import { ArenaMap, type ArenaConfig } from '../arena/ArenaMap.js';
-import type { SimplePlayer } from '../core/SimpleGameLoop.js';
+import type { SimplePlayer } from '../../services/game/SimpleGameLoop.js';
 import { logger } from '../../utils/logger.js';
 
 export interface ProjectileRequest {
@@ -124,8 +124,7 @@ export class SimpleProjectileFlow {
     }
     
     // Create projectile
-    const projectileData = this.createProjectileFromRequest(request, player, validation);
-    const projectileId = this.simpleProjectiles.createProjectile(projectileData);
+    const projectileId = this.createProjectileFromRequest(request, player, validation);
     
     if (projectileId) {
       // Track projectile ownership
@@ -135,7 +134,10 @@ export class SimpleProjectileFlow {
       this.lastPlayerShot.set(request.playerId, Date.now());
       
       if (this.callbacks.onProjectileCreated) {
-        this.callbacks.onProjectileCreated(projectileData);
+        const projectileData = this.simpleProjectiles.getProjectile(projectileId);
+        if (projectileData) {
+          this.callbacks.onProjectileCreated(projectileData);
+        }
       }
       
       logger.debug(`Created projectile ${projectileId} for player ${request.playerId}`);
@@ -214,15 +216,15 @@ export class SimpleProjectileFlow {
     
     // Check if start position is reasonably close to player position
     const distance = Math.sqrt(
-      Math.pow(request.startPosition.x - player.x, 2) +
-      Math.pow(request.startPosition.y - player.y, 2)
+      Math.pow(request.startPosition.x - player.position.x, 2) +
+      Math.pow(request.startPosition.y - player.position.y, 2)
     );
     
     if (distance > this.config.validationTolerance) {
       // Correct to player position
       return {
         valid: true,
-        correctedPosition: { x: player.x, y: player.y }
+        correctedPosition: { x: player.position.x, y: player.position.y }
       };
     }
     
@@ -236,7 +238,7 @@ export class SimpleProjectileFlow {
     request: ProjectileRequest,
     player: SimplePlayer,
     validation: ProjectileValidation
-  ): ProjectileData {
+  ): string | null {
     const startPos = validation.correctedPosition || request.startPosition;
     const targetPos = validation.correctedTarget || request.targetPosition;
     
@@ -251,19 +253,22 @@ export class SimpleProjectileFlow {
     // Get projectile config based on type and player class
     const projectileConfig = this.getProjectileConfig(request.projectileType, player.classType);
     
-    return {
-      id: `${request.projectileType}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      x: startPos.x,
-      y: startPos.y,
-      velocityX: dirX * projectileConfig.speed,
-      velocityY: dirY * projectileConfig.speed,
-      damage: projectileConfig.damage,
-      type: request.projectileType,
-      ownerId: request.playerId,
-      piercing: projectileConfig.piercing,
-      lifespan: projectileConfig.lifespan,
-      maxRange: distance > 0 ? Math.min(distance, this.config.maxRange) : this.config.maxRange
-    };
+    // Calculate target position based on direction and range
+    const range = projectileConfig.range || 10;
+    const targetX = startPos.x + dirX * range;
+    const targetY = startPos.y + dirY * range;
+    
+    // Use SimpleProjectiles to create properly formatted projectile
+    const projectileId = this.simpleProjectiles.createProjectile(
+      request.playerId,
+      request.projectileType,
+      startPos.x,
+      startPos.y,
+      targetX,
+      targetY
+    );
+    
+    return projectileId;
   }
   
   /**
@@ -274,13 +279,14 @@ export class SimpleProjectileFlow {
     damage: number;
     piercing: boolean;
     lifespan: number;
+    range: number;
   } {
-    // Define projectile configs
-    const configs = {
-      'arrow': { speed: 15.0, damage: 25, piercing: false, lifespan: 3.0 },
-      'powershot_arrow': { speed: 18.0, damage: 45, piercing: true, lifespan: 3.0 },
-      'multishot_arrow': { speed: 15.0, damage: 30, piercing: false, lifespan: 2.5 },
-      'berserker_projectile': { speed: 12.0, damage: 35, piercing: false, lifespan: 2.0 }
+    // Define projectile configs with proper index signature
+    const configs: Record<string, { speed: number; damage: number; piercing: boolean; lifespan: number; range: number }> = {
+      'arrow': { speed: 15.0, damage: 25, piercing: false, lifespan: 3.0, range: 12 },
+      'powershot_arrow': { speed: 18.0, damage: 45, piercing: true, lifespan: 3.0, range: 15 },
+      'multishot_arrow': { speed: 15.0, damage: 30, piercing: false, lifespan: 2.5, range: 10 },
+      'berserker_projectile': { speed: 12.0, damage: 35, piercing: false, lifespan: 2.0, range: 8 }
     };
     
     return configs[projectileType] || configs['arrow'];
@@ -374,8 +380,8 @@ export class SimpleProjectileFlow {
     const projectileRadius = 0.2; // Projectile hitbox radius
     
     const distance = Math.sqrt(
-      Math.pow(projectile.x - player.x, 2) +
-      Math.pow(projectile.y - player.y, 2)
+      Math.pow(projectile.x - player.position.x, 2) +
+      Math.pow(projectile.y - player.position.y, 2)
     );
     
     return distance <= (playerRadius + projectileRadius);

@@ -220,7 +220,7 @@ export class BasicCombat {
     };
 
     const classStats = baseStats[classType];
-    const projectileStats = classStats?.[projectileType];
+    const projectileStats = classStats?.[projectileType as keyof typeof classStats];
     
     if (!projectileStats) {
       logger.warn(`Unknown projectile type ${projectileType} for class ${classType}`);
@@ -383,8 +383,43 @@ export class BasicCombat {
   }
 
   /**
+   * Apply damage to a target player
+   */
+  applyDamage(target: SimplePlayer, damage: number, damageType: DamageType = DamageType.PHYSICAL): number {
+    const defense = target.stats.defense;
+    let effectiveDamage = damage;
+    
+    // Apply defense reduction
+    if (damageType === DamageType.PHYSICAL) {
+      effectiveDamage = Math.max(1, damage - defense);
+    } else if (damageType === DamageType.MAGICAL) {
+      effectiveDamage = Math.max(1, damage - defense * 0.5); // Magic penetrates armor better
+    }
+    
+    const oldHealth = target.health;
+    target.health = Math.max(0, target.health - effectiveDamage);
+    const actualDamage = oldHealth - target.health;
+    
+    if (target.health <= 0) {
+      target.isAlive = false;
+      logger.info(`Player ${target.id} has been eliminated`);
+    }
+    
+    logger.debug(`Player ${target.id} took ${actualDamage} damage (${oldHealth} -> ${target.health})`);
+    return actualDamage;
+  }
+
+  /**
    * Apply healing (for future consumables/abilities)
    */
+  /**
+   * Apply temporary buff to player
+   */
+  applyBuff(target: SimplePlayer, buffType: string, multiplier: number, duration: number): void {
+    // Simple buff system - could be expanded later
+    logger.debug(`Applied ${buffType} buff to ${target.id}: ${multiplier}x for ${duration}ms`);
+  }
+
   applyHealing(target: SimplePlayer, healAmount: number): number {
     const oldHealth = target.health;
     target.health = Math.min(target.maxHealth, target.health + healAmount);

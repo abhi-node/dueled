@@ -10,6 +10,9 @@ export interface JwtPayload {
   jti: string;          // unique token id
   iat?: number;
   exp?: number;
+  // Legacy compatibility fields
+  playerId?: string;
+  username?: string;
 }
 
 export interface RefreshTokenPayload {
@@ -89,7 +92,7 @@ export async function validateRefreshToken(sessionId: string): Promise<string | 
  * Revoke refresh token
  */
 export async function revokeRefreshToken(sessionId: string): Promise<void> {
-  await redis.del(`rt:${sessionId}`);
+  await redis.delete(`rt:${sessionId}`);
 }
 
 /**
