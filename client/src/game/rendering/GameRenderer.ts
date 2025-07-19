@@ -1,15 +1,11 @@
 /**
- * GameRenderer - Coordinates WebGL rendering for 1v1 arena combat
+ * GameRenderer - Canvas 2D rendering for 1v1 arena combat
  * 
- * Replaces monolithic MainGameScene rendering with specialized WebGL systems
- * Designed for Archer vs Berserker combat with high-performance rendering
+ * RESTORED: Back to optimized CanvasRenderer with dev branch performance improvements
+ * Focus on functionality and cross-platform compatibility
  */
 
-import { WebGLContext } from './webgl/WebGLContext.js';
-import { ShaderManager } from './webgl/ShaderManager.js';
-import { GPURaycaster, createSimpleArenaMap, type ViewState } from './webgl/GPURaycaster.js';
-import { WebGLSpriteRenderer } from './webgl/WebGLSpriteRenderer.js';
-import { TextureAtlas, createArenaSprites } from './webgl/TextureAtlas.js';
+import { CanvasRenderer, type CanvasPlayerState, type CanvasMapData, type CanvasProjectile } from './CanvasRenderer.js';
 
 export interface PlayerState {
   id: string;
@@ -19,6 +15,7 @@ export interface PlayerState {
   height: number;
   classType: 'archer' | 'berserker';
   health: number;
+  maxHealth: number;
   isAlive: boolean;
 }
 
@@ -26,9 +23,9 @@ export interface ProjectileState {
   id: string;
   x: number;
   y: number;
-  type: string;
-  rotation: number;
-  scale?: number;
+  angle: number;
+  type: 'arrow' | 'fireball' | 'bomb';
+  scale: number;
 }
 
 export interface UIElement {
@@ -50,15 +47,11 @@ export interface RenderStats {
 }
 
 /**
- * GameRenderer - High-performance WebGL rendering coordination
+ * GameRenderer - Canvas 2D rendering coordination
  */
 export class GameRenderer {
   private canvas: HTMLCanvasElement;
-  private webglContext: WebGLContext;
-  private shaderManager: ShaderManager;
-  private gpuRaycaster: GPURaycaster;
-  private spriteRenderer: WebGLSpriteRenderer;
-  private textureAtlas: TextureAtlas;
+  private canvasRenderer: CanvasRenderer;
   
   private localPlayerId: string = '';
   private players: Map<string, PlayerState> = new Map();
@@ -75,14 +68,10 @@ export class GameRenderer {
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     
-    // Initialize WebGL systems
-    this.webglContext = new WebGLContext(canvas);
-    this.shaderManager = new ShaderManager(this.webglContext.getContext()!);
-    this.gpuRaycaster = new GPURaycaster(this.webglContext, this.shaderManager);
-    this.spriteRenderer = new WebGLSpriteRenderer(this.webglContext, this.shaderManager);
-    this.textureAtlas = new TextureAtlas(this.webglContext.getContext()!, 2048);
+    // Initialize optimized CanvasRenderer
+    this.canvasRenderer = new CanvasRenderer(canvas);
     
-    console.log('GameRenderer initialized with WebGL systems');
+    console.log('GameRenderer initialized with optimized CanvasRenderer');
   }
   
   /**
@@ -92,29 +81,16 @@ export class GameRenderer {
     if (this.initialized) return;
     
     try {
-      // Create and load arena sprites
-      const arenaSprites = await createArenaSprites();
-      await this.textureAtlas.packTextures(arenaSprites);
-      
-      // Load sprite atlas into renderer
-      const atlasTexture = this.textureAtlas.getTexture();
-      const atlasRegions = this.textureAtlas.getAllRegions();
-      
-      if (atlasTexture) {
-        this.spriteRenderer.loadSpriteAtlas(atlasTexture, 2048, 2048, atlasRegions);
-      }
-      
-      // Load arena map into raycaster
-      const arenaMap = createSimpleArenaMap();
-      this.gpuRaycaster.loadArenaMap(arenaMap);
+      // Initialize canvas renderer
+      await this.canvasRenderer.initialize();
       
       // Resize to current canvas dimensions
       this.resize();
       
       this.initialized = true;
-      console.log('GameRenderer initialization complete');
+      console.log('✅ GameRenderer initialization complete');
     } catch (error) {
-      console.error('Failed to initialize GameRenderer:', error);
+      console.error('❌ Failed to initialize GameRenderer:', error);
       throw error;
     }
   }
@@ -124,6 +100,31 @@ export class GameRenderer {
    */
   setLocalPlayer(playerId: string): void {
     this.localPlayerId = playerId;
+    this.canvasRenderer.setLocalPlayer(playerId);
+  }
+  
+  /**
+   * Update map data from server
+   */
+  updateMapData(mapData: {
+    arenaType: string;
+    size: { x: number; y: number };
+    walls: Array<{ x1: number; y1: number; x2: number; y2: number }>;
+    spawnPoints: Array<{ position: { x: number; y: number }; rotation: number }>;
+  }): void {
+    console.log('🗺️ GameRenderer: Updating map data:', mapData);
+    
+    // Convert to CanvasMapData format
+    const canvasMapData: CanvasMapData = {
+      walls: mapData.walls,
+      size: mapData.size,
+      spawnPoints: mapData.spawnPoints
+    };
+    
+    // Update canvas renderer with new map
+    this.canvasRenderer.updateMapFromServer(canvasMapData);
+    
+    console.log('✅ GameRenderer: Map data updated successfully');
   }
   
   /**
@@ -131,6 +132,20 @@ export class GameRenderer {
    */
   updatePlayer(player: PlayerState): void {
     this.players.set(player.id, { ...player });
+    
+    // Convert to CanvasPlayerState format
+    const canvasPlayer: CanvasPlayerState = {
+      id: player.id,
+      x: player.x,
+      y: player.y,
+      angle: player.angle,
+      classType: player.classType,
+      health: player.health,
+      maxHealth: player.maxHealth,
+      isAlive: player.isAlive
+    };
+    
+    this.canvasRenderer.updatePlayer(canvasPlayer);
   }
   
   /**
@@ -138,6 +153,7 @@ export class GameRenderer {
    */
   removePlayer(playerId: string): void {
     this.players.delete(playerId);
+    this.canvasRenderer.removePlayer(playerId);
   }
   
   /**
@@ -145,6 +161,18 @@ export class GameRenderer {
    */
   updateProjectile(projectile: ProjectileState): void {
     this.projectiles.set(projectile.id, { ...projectile });
+    
+    // Convert to CanvasProjectile format
+    const canvasProjectile: CanvasProjectile = {
+      id: projectile.id,
+      x: projectile.x,
+      y: projectile.y,
+      angle: projectile.angle,
+      type: projectile.type,
+      scale: projectile.scale
+    };
+    
+    this.canvasRenderer.updateProjectile(canvasProjectile);
   }
   
   /**
@@ -152,6 +180,7 @@ export class GameRenderer {
    */
   removeProjectile(projectileId: string): void {
     this.projectiles.delete(projectileId);
+    this.canvasRenderer.removeProjectile(projectileId);
   }
   
   /**
@@ -161,24 +190,6 @@ export class GameRenderer {
     this.uiElements = [...elements];
   }
   
-  /**
-   * Update camera based on local player
-   */
-  private updateCamera(): ViewState | null {
-    const localPlayer = this.players.get(this.localPlayerId);
-    if (!localPlayer) return null;
-    
-    // Set camera position for sprite renderer
-    this.spriteRenderer.setCameraPosition(localPlayer.x, localPlayer.y);
-    
-    // Return view state for raycaster
-    return {
-      playerX: localPlayer.x,
-      playerY: localPlayer.y,
-      playerAngle: localPlayer.angle,
-      playerHeight: localPlayer.height
-    };
-  }
   
   /**
    * Render complete game frame
@@ -190,87 +201,17 @@ export class GameRenderer {
     }
     
     const currentTime = performance.now();
-    const deltaTime = currentTime - this.lastFrameTime;
     this.lastFrameTime = currentTime;
     
     // Update FPS
     this.updateFPS(currentTime);
     
-    // Begin frame
-    this.webglContext.beginFrame();
+    // Render using CanvasRenderer
+    this.canvasRenderer.render();
     
-    // Update camera
-    const viewState = this.updateCamera();
-    
-    if (viewState) {
-      // Render raycasted environment
-      this.gpuRaycaster.renderRaycastView(viewState);
-      
-      // Present raycasted view to screen
-      this.gpuRaycaster.presentToScreen();
-      
-      // Render sprites (players and projectiles)
-      this.renderSprites();
-      
-      // Render UI elements
-      this.renderUI();
-    } else {
-      // No local player - just clear screen
-      const gl = this.webglContext.getContext()!;
-      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-    }
-    
-    // End frame
-    this.webglContext.endFrame();
     this.frameCount++;
   }
   
-  /**
-   * Render all sprites (players and projectiles)
-   */
-  private renderSprites(): void {
-    // Render players
-    const playerData = Array.from(this.players.values()).map(player => ({
-      x: player.x,
-      y: player.y,
-      angle: player.angle,
-      classType: player.classType,
-      health: player.health,
-      isAlive: player.isAlive
-    }));
-    
-    this.spriteRenderer.renderPlayers(playerData);
-    
-    // Render projectiles
-    const projectileData = Array.from(this.projectiles.values()).map(projectile => ({
-      x: projectile.x,
-      y: projectile.y,
-      projectileType: projectile.type,
-      rotation: projectile.rotation,
-      scale: projectile.scale
-    }));
-    
-    this.spriteRenderer.renderProjectiles(projectileData);
-  }
-  
-  /**
-   * Render UI elements
-   */
-  private renderUI(): void {
-    if (this.uiElements.length === 0) return;
-    
-    // Convert UI elements to sprite format
-    const uiSprites = this.uiElements.map(element => ({
-      x: element.x,
-      y: element.y,
-      width: element.width,
-      height: element.height,
-      color: element.color,
-      spriteName: element.type
-    }));
-    
-    this.spriteRenderer.renderUI(uiSprites);
-  }
   
   /**
    * Update FPS calculation
@@ -291,57 +232,35 @@ export class GameRenderer {
     const rect = this.canvas.getBoundingClientRect();
     const devicePixelRatio = window.devicePixelRatio || 1;
     
-    const width = rect.width * devicePixelRatio;
-    const height = rect.height * devicePixelRatio;
+    let width = rect.width * devicePixelRatio;
+    let height = rect.height * devicePixelRatio;
+    
+    // Fallback to canvas's actual dimensions if getBoundingClientRect returns 0
+    if (width === 0 || height === 0) {
+      width = this.canvas.width || 800;
+      height = this.canvas.height || 600;
+      console.warn('⚠️ getBoundingClientRect returned 0, using canvas dimensions:', { width, height });
+    }
     
     if (this.canvas.width !== width || this.canvas.height !== height) {
-      this.canvas.width = width;
-      this.canvas.height = height;
-      
-      // Update WebGL viewport
-      this.webglContext.resizeViewport();
-      
-      // Update raycaster resolution
-      this.gpuRaycaster.resize(width, height);
+      // Update canvas renderer
+      this.canvasRenderer.resize(width, height);
       
       console.log(`GameRenderer resized to ${width}x${height} (${devicePixelRatio}x DPR)`);
     }
   }
   
-  /**
-   * Update rendering settings
-   */
-  updateRaycastSettings(settings: {
-    fov?: number;
-    maxDistance?: number;
-    wallHeight?: number;
-    resolution?: number;
-  }): void {
-    this.gpuRaycaster.updateSettings(settings);
-  }
-  
-  /**
-   * Set camera zoom level
-   */
-  setCameraZoom(zoom: number): void {
-    this.spriteRenderer.setCameraZoom(zoom);
-  }
   
   /**
    * Get comprehensive rendering statistics
    */
   getRenderStats(): RenderStats {
-    const webglStats = this.webglContext.getRenderStats();
-    const raycastStats = this.gpuRaycaster.getStats();
-    const spriteStats = this.spriteRenderer.getStats();
-    const atlasStats = this.textureAtlas.getStats();
-    
     return {
       fps: this.currentFPS,
       frameTime: this.lastFrameTime,
-      drawCalls: webglStats.drawCalls,
-      triangles: webglStats.triangles,
-      memoryUsage: raycastStats.memoryUsage + spriteStats.memoryUsage + atlasStats.memoryUsage
+      drawCalls: this.players.size + this.projectiles.size + 1, // Raycasting + sprites
+      triangles: 0, // Canvas doesn't use triangles
+      memoryUsage: 512 * 1024 // Estimate 512KB for canvas
     };
   }
   
@@ -368,8 +287,7 @@ export class GameRenderer {
     players: number;
     projectiles: number;
     uiElements: number;
-    webglCapabilities: any;
-    raycastSettings: any;
+    canvasRenderer: any;
     renderStats: RenderStats;
   } {
     return {
@@ -378,8 +296,7 @@ export class GameRenderer {
       players: this.players.size,
       projectiles: this.projectiles.size,
       uiElements: this.uiElements.length,
-      webglCapabilities: this.webglContext.getCapabilities(),
-      raycastSettings: this.gpuRaycaster.getStats(),
+      canvasRenderer: this.canvasRenderer.getDebugInfo(),
       renderStats: this.getRenderStats()
     };
   }
@@ -400,11 +317,7 @@ export class GameRenderer {
   destroy(): void {
     this.clear();
     
-    this.gpuRaycaster.destroy();
-    this.spriteRenderer.destroy();
-    this.textureAtlas.destroy();
-    this.shaderManager.destroy();
-    this.webglContext.destroy();
+    this.canvasRenderer.destroy();
     
     this.initialized = false;
     console.log('GameRenderer destroyed');

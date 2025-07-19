@@ -205,7 +205,11 @@ export class InputHandler {
     this.boundEventListeners.set('pointerlockerror', pointerLockErrorHandler);
     
     // Canvas click for pointer lock
-    const canvasClickHandler = () => this.requestPointerLock();
+    const canvasClickHandler = (e: Event) => {
+      e.preventDefault();
+      console.log('🖱️ Canvas clicked, requesting pointer lock...');
+      this.requestPointerLock();
+    };
     this.canvas.addEventListener('click', canvasClickHandler);
     this.boundEventListeners.set('canvasclick', canvasClickHandler);
   }
@@ -248,7 +252,14 @@ export class InputHandler {
    * Handle mouse button down
    */
   private handleMouseDown(e: MouseEvent): void {
-    if (!this.enabled || !this.pointerLocked) return;
+    if (!this.enabled) return;
+    
+    // If not pointer locked, try to lock on click
+    if (!this.pointerLocked) {
+      console.log('🖱️ Mouse clicked, requesting pointer lock...');
+      this.requestPointerLock();
+      return;
+    }
     
     const mouseKey = `mouse${e.button}`;
     this.keysPressed.add(mouseKey);
@@ -276,7 +287,10 @@ export class InputHandler {
    * Handle mouse movement
    */
   private handleMouseMove(e: MouseEvent): void {
-    if (!this.enabled || !this.pointerLocked) return;
+    if (!this.enabled) return;
+    
+    // Only process movement if pointer is locked
+    if (!this.pointerLocked) return;
     
     // Update mouse movement
     this.mouseMovement.x += e.movementX * this.config.mouseSensitivity;
@@ -416,8 +430,21 @@ export class InputHandler {
    * Request pointer lock
    */
   requestPointerLock(): void {
-    if (!this.pointerLocked) {
-      this.canvas.requestPointerLock();
+    if (!this.pointerLocked && this.canvas) {
+      console.log('🔒 Requesting pointer lock on canvas...');
+      
+      // Ensure canvas can receive focus
+      if (!this.canvas.tabIndex) {
+        this.canvas.tabIndex = -1;
+      }
+      this.canvas.focus();
+      
+      // Request pointer lock
+      this.canvas.requestPointerLock().then(() => {
+        console.log('✅ Pointer lock request successful');
+      }).catch((error) => {
+        console.error('❌ Pointer lock request failed:', error);
+      });
     }
   }
   
@@ -428,11 +455,14 @@ export class InputHandler {
     this.pointerLocked = document.pointerLockElement === this.canvas;
     
     if (this.pointerLocked) {
-      console.log('Pointer locked');
-      this.enable();
+      console.log('✅ Pointer locked - mouse controls active');
     } else {
-      console.log('Pointer unlocked');
-      this.disable();
+      console.log('❌ Pointer unlocked - click canvas to enable mouse controls');
+    }
+    
+    // Keep input enabled regardless of pointer lock status for keyboard input
+    if (!this.enabled) {
+      this.enable();
     }
   }
   

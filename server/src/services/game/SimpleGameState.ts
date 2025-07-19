@@ -12,8 +12,10 @@ import { RoundSystem } from '../../game/arena/RoundSystem.js';
 import { SimpleProjectileFlow } from '../../game/projectiles/SimpleProjectileFlow.js';
 import { SimpleSpriteCoordinator } from '../../game/rendering/SimpleSpriteCoordinator.js';
 import { SimpleProjectiles, type ProjectileData } from '../../game/projectiles/SimpleProjectiles.js';
+import { DeltaStateManager } from '../delta/DeltaStateManager.js';
 import { logger } from '../../utils/logger.js';
 import type { ClassType } from '@dueled/shared';
+import type { GameStateDelta, FullGameState } from '../../types/DeltaTypes.js';
 
 
 export interface GameStateConfig {
@@ -47,13 +49,20 @@ export interface MatchStateUpdate {
     score: { player1: number; player2: number };
     status: string;
   };
+  mapData?: {
+    arenaType: string;
+    size: { x: number; y: number };
+    walls: Array<{ x1: number; y1: number; x2: number; y2: number }>;
+    spawnPoints: Array<{ position: { x: number; y: number }; rotation: number }>;
+  };
 }
 
 export interface SimpleGameStateCallbacks {
   onPlayerDied?: (playerId: string, killerId?: string) => void;
   onRoundEnded?: (matchId: string, winner: string) => void;
   onMatchEnded?: (matchId: string, finalWinner: string) => void;
-  onStateUpdate?: (update: MatchStateUpdate) => void;
+  onDeltaUpdate?: (delta: GameStateDelta) => void;
+  onFullSync?: (fullState: FullGameState) => void;
 }
 
 /**
@@ -62,6 +71,9 @@ export interface SimpleGameStateCallbacks {
 export class SimpleGameState {
   private config: GameStateConfig;
   private callbacks: SimpleGameStateCallbacks = {};
+  
+  // Delta compression manager
+  private deltaStateManager: DeltaStateManager;
   
   // Active matches
   private activeMatches: Map<string, {
@@ -83,13 +95,16 @@ export class SimpleGameState {
   constructor(config?: Partial<GameStateConfig>) {
     this.config = {
       maxPlayers: 2,
-      tickRate: 30, // 30 Hz server updates
+      tickRate: 60, // OPTIMIZED: 60 Hz server updates (match client 60 FPS)
       matchTimeoutMs: 300000, // 5 minutes
-      arenaType: 'standard',
+      arenaType: 'classic', // Use existing arena instead of non-existent 'standard'
       ...config
     };
     
-    logger.info('SimpleGameState initialized');
+    // Initialize delta compression manager
+    this.deltaStateManager = new DeltaStateManager();
+    
+    logger.info('SimpleGameState initialized with delta compression');
   }
   
   /**
@@ -107,6 +122,11 @@ export class SimpleGameState {
     player1: { id: string; username: string; classType: ClassType },
     player2: { id: string; username: string; classType: ClassType }
   ): boolean {
+    logger.info(`🎮 SimpleGameState.createMatch called for ${matchId}`, {
+      player1: player1.id,
+      player2: player2.id
+    });
+    
     if (this.activeMatches.has(matchId)) {
       logger.warn(`Match ${matchId} already exists`);
       return false;
@@ -197,7 +217,11 @@ export class SimpleGameState {
         updateTimer
       });
       
-      logger.info(`Match ${matchId} created with players ${player1.id} vs ${player2.id}`);
+      logger.info(`✅ SimpleGameState: Match ${matchId} created successfully`, {
+        playersCount: players.size,
+        activeMatchesCount: this.activeMatches.size,
+        matchExists: this.activeMatches.has(matchId)
+      });
       return true;
       
     } catch (error) {
@@ -225,6 +249,25 @@ export class SimpleGameState {
     
     player.position.x = validX;
     player.position.y = validY;
+    player.rotation = rotation;
+    player.lastInputTime = Date.now();
+    
+    return true;
+  }
+  
+  /**
+   * Update player rotation
+   */
+  updatePlayerRotation(playerId: string, rotation: number): boolean {
+    const matchId = this.playerToMatch.get(playerId);
+    if (!matchId) return false;
+    
+    const match = this.activeMatches.get(matchId);
+    if (!match) return false;
+    
+    const player = match.players.get(playerId);
+    if (!player || !player.isAlive) return false;
+    
     player.rotation = rotation;
     player.lastInputTime = Date.now();
     
@@ -333,10 +376,29 @@ export class SimpleGameState {
       }
     }
     
-    // Generate and broadcast state update
+    // Generate and broadcast delta update
     const stateUpdate = this.generateStateUpdate(matchId);
-    if (stateUpdate && this.callbacks.onStateUpdate) {
-      this.callbacks.onStateUpdate(stateUpdate);
+    if (stateUpdate) {
+      // Check if we should send full sync or delta
+      if (this.deltaStateManager.shouldSendFullSync(matchId)) {
+        const fullSync = this.deltaStateManager.generateFullSync(matchId, stateUpdate);
+        fullSync.header.matchId = matchId;
+        
+        if (this.callbacks.onFullSync) {
+          this.callbacks.onFullSync(fullSync);
+        }
+        
+        // OPTIMIZED: Removed full sync logging for better performance
+      } else {
+        const delta = this.deltaStateManager.generateDelta(matchId, stateUpdate);
+        delta.header.matchId = matchId;
+        
+        if (this.callbacks.onDeltaUpdate) {
+          this.callbacks.onDeltaUpdate(delta);
+        }
+        
+        // OPTIMIZED: Removed delta logging for better performance
+      }
     }
   }
   
@@ -399,6 +461,12 @@ export class SimpleGameState {
         timeLeft: matchState.timeLeft,
         score: { ...matchState.score },
         status: matchState.state
+      },
+      mapData: {
+        arenaType: this.config.arenaType,
+        size: match.arena.size,
+        walls: match.arena.walls,
+        spawnPoints: match.arena.spawnPoints
       }
     };
   }
@@ -428,6 +496,9 @@ export class SimpleGameState {
     match.spriteCoordinator.destroy();
     
     this.activeMatches.delete(matchId);
+    
+    // Clean up delta state
+    this.deltaStateManager.cleanupMatch(matchId);
     
     logger.info(`Match ${matchId} ended and cleaned up`);
     return true;
@@ -463,7 +534,20 @@ export class SimpleGameState {
    * Get match state
    */
   getMatchState(matchId: string): MatchStateUpdate | null {
-    return this.generateStateUpdate(matchId);
+    logger.info(`🔍 SimpleGameState.getMatchState called for ${matchId}`, {
+      hasMatch: this.activeMatches.has(matchId),
+      activeMatchesCount: this.activeMatches.size,
+      allMatchIds: Array.from(this.activeMatches.keys())
+    });
+    
+    const result = this.generateStateUpdate(matchId);
+    logger.info(`🔍 getMatchState result:`, {
+      matchId,
+      hasResult: !!result,
+      playersCount: result?.players.length || 0
+    });
+    
+    return result;
   }
   
   /**
@@ -481,17 +565,45 @@ export class SimpleGameState {
   }
   
   /**
+   * Track client acknowledgment of delta sequence
+   */
+  trackClientSequence(matchId: string, playerId: string, sequence: number): void {
+    this.deltaStateManager.trackClientSequence(matchId, playerId, sequence);
+  }
+  
+  /**
+   * Force full sync for a match
+   */
+  forceFullSync(matchId: string): void {
+    const stateUpdate = this.generateStateUpdate(matchId);
+    if (stateUpdate) {
+      const fullSync = this.deltaStateManager.generateFullSync(matchId, stateUpdate);
+      fullSync.header.matchId = matchId;
+      
+      if (this.callbacks.onFullSync) {
+        this.callbacks.onFullSync(fullSync);
+      }
+      
+      logger.info(`Forced full sync for match ${matchId}`, {
+        sequence: fullSync.header.sequence
+      });
+    }
+  }
+  
+  /**
    * Get statistics
    */
   getStats(): {
     totalMatches: number;
     totalPlayers: number;
     averageMatchDuration: number;
+    deltaStats: any;
   } {
     return {
       totalMatches: this.activeMatches.size,
       totalPlayers: this.playerToMatch.size,
-      averageMatchDuration: 0 // Could track this if needed
+      averageMatchDuration: 0, // Could track this if needed
+      deltaStats: this.deltaStateManager.getStats()
     };
   }
   

@@ -21,6 +21,7 @@ export function MainMenu() {
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('disconnected');
   const [matchFound, setMatchFound] = useState(false);
   const [matchData, setMatchData] = useState<any>(null);
+  const hasNavigatedRef = useRef(false); // Prevent duplicate navigation in StrictMode
   const [notification, setNotification] = useState<{ message: string; type: 'info' | 'success' | 'warning' | 'error' } | null>(null);
   const navigate = useNavigate();
   const { isAuthenticated, user } = useAuthStore();
@@ -125,6 +126,47 @@ export function MainMenu() {
       setMatchFound(true);
       setMatchData(data);
       setIsInQueue(false);
+      
+      // Show opponent details for countdown period
+      setNotification({
+        message: `Match found! vs ${data.opponent.username} (${data.opponent.classType}) - ${data.opponent.rating} rating`,
+        type: 'success'
+      });
+      
+      // Auto-navigate to game after countdown
+      setTimeout(() => {
+        // Prevent duplicate navigation during StrictMode
+        if (hasNavigatedRef.current) {
+          console.log('⚠️ MainMenu: Already navigated, skipping duplicate navigation');
+          return;
+        }
+        hasNavigatedRef.current = true;
+        
+        setMatchFound(false);
+        console.log('🚀 MainMenu: Navigating to game with socket:', {
+          hasSocket: !!newSocket,
+          socketId: newSocket?.id,
+          socketConnected: newSocket?.connected,
+          matchId: data.matchId,
+          selectedClass: selectedClassRef.current
+        });
+        // Store socket globally to avoid cloning issues
+        (window as any).gameSocket = newSocket;
+        console.log('🔗 MainMenu: Stored socket on window for game navigation:', {
+          socketId: newSocket?.id,
+          socketConnected: newSocket?.connected,
+          windowGameSocketSet: !!(window as any).gameSocket
+        });
+        
+        navigate('/game', { 
+          state: { 
+            matchId: data.matchId, 
+            matchData: data,
+            selectedClass: selectedClassRef.current,
+            hasSocket: true // Just indicate that socket is available
+          } 
+        });
+      }, data.countdown || 5000);
     });
 
     newSocket.on('match_decline_confirmed', (data) => {
@@ -182,26 +224,16 @@ export function MainMenu() {
 
     newSocket.on('match_ready', (data) => {
       console.log('Match ready:', data);
-      setMatchFound(false);
+      
+      // Update match data for the game page
       setMatchData(data);
       
-      // Show brief notification then navigate to game
+      // Show notification that match is starting
       setNotification({
         message: data.message || 'Match is ready! Joining game...',
         type: 'success'
       });
-      
-      // Navigate to game after brief delay
-      setTimeout(() => {
-        navigate('/game', { 
-          state: { 
-            matchId: data.matchId, 
-            matchData: data,
-            // Use the ref to guarantee the latest chosen class is used
-            selectedClass: selectedClassRef.current 
-          } 
-        });
-      }, 2000);
+      setTimeout(() => setNotification(null), 3000);
     });
 
     newSocket.on('match_timeout', (data) => {
@@ -237,35 +269,7 @@ export function MainMenu() {
     socket.emit('leave_queue');
   };
 
-  const handleAcceptMatch = () => {
-    if (!socket || !matchData) return;
-    
-    // Send acceptance to server instead of navigating immediately
-    socket.emit('match_accepted', { matchId: matchData.matchId });
-    
-    // Show notification that we're waiting
-    setNotification({
-      message: 'Match accepted! Waiting for opponent...',
-      type: 'info'
-    });
-    setTimeout(() => setNotification(null), 5000);
-    
-    console.log('Match acceptance sent to server');
-  };
-
-  const handleDeclineMatch = () => {
-    if (!socket || !matchData) return;
-    
-    // Send decline to server
-    socket.emit('match_declined', { matchId: matchData.matchId });
-    
-    // Clear the match popup immediately
-    setMatchFound(false);
-    setMatchData(null);
-    
-    // Don't automatically rejoin queue - user is completely removed
-    console.log('Match declined, removed from queue');
-  };
+  // Auto-acceptance logic - no manual accept/decline needed
 
   // Removed unused handleLoginClick function
 
@@ -325,7 +329,30 @@ export function MainMenu() {
               </button>
             ) : (
               <button
-                onClick={() => navigate('/game')}
+                onClick={() => {
+                  // Demo mode - pass current socket or redirect to matchmaking
+                  if (socket) {
+                    // Store socket globally to avoid cloning issues
+                    (window as any).gameSocket = socket;
+                    console.log('🔗 MainMenu: Stored socket on window for demo navigation:', {
+                      socketId: socket?.id,
+                      socketConnected: socket?.connected,
+                      windowGameSocketSet: !!(window as any).gameSocket
+                    });
+                    
+                    navigate('/game', { 
+                      state: { 
+                        matchId: 'demo-match', 
+                        selectedClass: selectedClassRef.current,
+                        hasSocket: true
+                      } 
+                    });
+                  } else {
+                    console.warn('No socket available for demo - redirecting to queue');
+                    // Start quick match instead of direct demo
+                    handleQuickMatch();
+                  }
+                }}
                 className="btn-primary text-xl py-4 px-8 rounded-lg glow hover:glow-intense transform hover:scale-105 transition-all duration-200"
               >
                 Play Demo
@@ -447,13 +474,31 @@ export function MainMenu() {
       )}
       
       {/* Match Found Notification */}
-      <MatchFoundNotification
-        isVisible={matchFound}
-        matchData={matchData}
-        onAccept={handleAcceptMatch}
-        onDecline={handleDeclineMatch}
-        countdown={30}
-      />
+      {matchFound && matchData && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-arena-800 border border-dueled-500 rounded-lg p-8 max-w-md text-center">
+            <h3 className="text-2xl font-bold text-dueled-500 mb-4">Match Found!</h3>
+            
+            <div className="mb-6">
+              <h4 className="text-lg font-semibold text-white mb-2">Your Opponent</h4>
+              <div className="bg-arena-700 rounded-lg p-4">
+                <p className="text-dueled-300 font-bold text-xl">{matchData.opponent?.username}</p>
+                <p className="text-arena-300 capitalize">{matchData.opponent?.classType}</p>
+                <p className="text-arena-300">Rating: {matchData.opponent?.rating}</p>
+              </div>
+            </div>
+            
+            <div className="text-arena-300 mb-4">
+              <p>Preparing game lobby...</p>
+              <div className="w-full bg-arena-700 rounded-full h-2 mt-2">
+                <div className="bg-dueled-500 h-2 rounded-full animate-pulse" style={{ width: '100%' }} />
+              </div>
+            </div>
+            
+            <p className="text-sm text-arena-400">You will be automatically transported to the arena.</p>
+          </div>
+        </div>
+      )}
       
       {/* Status Notification */}
       {notification && (

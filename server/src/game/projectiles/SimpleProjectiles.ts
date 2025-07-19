@@ -11,6 +11,7 @@ export interface ProjectileData {
   type: string;
   x: number;
   y: number;
+  rotation: number;       // Added for delta compression compatibility
   targetX: number;
   targetY: number;
   velocityX: number;
@@ -121,6 +122,7 @@ export class SimpleProjectiles {
       type: projType,
       x: startPosX,
       y: startPosY,
+      rotation: distance > 0 ? Math.atan2(dy, dx) : 0, // Calculate rotation from velocity direction
       targetX: targetPosX,
       targetY: targetPosY,
       velocityX,

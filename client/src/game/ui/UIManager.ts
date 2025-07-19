@@ -77,11 +77,23 @@ export class UIManager {
    * Initialize basic UI elements
    */
   private initializeUI(): void {
-    // Clear container
-    this.container.innerHTML = '';
+    // Create a dedicated overlay root so we never touch children that
+    // don't belong to the UI manager (e.g. the canvas)
+    let overlay = this.container.querySelector<HTMLDivElement>('#ui-overlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'ui-overlay';
+      overlay.style.position = 'absolute';
+      overlay.style.inset = '0';
+      overlay.style.pointerEvents = 'none';
+      overlay.style.zIndex = '20'; // Above canvas
+      this.container.appendChild(overlay);
+    }
+
+    this.container = overlay; // Everything below uses the overlay
     
     // Set container styles
-    this.container.style.position = 'relative';
+    this.container.style.position = 'absolute';
     this.container.style.width = '100%';
     this.container.style.height = '100%';
     this.container.style.pointerEvents = 'none';

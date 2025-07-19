@@ -61,6 +61,7 @@ export class SimpleMatchmaking {
     matchesCreated: 0,
     averageRatingDiff: 0
   };
+  private matchFoundCallback?: (match: MatchPair) => void;
 
   constructor(config?: Partial<MatchmakingConfig>) {
     this.config = {
@@ -379,11 +380,23 @@ export class SimpleMatchmaking {
   }
 
   /**
-   * Event handler for when matches are created (to be overridden)
+   * Event handler for when matches are created
    */
   protected onMatchCreated(match: MatchPair): void {
-    // Override this in your game integration
     logger.debug(`Match ready: ${match.matchId}`);
+    
+    // Call registered callback if available
+    if (this.matchFoundCallback) {
+      this.matchFoundCallback(match);
+    }
+  }
+
+  /**
+   * Set callback for when matches are found
+   */
+  setMatchFoundCallback(callback: (match: MatchPair) => void): void {
+    this.matchFoundCallback = callback;
+    logger.info('Match found callback registered');
   }
 
   /**

@@ -7,6 +7,8 @@
 
 import { Socket } from 'socket.io-client';
 import type { ClassType } from '@dueled/shared';
+import { DeltaProcessor } from './DeltaProcessor.js';
+import type { GameStateDelta, FullGameState, ClientPlayerState, ClientProjectileState } from '../../types/DeltaTypes.js';
 
 export interface PlayerUpdate {
   id: string;
@@ -46,6 +48,12 @@ export interface MatchData {
   roundNumber: number;
   roundTimeLeft: number;
   status: 'waiting' | 'in_progress' | 'ended';
+  mapData?: {
+    arenaType: string;
+    size: { x: number; y: number };
+    walls: Array<{ x1: number; y1: number; x2: number; y2: number }>;
+    spawnPoints: Array<{ position: { x: number; y: number }; rotation: number }>;
+  };
 }
 
 export interface NetworkCallbacks {
@@ -57,6 +65,8 @@ export interface NetworkCallbacks {
   onGameEvent?: (event: GameEvent) => void;
   onMatchUpdate?: (data: MatchData) => void;
   onMatchEnded?: (data: { winner: string; reason: string }) => void;
+  onMapUpdate?: (mapData: MatchData['mapData']) => void;
+  onPlayerIdAssigned?: (data: { matchId: string; yourPlayerId: string }) => void;
   onConnectionError?: (error: string) => void;
   onDisconnected?: (reason: string) => void;
   onReconnected?: () => void;
@@ -82,6 +92,10 @@ export class NetworkManager {
   private matchId: string = '';
   private connected: boolean = false;
   
+  // Delta compression processor
+  private deltaProcessor: DeltaProcessor;
+  private useDeltaCompression: boolean = true;
+  
   // Network statistics
   private stats: NetworkStats = {
     connected: false,
@@ -92,12 +106,12 @@ export class NetworkManager {
     reconnectAttempts: 0
   };
   
-  // Throttling for movement updates
+  // OPTIMIZED: Reduced throttling for smoother movement
   private lastMovementUpdate: number = 0;
-  private movementUpdateInterval: number = 50; // 20 FPS for movement
+  private movementUpdateInterval: number = 16; // 60 FPS for movement (match server)
   
   private lastRotationUpdate: number = 0;
-  private rotationUpdateInterval: number = 100; // 10 FPS for rotation
+  private rotationUpdateInterval: number = 16; // 60 FPS for rotation (match server)
   
   // Event listener cleanup
   private setupComplete: boolean = false;
@@ -106,11 +120,87 @@ export class NetworkManager {
     this.socket = socket;
     this.callbacks = {};
     
+    // Initialize delta processor
+    this.deltaProcessor = new DeltaProcessor({
+      debugLogging: process.env.NODE_ENV === 'development'
+    });
+    
+    this.setupDeltaProcessorCallbacks();
+    
     if (this.socket) {
       this.setupEventListeners();
     }
     
-    console.log('NetworkManager initialized');
+    console.log('NetworkManager initialized with delta compression');
+  }
+  
+  /**
+   * Setup delta processor callbacks
+   */
+  private setupDeltaProcessorCallbacks(): void {
+    this.deltaProcessor.setCallbacks({
+      onStateUpdate: (players: ClientPlayerState[], projectiles: ClientProjectileState[], roundInfo: any) => {
+        // Convert delta processor format to legacy format for compatibility
+        const legacyPlayers = players.map(player => ({
+          id: player.id,
+          x: player.x,
+          y: player.y,
+          angle: player.rotation,
+          classType: player.classType as ClassType,
+          health: player.health,
+          armor: 50, // Default armor value
+          isAlive: player.isAlive,
+          isMoving: player.isMoving,
+          username: player.username
+        }));
+        
+        const legacyProjectiles = projectiles.map(projectile => ({
+          id: projectile.id,
+          x: projectile.x,
+          y: projectile.y,
+          type: projectile.type,
+          rotation: projectile.rotation,
+          velocity: projectile.velocity,
+          ownerId: projectile.ownerId,
+          createdAt: projectile.lastUpdate
+        }));
+        
+        // Notify callbacks
+        if (this.callbacks.onPlayerUpdate) {
+          legacyPlayers.forEach(player => this.callbacks.onPlayerUpdate!(player));
+        }
+        
+        if (this.callbacks.onProjectileUpdate) {
+          this.callbacks.onProjectileUpdate(legacyProjectiles);
+        }
+        
+        // Update match data
+        if (this.callbacks.onMatchUpdate) {
+          this.callbacks.onMatchUpdate({
+            matchId: this.matchId,
+            yourPlayerId: this.localPlayerId,
+            players: legacyPlayers,
+            status: roundInfo.status,
+            roundNumber: roundInfo.currentRound,
+            roundTimeLeft: roundInfo.timeLeft
+          });
+        }
+      },
+      
+      onFullSyncNeeded: (reason: string) => {
+        // OPTIMIZED: Removed delta sync logging for better performance
+        if (this.socket) {
+          this.socket.emit('request_full_sync', {
+            matchId: this.matchId,
+            reason
+          });
+        }
+      },
+      
+      onSequenceGap: (missing: number[]) => {
+        // OPTIMIZED: Removed sequence gap logging for better performance
+      }
+    });
   }
   
   /**
@@ -155,9 +245,14 @@ export class NetworkManager {
     
     // Game events
     this.socket.on('game_event', (data) => this.handleGameEvent(data));
+    
+    // Delta compression events (primary communication)
+    this.socket.on('game_state_delta', (data) => this.handleGameStateDelta(data));
+    this.socket.on('game_state_full_sync', (data) => this.handleGameStateFullSync(data));
+    this.socket.on('player_id_assigned', (data) => this.handlePlayerIdAssigned(data));
     this.socket.on('match_update', (data) => this.handleMatchUpdate(data));
     this.socket.on('match_ended', (data) => this.handleMatchEnded(data));
-    this.socket.on('initial_game_state', (data) => this.handleInitialGameState(data));
+    this.socket.on('match_error', (data) => this.handleMatchError(data));
     
     // Network monitoring
     this.socket.on('pong', (latency) => this.handlePong(latency));
@@ -182,6 +277,7 @@ export class NetworkManager {
     this.socket.off('projectile_update');
     this.socket.off('projectile_removed');
     this.socket.off('game_event');
+    this.socket.off('game_state');
     this.socket.off('match_update');
     this.socket.off('match_ended');
     this.socket.off('initial_game_state');
@@ -198,9 +294,9 @@ export class NetworkManager {
     this.connected = true;
     this.stats.connected = true;
     this.stats.reconnectAttempts = 0;
-    this.localPlayerId = this.socket?.id || '';
+    // Note: localPlayerId will be set when initial_game_state is received
     
-    console.log('NetworkManager connected:', this.localPlayerId);
+    console.log('NetworkManager connected, awaiting player ID from server');
     
     if (this.callbacks.onReconnected) {
       this.callbacks.onReconnected();
@@ -336,24 +432,83 @@ export class NetworkManager {
   }
   
   /**
-   * Handle initial game state
+   * Handle player ID assignment from server
    */
-  private handleInitialGameState(data: MatchData): void {
-    this.stats.packetsReceived++;
+  private handlePlayerIdAssigned(data: { matchId: string; yourPlayerId: string }): void {
     this.matchId = data.matchId;
     this.localPlayerId = data.yourPlayerId;
     
-    console.log('NetworkManager received initial game state:', {
+    console.log('🎯 Player ID assigned:', {
       matchId: data.matchId,
-      yourPlayerId: data.yourPlayerId,
-      players: data.players.length
+      playerId: data.yourPlayerId
     });
     
-    if (this.callbacks.onMatchUpdate) {
-      this.callbacks.onMatchUpdate(data);
+    // Notify callback
+    if (this.callbacks.onPlayerIdAssigned) {
+      this.callbacks.onPlayerIdAssigned(data);
     }
   }
+
+  /**
+   * Handle delta update from server
+   */
+  private handleGameStateDelta(data: GameStateDelta): void {
+    this.stats.packetsReceived++;
+    
+    if (this.useDeltaCompression) {
+      const success = this.deltaProcessor.processDelta(data);
+      
+      if (success && this.socket) {
+        // Send acknowledgment to server
+        this.socket.emit('delta_ack', {
+          matchId: data.header.matchId,
+          sequence: data.header.sequence
+        });
+      }
+      
+      // OPTIMIZED: Removed delta logging for better performance
+    }
+  }
+
+  /**
+   * Handle full sync from server
+   */
+  private handleGameStateFullSync(data: FullGameState): void {
+    this.stats.packetsReceived++;
+    
+    // Handle map data caching (only sent with full syncs)
+    if (data.mapData && this.callbacks.onMapUpdate) {
+      console.log('🗺️ Caching map data from full sync');
+      this.callbacks.onMapUpdate(data.mapData);
+    }
+    
+    if (this.useDeltaCompression) {
+      const success = this.deltaProcessor.processFullSync(data);
+      
+      if (success && this.socket) {
+        // Send acknowledgment to server
+        this.socket.emit('delta_ack', {
+          matchId: data.header.matchId,
+          sequence: data.header.sequence
+        });
+      }
+      
+      // OPTIMIZED: Removed full sync logging for better performance
+    }
+  }
+
   
+  /**
+   * Handle match error from server
+   */
+  private handleMatchError(data: { matchId: string; error: string; code: string }): void {
+    console.error('❌ Match error received:', data);
+    
+    if (this.callbacks.onConnectionError) {
+      this.callbacks.onConnectionError(`Match error: ${data.error} (${data.code})`);
+    }
+  }
+
   /**
    * Handle pong response for latency measurement
    */
@@ -370,6 +525,8 @@ export class NetworkManager {
     
     const now = Date.now();
     if (now - this.lastMovementUpdate < this.movementUpdateInterval) return;
+    
+    // OPTIMIZED: Removed movement logging for better performance
     
     this.socket.emit('player_move', {
       x,
@@ -518,6 +675,16 @@ export class NetworkManager {
   }
   
   /**
+   * Detach all listeners without disconnecting.
+   * Useful for React-StrictMode dev remounts where the socket
+   * must stay alive across the fake unmount.
+   */
+  detach(): void {
+    this.removeEventListeners();
+    console.log('NetworkManager detached (listeners removed, connection preserved)');
+  }
+
+  /**
    * Disconnect and clean up
    */
   disconnect(): void {
@@ -535,10 +702,57 @@ export class NetworkManager {
   }
   
   /**
+   * Enable/disable delta compression
+   */
+  setDeltaCompression(enabled: boolean): void {
+    this.useDeltaCompression = enabled;
+    console.log(`Delta compression ${enabled ? 'enabled' : 'disabled'}`);
+  }
+  
+  /**
+   * Get delta processor statistics
+   */
+  getDeltaStats(): any {
+    return this.deltaProcessor.getStats();
+  }
+  
+  /**
+   * Get network statistics including delta info
+   */
+  getNetworkStats(): NetworkStats & { deltaStats?: any } {
+    return {
+      ...this.stats,
+      deltaStats: this.useDeltaCompression ? this.deltaProcessor.getStats() : undefined
+    };
+  }
+  
+  /**
+   * Force request full sync
+   */
+  requestFullSync(reason: string = 'manual'): void {
+    if (this.socket && this.matchId) {
+      this.socket.emit('request_full_sync', {
+        matchId: this.matchId,
+        reason
+      });
+      console.log(`🔄 Manually requested full sync: ${reason}`);
+    }
+  }
+  
+  /**
+   * Reset delta processor state
+   */
+  resetDeltaState(): void {
+    this.deltaProcessor.reset();
+    console.log('🔄 Delta processor state reset');
+  }
+  
+  /**
    * Clean up resources
    */
   destroy(): void {
     this.disconnect();
+    this.deltaProcessor.reset();
     this.callbacks = {};
     console.log('NetworkManager destroyed');
   }
