@@ -11,7 +11,6 @@ import { z } from 'zod';
 import { signAccessToken, verifyToken } from '../utils/jwt.js';
 import { logger } from '../utils/logger.js';
 import { db } from '../services/database.js';
-import { rateLimit } from 'express-rate-limit';
 
 // Simple validation schemas
 const registerSchema = z.object({
@@ -25,14 +24,7 @@ const loginSchema = z.object({
   password: z.string().min(6).max(100)
 });
 
-// Simple rate limiting for auth endpoints
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // 5 attempts per window
-  message: { success: false, error: 'Too many authentication attempts' },
-  standardHeaders: true,
-  legacyHeaders: false
-});
+// Rate limiting removed for development
 
 /**
  * SimpleAuthController - Basic authentication endpoints
@@ -49,8 +41,7 @@ export class SimpleAuthController {
    * Setup authentication routes
    */
   private setupRoutes(): void {
-    // Apply rate limiting to all auth routes
-    this.router.use(authLimiter);
+    // Rate limiting removed for development
     
     this.router.post('/register', this.register.bind(this));
     this.router.post('/login', this.login.bind(this));
