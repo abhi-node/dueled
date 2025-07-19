@@ -6,3 +6,6 @@ export * from './classes/ClassConfigurations.js';
 
 // Export transport layer
 export * from './transport.js';
+
+// Export movement system
+export * from './movement/index.js';

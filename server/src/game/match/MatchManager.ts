@@ -10,6 +10,7 @@ import { GameStateManager } from './GameState.js';
 import { RoundSystem, type RoundSystemCallbacks, type MatchResult } from './RoundSystem.js';
 import { CollisionSystem } from '../physics/CollisionSystem.js';
 import { ProjectilePhysics } from '../physics/ProjectilePhysics.js';
+import { MovementCalculator, type MovementConfig } from '@dueled/shared';
 import type {
   InputCommand,
   DeltaUpdate,
@@ -47,6 +48,7 @@ export class MatchManager {
   // Physics Systems
   private collisionSystem: CollisionSystem;
   private projectilePhysics: ProjectilePhysics;
+  private movementCalculator: MovementCalculator;
   
   // Players
   private players: Map<string, MatchPlayer> = new Map();
@@ -82,6 +84,14 @@ export class MatchManager {
     // Initialize physics systems
     this.collisionSystem = new CollisionSystem(mapData.walls);
     this.projectilePhysics = new ProjectilePhysics();
+    
+    // Initialize movement calculator with server config
+    const movementConfig: MovementConfig = {
+      baseSpeed: GAME_CONSTANTS.PLAYER_SPEED,
+      sprintMultiplier: GAME_CONSTANTS.SPRINT_MULTIPLIER,
+      movementThreshold: 0.01
+    };
+    this.movementCalculator = new MovementCalculator(movementConfig);
     
     // Add players to game state
     this.gameState.addPlayer(player1.id, player1.username, player1.classType);
@@ -356,70 +366,69 @@ export class MatchManager {
   }
   
   /**
-   * Process movement input (WASD)
+   * Process movement input (WASD) using shared movement calculator
    */
   private processMovementInput(playerId: string, command: InputCommand): void {
     const { forward = 0, strafe = 0, sprint = false } = command.data;
     
-    // Validate input ranges
-    const clampedForward = Math.max(-1, Math.min(1, forward));
-    const clampedStrafe = Math.max(-1, Math.min(1, strafe));
-    
-    if (Math.abs(clampedForward) < 0.01 && Math.abs(clampedStrafe) < 0.01) {
-      // No movement
-      this.gameState.updatePlayerPosition(playerId, 
-        this.gameState.getPlayer(playerId)!.position,
-        { x: 0, y: 0 }
-      );
+    const player = this.gameState.getPlayer(playerId);
+    if (!player || !player.isAlive) {
       return;
     }
     
-    const player = this.gameState.getPlayer(playerId)!;
-    
-    // Calculate movement vector in world space
-    const speed = sprint ? GAME_CONSTANTS.PLAYER_SPEED * GAME_CONSTANTS.SPRINT_MULTIPLIER 
-                         : GAME_CONSTANTS.PLAYER_SPEED;
-    
     const deltaTime = this.TICK_INTERVAL / 1000; // Convert to seconds
     
-    // Get current rotation
-    const angle = player.angle;
-    
-    // Calculate forward and strafe vectors
-    const forwardX = Math.cos(angle) * clampedForward;
-    const forwardY = Math.sin(angle) * clampedForward;
-    const strafeX = Math.cos(angle + Math.PI/2) * clampedStrafe;
-    const strafeY = Math.sin(angle + Math.PI/2) * clampedStrafe;
-    
-    // Combine vectors
-    const moveX = (forwardX + strafeX) * speed * deltaTime;
-    const moveY = (forwardY + strafeY) * speed * deltaTime;
-    
-    // Calculate target position
-    const targetPosition = {
-      x: player.position.x + moveX,
-      y: player.position.y + moveY
+    // Use shared movement calculator for consistent behavior
+    const movementInput = {
+      forward,
+      strafe,
+      sprint,
+      angle: player.angle
     };
     
-    const velocity = { x: moveX / deltaTime, y: moveY / deltaTime };
-    
-    // Check collision and get corrected position
-    const collisionResult = this.collisionSystem.validatePlayerMovement(
+    const movementResult = this.movementCalculator.calculateMovement(
       player.position,
-      targetPosition,
-      velocity
+      movementInput,
+      deltaTime
     );
     
-    // Use corrected position if collision occurred, otherwise use target
+    // Apply collision detection to the calculated movement
+    const collisionResult = this.collisionSystem.validatePlayerMovement(
+      player.position,
+      movementResult.position,
+      movementResult.velocity
+    );
+    
+    // Use corrected position if collision occurred, otherwise use calculated position
     const finalPosition = collisionResult.collided && collisionResult.correctedPosition
       ? collisionResult.correctedPosition
-      : targetPosition;
+      : movementResult.position;
     
     const finalVelocity = collisionResult.collided && collisionResult.correctedVelocity
       ? collisionResult.correctedVelocity
-      : velocity;
+      : movementResult.velocity;
     
-    this.gameState.updatePlayerPosition(playerId, finalPosition, finalVelocity);
+    // Apply bounds validation (if map has bounds)
+    const gameState = this.gameState.getState();
+    const validatedPosition = this.movementCalculator.validateMovement(
+      player.position,
+      finalPosition,
+      gameState.mapData.bounds
+    );
+    
+    // Update player position and velocity
+    this.gameState.updatePlayerPosition(playerId, validatedPosition, finalVelocity);
+    
+    // Debug logging for movement (reduce frequency to avoid spam)
+    if (Math.random() < 0.05) { // Log 5% of movements
+      logger.debug(`Player ${playerId} movement`, {
+        input: { forward, strafe, sprint },
+        oldPos: player.position,
+        newPos: validatedPosition,
+        velocity: finalVelocity,
+        collided: collisionResult.collided
+      });
+    }
   }
   
   /**
@@ -636,27 +645,39 @@ export class MatchManager {
    * Generate and send delta update to clients
    */
   private sendDeltaUpdate(): void {
-    const delta = this.gameState.generateDelta();
-    
-    // Include last processed sequence for each player
-    for (const [playerId, lastSeq] of this.lastSequenceProcessed) {
+    // Send player-specific deltas for proper reconciliation
+    for (const [playerId, player] of this.players) {
+      if (!player.connected) {
+        continue;
+      }
+      
+      const lastSeq = this.lastSequenceProcessed.get(playerId) || 0;
+      const delta = this.gameState.generateDelta();
+      
+      // Include player-specific sequence number for reconciliation
       delta.lastProcessedInput = lastSeq;
-      // TODO: Send player-specific deltas with their sequence numbers
+      
+      // Add sequence number to player data for client reconciliation
+      if (delta.players) {
+        const playerDelta = delta.players.find(p => p.id === playerId);
+        if (playerDelta) {
+          (playerDelta as any).lastProcessedSequence = lastSeq;
+        }
+      }
+      
+      // Send to this specific player through callback
+      // Note: The callback system will need to be updated to support player-specific deltas
+      this.callbacks.onDeltaUpdate?.(this.matchId, delta);
     }
     
-    // Debug logging for delta content
-    if (Math.random() < 0.1) { // Log 10% of deltas to avoid spam
-      logger.debug(`🔄 [DEBUG] Sending delta update`, {
+    // Debug logging for delta content (reduced frequency)
+    if (Math.random() < 0.05) { // Log 5% of deltas to avoid spam
+      logger.debug(`🔄 [DEBUG] Sending delta updates`, {
         matchId: this.matchId,
-        playersCount: delta.players?.length || 0,
-        projectilesCount: delta.projectiles?.length || 0,
-        hasMatchData: !!delta.match,
-        eventsCount: delta.events?.length || 0
+        connectedPlayers: Array.from(this.players.values()).filter(p => p.connected).length,
+        sequences: Object.fromEntries(this.lastSequenceProcessed)
       });
     }
-    
-    // Notify callback with delta
-    this.callbacks.onDeltaUpdate?.(this.matchId, delta);
   }
   
   // ============================================================================

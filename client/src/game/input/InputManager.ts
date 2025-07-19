@@ -139,7 +139,10 @@ export class InputManager {
   // ============================================================================
   
   private onKeyDown = (event: KeyboardEvent): void => {
-    if (!this.isActive || !this.hasWindowFocus) return;
+    if (!this.isActive || !this.hasWindowFocus) {
+      // Key input ignored (not active or no window focus)
+      return;
+    }
     
     // Prevent default for game keys
     if (this.isGameKey(event.code)) {
@@ -150,22 +153,28 @@ export class InputManager {
     switch (event.code) {
       case this.keyBindings.forward:
         this.keyState.forward = true;
+        console.log('⬆️ [INPUT] W pressed');
         break;
       case this.keyBindings.backward:
         this.keyState.backward = true;
+        console.log('⬇️ [INPUT] S pressed');
         break;
       case this.keyBindings.left:
         this.keyState.left = true;
+        console.log('⬅️ [INPUT] A pressed');
         break;
       case this.keyBindings.right:
         this.keyState.right = true;
+        console.log('➡️ [INPUT] D pressed');
         break;
       case this.keyBindings.sprint:
         this.keyState.sprint = true;
+        console.log('🏃 [INPUT] Sprint pressed');
         break;
       case this.keyBindings.dash:
         if (!event.repeat) { // Only trigger on first press
           this.keyState.dash = true;
+          console.log('💨 [INPUT] Dash pressed');
         }
         break;
     }
@@ -203,12 +212,20 @@ export class InputManager {
   
   private onMouseMove = (event: MouseEvent): void => {
     if (!this.isActive || !this.isPointerLocked) {
+      // Mouse movement ignored (not active or pointer not locked)
       return;
     }
     
     // Use movementX/Y for proper mouse delta in pointer lock
     this.mouseState.deltaX = event.movementX * this.config.mouseSensitivity;
     this.mouseState.deltaY = event.movementY * this.config.mouseSensitivity;
+    
+    if (Math.abs(this.mouseState.deltaX) > 0.1) {
+      console.log('🖱️ [MOUSE] Movement detected', {
+        deltaX: this.mouseState.deltaX,
+        deltaY: this.mouseState.deltaY
+      });
+    }
   };
   
   private onMouseDown = (event: MouseEvent): void => {

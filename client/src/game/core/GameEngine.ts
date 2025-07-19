@@ -11,6 +11,8 @@ import { InputQueue } from '../input/InputQueue.js';
 import { GameSocket } from '../network/GameSocket.js';
 import { MessageHandler } from '../network/MessageHandler.js';
 import { ClientGameStateManager } from './GameState.js';
+import { MovementPredictor } from '../movement/MovementPredictor.js';
+import { MovementCalculator } from '@dueled/shared';
 import type { 
   InputConfig,
   InputCommand,
@@ -27,7 +29,6 @@ import type {
   NetworkError
 } from '../types/NetworkTypes.js';
 import type { ClientGameState } from '../types/GameTypes.js';
-import { GAME_CONSTANTS, PREDICTION_CONSTANTS } from '../types/GameConstants.js';
 
 export interface GameEngineCallbacks {
   onConnectionChange?: (info: ConnectionInfo) => void;
@@ -47,6 +48,7 @@ export class GameEngine {
   private gameSocket: GameSocket;
   private messageHandler: MessageHandler;
   private gameStateManager: ClientGameStateManager;
+  private movementPredictor: MovementPredictor;
   
   // Game loop
   private gameLoopId: number | null = null;
@@ -61,10 +63,8 @@ export class GameEngine {
   // State
   private canvas: HTMLCanvasElement | null = null;
   
-  // Local player state (client authoritative)
-  private localPlayerAngle: number = 0;
-  private localPlayerPosition: { x: number; y: number } | null = null;
-  private lastReconciliationTime: number = 0;
+  // Local player state (now managed by MovementPredictor)
+  private isMovementInitialized: boolean = false;
   
   constructor(inputConfig: InputConfig = DEFAULT_INPUT_CONFIG) {
     this.inputConfig = inputConfig;
@@ -76,6 +76,10 @@ export class GameEngine {
     this.gameSocket = new GameSocket();
     this.messageHandler = new MessageHandler();
     this.gameStateManager = new ClientGameStateManager();
+    
+    // Initialize movement predictor with default config
+    const movementConfig = MovementCalculator.createDefaultConfig();
+    this.movementPredictor = new MovementPredictor(movementConfig);
     
     // Setup system connections
     this.setupSystemConnections();
@@ -176,6 +180,8 @@ export class GameEngine {
     
     // Clear state
     this.gameStateManager.clearState();
+    this.movementPredictor.reset();
+    this.isMovementInitialized = false;
     
     console.log('GameEngine stopped');
   }
@@ -227,137 +233,129 @@ export class GameEngine {
   // INPUT PROCESSING
   // ============================================================================
   
+  /**
+   * Process player input and generate commands
+   * 
+   * Handles input processing pipeline:
+   * 1. Processes mouse look (client-authoritative)
+   * 2. Generates input commands for server
+   * 3. Applies local movement prediction
+   * 4. Queues commands for network transmission
+   */
   private processInput(): void {
-    // Get current input state
+    if (!this.isMovementInitialized) {
+      return;
+    }
+    
     const keyState = this.inputManager.getKeyState();
     const mouseState = this.inputManager.getMouseState();
     
     // Handle mouse look immediately (client authoritative)
     this.processMouseLook(mouseState);
     
-    // Generate input commands
+    // Generate input commands for server
     const commands = this.inputCommandGenerator.generateCommands(keyState, mouseState);
     
-    // Add movement commands to prediction system (server authoritative)
+    // Process movement commands with local prediction
     for (const command of commands) {
       if (command.type === 'movement') {
-        // Apply movement prediction immediately for responsive feel
-        this.applyMovementPrediction(command);
-        
-        // Add to prediction system for server reconciliation
+        this.processMovementCommand(command);
         this.gameStateManager.addPendingInput(command);
       }
-      // Don't add look commands to prediction - we handle them locally
     }
     
-    // Queue for network transmission (includes look commands for other players)
+    // Queue commands for network transmission
     this.inputQueue.enqueueCommands(commands);
   }
   
   /**
-   * Process mouse look immediately on client (no server validation needed)
-   * CRITICAL: This method MUST NEVER modify position, only angle
+   * Process mouse look input (client-authoritative)
+   * 
+   * Mouse look is processed immediately on the client for responsive
+   * camera movement without waiting for server confirmation.
+   * 
+   * @param mouseState - Current mouse input state
    */
   private processMouseLook(mouseState: MouseState): void {
     const { deltaX } = mouseState;
     
     if (Math.abs(deltaX) > 0.001) {
-      // Store position before angle change for verification
-      const positionBefore = this.localPlayerPosition ? { ...this.localPlayerPosition } : null;
-      
-      // Convert mouse delta to angle change (same as InputCommands logic)
+      // Convert mouse delta to angle change
       const angleDelta = deltaX * 0.002;
-      
-      // ONLY MODIFY ANGLE - NEVER POSITION
-      this.localPlayerAngle += angleDelta;
+      const currentAngle = this.movementPredictor.getCurrentAngle();
+      let newAngle = currentAngle + angleDelta;
       
       // Normalize angle to 0-2π range
-      while (this.localPlayerAngle < 0) this.localPlayerAngle += Math.PI * 2;
-      while (this.localPlayerAngle >= Math.PI * 2) this.localPlayerAngle -= Math.PI * 2;
+      while (newAngle < 0) newAngle += Math.PI * 2;
+      while (newAngle >= Math.PI * 2) newAngle -= Math.PI * 2;
       
-      // CRITICAL SAFEGUARD: Ensure position wasn't accidentally modified
-      if (positionBefore && this.localPlayerPosition) {
-        const positionChanged = Math.abs(positionBefore.x - this.localPlayerPosition.x) > 0.0001 || 
-                               Math.abs(positionBefore.y - this.localPlayerPosition.y) > 0.0001;
-        if (positionChanged) {
-          console.error('🚨 [CRITICAL BUG] Mouse movement changed position! Restoring position.', {
-            before: positionBefore,
-            corrupted: this.localPlayerPosition,
-            angleDelta
-          });
-          // Restore the position immediately
-          this.localPlayerPosition.x = positionBefore.x;
-          this.localPlayerPosition.y = positionBefore.y;
-        }
-      }
+      // Update angle in movement predictor
+      this.movementPredictor.updateAngle(newAngle);
     }
   }
 
   /**
-   * Apply continuous smooth movement every frame based on current input state
+   * Apply continuous client-side movement prediction
+   * 
+   * Processes current input state every frame to provide smooth,
+   * responsive movement between discrete input commands sent to server.
+   * 
+   * @param deltaTime - Time since last frame in milliseconds
    */
   private applyContinuousMovement(deltaTime: number): void {
-    // Don't apply movement if position isn't initialized yet
-    if (!this.localPlayerPosition) return;
+    if (!this.isMovementInitialized) {
+      return;
+    }
 
-    // Get current input state
     const keyState = this.inputManager.getKeyState();
     
-    // Calculate movement vector ONLY from keyboard input
+    // Convert key states to movement input
     let forward = 0;
     let strafe = 0;
     
-    // CRITICAL: Only use boolean key states, never floating point values
     if (keyState.forward === true) forward += 1;
     if (keyState.backward === true) forward -= 1;
-    if (keyState.right === true) strafe += 1;
-    if (keyState.left === true) strafe -= 1;
+    if (keyState.right === true) strafe -= 1;  // D key moves right (negative strafe)
+    if (keyState.left === true) strafe += 1;   // A key moves left (positive strafe)
     
-    // Additional safeguard: Verify key states are actually booleans
-    if (typeof keyState.forward !== 'boolean' || 
-        typeof keyState.backward !== 'boolean' ||
-        typeof keyState.left !== 'boolean' ||
-        typeof keyState.right !== 'boolean') {
-      console.error('🚨 [BUG] Invalid key state types detected!', keyState);
-      return; // Abort movement if key states are corrupted
-    }
+    // Apply movement prediction for smooth interpolation
+    const sequenceId = this.inputCommandGenerator.getCurrentSequence() + 1;
+    const deltaTimeSeconds = deltaTime / 1000;
     
-    // Only apply movement if there's significant input (prevent floating point drift)
-    const hasSignificantInput = Math.abs(forward) > PREDICTION_CONSTANTS.MOVEMENT_INPUT_THRESHOLD || 
-                               Math.abs(strafe) > PREDICTION_CONSTANTS.MOVEMENT_INPUT_THRESHOLD;
-    
-    if (hasSignificantInput) {
-      // Normalize diagonal movement
-      if (Math.abs(forward) > 0 && Math.abs(strafe) > 0) {
-        const magnitude = Math.sqrt(forward * forward + strafe * strafe);
-        forward /= magnitude;
-        strafe /= magnitude;
-      }
-      
-      // Apply movement using frame-rate independent deltaTime
-      const speed = GAME_CONSTANTS.PLAYER_SPEED;
-      const sprintMultiplier = keyState.sprint ? GAME_CONSTANTS.SPRINT_MULTIPLIER : 1;
-      const frameTime = deltaTime / 1000; // Convert ms to seconds
-      
-      // Calculate movement in player's facing direction
-      const moveDistance = speed * sprintMultiplier * frameTime;
-      const forwardX = Math.cos(this.localPlayerAngle) * forward * moveDistance;
-      const forwardY = Math.sin(this.localPlayerAngle) * forward * moveDistance;
-      const strafeX = Math.cos(this.localPlayerAngle + Math.PI/2) * strafe * moveDistance;
-      const strafeY = Math.sin(this.localPlayerAngle + Math.PI/2) * strafe * moveDistance;
-      
-      // Update local predicted position smoothly
-      this.localPlayerPosition.x += forwardX + strafeX;
-      this.localPlayerPosition.y += forwardY + strafeY;
-    }
+    this.movementPredictor.predictMovement(
+      sequenceId,
+      {
+        forward,
+        strafe,
+        sprint: keyState.sprint || false
+      },
+      deltaTimeSeconds
+    );
   }
 
   /**
-   * Apply movement prediction immediately for responsive feel (legacy method for input commands)
+   * Process movement command using new prediction system
    */
-  private applyMovementPrediction(command: InputCommand): void {
-    // Movement commands are now handled by applyContinuousMovement() for smoother feel
-    // This method remains for potential future command-based prediction logic
+  private processMovementCommand(command: InputCommand): void {
+    if (!this.isMovementInitialized) {
+      return;
+    }
+    
+    // Extract movement data from command
+    const { forward = 0, strafe = 0, sprint = false } = command.data;
+    
+    // Use movement predictor for command-based movement
+    const deltaTimeSeconds = 1/60; // Assume 60 FPS for command processing
+    
+    this.movementPredictor.predictMovement(
+      command.sequenceId,
+      {
+        forward,
+        strafe,
+        sprint
+      },
+      deltaTimeSeconds
+    );
   }
   
   private onInputBatchReady(batch: any): void {
@@ -430,11 +428,19 @@ export class GameEngine {
     this.callbacks.onConnectionChange?.(info);
   }
   
+  /**
+   * Handle delta updates from server
+   * 
+   * Processes incremental state updates from the server and applies them
+   * to the local game state through the message handler.
+   * 
+   * @param delta - Server delta update containing changes since last update
+   */
   private onDeltaUpdate(delta: DeltaUpdate): void {
     // Process delta through message handler
     this.messageHandler.processDeltaUpdate(delta);
     
-    // Acknowledge processed inputs
+    // Acknowledge processed inputs for server reconciliation
     this.gameStateManager.acknowledgeInputs(delta.lastProcessedInput);
   }
   
@@ -447,9 +453,9 @@ export class GameEngine {
     // Reset input systems
     this.inputCommandGenerator.resetSequence();
     
-    // Reset local player state
-    this.localPlayerAngle = 0;
-    this.localPlayerPosition = null; // Will be initialized on first movement
+    // Reset movement predictor
+    this.movementPredictor.reset();
+    this.isMovementInitialized = false;
     
     this.callbacks.onMatchStart?.(data);
   }
@@ -460,6 +466,10 @@ export class GameEngine {
     // Clear game state
     this.gameStateManager.clearState();
     this.messageHandler.clear();
+    
+    // Reset movement system
+    this.movementPredictor.reset();
+    this.isMovementInitialized = false;
     
     this.callbacks.onMatchEnd?.(data);
   }
@@ -487,25 +497,74 @@ export class GameEngine {
   // STATE MANAGEMENT
   // ============================================================================
   
-  private updateGameState(deltaTime: number): void {
-    // Update any client-side predictions or interpolations here
-    // This is where frame-rate independent updates would happen
+  /**
+   * Update local game state with client-side predictions
+   * 
+   * Runs every frame (60 FPS) to update the local player's position
+   * with movement predictions. This ensures smooth movement between
+   * server updates (30 Hz).
+   * 
+   * @param _deltaTime - Time since last frame (unused, predictor manages time)
+   */
+  private updateGameState(_deltaTime: number): void {
+    // Only update if movement system is initialized
+    if (!this.isMovementInitialized) {
+      return;
+    }
+    
+    const currentState = this.gameStateManager.getCurrentState();
+    if (!currentState) {
+      return;
+    }
+    
+    const localPlayer = currentState.players.get(currentState.localPlayerId);
+    if (!localPlayer) {
+      return;
+    }
+    
+    // Update local player with latest predicted values
+    // This ensures smooth 60 FPS movement even with 30 Hz server updates
+    localPlayer.position = this.movementPredictor.getCurrentPosition();
+    localPlayer.angle = this.movementPredictor.getCurrentAngle();
+    localPlayer.velocity = this.movementPredictor.getCurrentVelocity();
+    
+    // Note: We don't call onStateUpdate here to avoid excessive React re-renders
+    // The renderer accesses the state directly via gameStateRef
   }
   
+  /**
+   * Handle complete state updates from MessageHandler
+   * 
+   * This is the central state update handler that:
+   * 1. Initializes the game state on first update
+   * 2. Initializes movement prediction when player position data is available
+   * 3. Handles ongoing server reconciliation
+   * 
+   * @param state - Complete client game state
+   */
   private onStateUpdate(state: ClientGameState): void {
+    
     // Check if this is the first state (initialization)
     if (!this.gameStateManager.getCurrentState()) {
       console.log('🎯 [DEBUG] Initializing client game state for first time');
       // Initialize state for the first time
       this.gameStateManager.initializeState(state);
-      
-      // Initialize local position from server (one time only)
+    }
+    
+    // Initialize movement when we first get local player position data
+    if (!this.isMovementInitialized) {
       const localPlayer = state.players.get(state.localPlayerId);
-      if (localPlayer) {
-        this.localPlayerPosition = { x: localPlayer.position.x, y: localPlayer.position.y };
-        this.localPlayerAngle = localPlayer.angle;
+      if (localPlayer && localPlayer.position) {
+        // Initialize movement prediction system with server-provided position
+        this.movementPredictor.initialize(localPlayer.position, localPlayer.angle);
+        this.isMovementInitialized = true;
+      } else {
+        // Wait for server to send player position data
       }
-    } else {
+    }
+    
+    // Handle ongoing state updates
+    if (this.gameStateManager.getCurrentState()) {
       // Server reconciliation: check if our prediction was wrong
       this.reconcileWithServer(state);
       
@@ -521,64 +580,29 @@ export class GameEngine {
   }
 
   /**
-   * Reconcile local prediction with server state using smart adaptive thresholds
+   * Reconcile local prediction with server state using new movement predictor
    */
   private reconcileWithServer(serverState: ClientGameState): void {
-    if (!this.localPlayerPosition) return;
+    if (!this.isMovementInitialized) return;
 
     const serverPlayer = serverState.players.get(serverState.localPlayerId);
     if (!serverPlayer) return;
 
-    // Calculate position difference
-    const deltaX = serverPlayer.position.x - this.localPlayerPosition.x;
-    const deltaY = serverPlayer.position.y - this.localPlayerPosition.y;
-    const positionDiff = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+    // Use movement predictor's reconciliation system
+    // Assume server updates include the last processed sequence ID
+    const serverUpdate = {
+      position: serverPlayer.position,
+      velocity: serverPlayer.velocity || { x: 0, y: 0 },
+      sequenceId: (serverPlayer as any).lastProcessedSequence || 0,
+      timestamp: Date.now()
+    };
 
-    // Smart movement detection - check if input has changed recently
-    const keyState = this.inputManager.getKeyState();
-    const isCurrentlyMoving = keyState.forward || keyState.backward || keyState.left || keyState.right;
+    const wasReconciled = this.movementPredictor.reconcileWithServer(serverUpdate);
     
-    // Don't reconcile if player just started moving (give prediction time to work)
-    const timeSinceLastReconciliation = Date.now() - this.lastReconciliationTime;
-    const recentlyReconciled = timeSinceLastReconciliation < 500; // 500ms grace period
-    
-    if (isCurrentlyMoving && recentlyReconciled) {
-      // Skip reconciliation - let client prediction handle it
-      return;
-    }
-    
-    // Use different thresholds based on movement state
-    const threshold = isCurrentlyMoving 
-      ? PREDICTION_CONSTANTS.MOVING_RECONCILIATION_THRESHOLD
-      : PREDICTION_CONSTANTS.STATIC_RECONCILIATION_THRESHOLD;
-
-    if (positionDiff > threshold) {
-      // Adaptive correction strength based on error magnitude
-      let correctionFactor;
-      if (positionDiff > PREDICTION_CONSTANTS.SNAP_CORRECTION_THRESHOLD) {
-        // Large error: snap immediately (likely a teleport or major desync)
-        correctionFactor = 1.0;
-      } else if (positionDiff > PREDICTION_CONSTANTS.SMALL_ERROR_THRESHOLD) {
-        // Medium error: correct gently
-        correctionFactor = PREDICTION_CONSTANTS.MEDIUM_CORRECTION_FACTOR;
-      } else {
-        // Small error: barely noticeable correction
-        correctionFactor = PREDICTION_CONSTANTS.GENTLE_CORRECTION_FACTOR;
-      }
-
-      // Apply the correction smoothly
-      this.localPlayerPosition.x += deltaX * correctionFactor;
-      this.localPlayerPosition.y += deltaY * correctionFactor;
-
-      // Mark reconciliation time
-      this.lastReconciliationTime = Date.now();
-
-      console.log('🔄 [DEBUG] Smart reconciliation applied', {
-        difference: positionDiff.toFixed(3),
-        threshold: threshold.toFixed(1),
-        correctionFactor: correctionFactor.toFixed(3),
-        isMoving: isCurrentlyMoving,
-        recentlyReconciled
+    if (wasReconciled) {
+      console.log('🔄 [DEBUG] Position reconciled with server', {
+        serverPos: serverPlayer.position,
+        predictedPos: this.movementPredictor.getCurrentPosition()
       });
     }
   }
@@ -616,6 +640,53 @@ export class GameEngine {
    */
   getGameStateManager(): ClientGameStateManager {
     return this.gameStateManager;
+  }
+  
+  /**
+   * Get current player position from movement predictor
+   */
+  getCurrentPlayerPosition(): { x: number; y: number } | null {
+    if (!this.isMovementInitialized) {
+      return null;
+    }
+    return this.movementPredictor.getCurrentPosition();
+  }
+  
+  /**
+   * Get current player angle from movement predictor
+   */
+  getCurrentPlayerAngle(): number {
+    if (!this.isMovementInitialized) {
+      return 0;
+    }
+    return this.movementPredictor.getCurrentAngle();
+  }
+  
+  /**
+   * Get current player velocity from movement predictor
+   */
+  getCurrentPlayerVelocity(): { x: number; y: number } {
+    if (!this.isMovementInitialized) {
+      return { x: 0, y: 0 };
+    }
+    return this.movementPredictor.getCurrentVelocity();
+  }
+  
+  /**
+   * Check if movement system is initialized
+   */
+  isMovementReady(): boolean {
+    return this.isMovementInitialized;
+  }
+  
+  /**
+   * Get movement predictor debug info
+   */
+  getMovementDebugInfo(): any {
+    if (!this.isMovementInitialized) {
+      return { error: 'Movement not initialized' };
+    }
+    return this.movementPredictor.getDebugInfo();
   }
   
   /**
@@ -672,26 +743,35 @@ export class GameEngine {
   }
   
   /**
-   * Get local player angle (client authoritative)
+   * Get local player angle (for backward compatibility)
    */
   getLocalPlayerAngle(): number {
-    return this.localPlayerAngle;
+    if (!this.isMovementInitialized) {
+      return 0;
+    }
+    return this.movementPredictor.getCurrentAngle();
   }
-
+  
   /**
-   * Get local player position (client predicted)
+   * Get local player position (for backward compatibility)
    */
   getLocalPlayerPosition(): { x: number; y: number } | null {
-    return this.localPlayerPosition;
+    if (!this.isMovementInitialized) {
+      return null;
+    }
+    return this.movementPredictor.getCurrentPosition();
   }
-
+  
   /**
-   * Check if position reconciliation occurred recently (within last frame)
+   * Check if position reconciliation occurred recently (for backward compatibility)
    */
   wasRecentlyReconciled(): boolean {
-    const RECONCILIATION_GRACE_PERIOD = 300; // 300ms grace period for smoother movement
-    return (Date.now() - this.lastReconciliationTime) < RECONCILIATION_GRACE_PERIOD;
+    if (!this.isMovementInitialized) {
+      return false;
+    }
+    return this.movementPredictor.isCorrectingMovement();
   }
+
   
   /**
    * Cleanup all resources

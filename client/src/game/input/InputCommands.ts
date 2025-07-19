@@ -68,8 +68,8 @@ export class InputCommandGenerator {
     
     if (keyState.forward) forward += 1;
     if (keyState.backward) forward -= 1;
-    if (keyState.right) strafe += 1;
-    if (keyState.left) strafe -= 1;
+    if (keyState.right) strafe -= 1;  // D key = negative strafe (move right)
+    if (keyState.left) strafe += 1;   // A key = positive strafe (move left)
     
     // Check if there's any movement or sprint state change
     const hasMovement = Math.abs(forward) > 0 || Math.abs(strafe) > 0;

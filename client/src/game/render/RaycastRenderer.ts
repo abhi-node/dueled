@@ -518,7 +518,7 @@ export class RaycastRenderer {
     this.ctx.fillRect(0, 0, this.width, this.height);
   }
   
-  private renderNoPlayer(): void {
+  public renderNoPlayer(): void {
     this.clearScreen();
     
     // Render "No Player" message

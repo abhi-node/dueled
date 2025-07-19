@@ -224,6 +224,13 @@ export class GameSocket {
     this.updateConnectionState('authenticated');
   };
   
+  /**
+   * Handle incoming game state delta from server
+   * 
+   * Forwards delta updates to the GameEngine for processing.
+   * 
+   * @param delta - Server delta update
+   */
   private onGameStateDelta = (delta: DeltaUpdate): void => {
     this.callbacks.onDeltaUpdate(delta);
   };

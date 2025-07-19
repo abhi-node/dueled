@@ -140,12 +140,19 @@ export class MessageHandler {
   /**
    * Process incoming delta update from server
    */
+  /**
+   * Process server delta update
+   * 
+   * Applies incremental changes from the server to the local game state.
+   * Handles player updates, projectile updates, match state changes, and events.
+   * 
+   * @param delta - Delta update from server containing incremental changes
+   */
   processDeltaUpdate(delta: DeltaUpdate): void {
     if (!this.gameState) {
       console.warn('Cannot process delta: no game state');
       return;
     }
-    
     
     // Update network timing
     this.gameState.lastServerUpdate = Date.now();
@@ -173,7 +180,7 @@ export class MessageHandler {
       this.processGameEvents(delta.events);
     }
     
-    // Notify callbacks
+    // Notify GameEngine of the updated state
     this.callbacks.onStateUpdate(this.gameState);
   }
   

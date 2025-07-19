@@ -38,11 +38,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   onGameEnd,
   onError
 }) => {
-  console.log('🎯 [DEBUG] GameCanvas component rendering', { 
-    matchId, 
-    selectedClass, 
-    hasAuthToken: !!authToken 
-  });
   // Refs
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameEngineRef = useRef<GameEngine | null>(null);
@@ -102,7 +97,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       setupCanvas(canvas);
       
       // Initialize renderer
-      console.log('🖼️ [DEBUG] Creating RaycastRenderer');
       const renderer = new RaycastRenderer(canvas);
       rendererRef.current = renderer;
       
@@ -219,44 +213,22 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     console.log('🎌 Round ended:', data);
   }, []);
   
+  /**
+   * Handle game state updates from GameEngine
+   * 
+   * Updates both the real-time render state (via ref) and React state
+   * for UI components. Called when server sends state updates.
+   * 
+   * @param state - Updated client game state
+   */
   const handleStateUpdate = useCallback((state: ClientGameState) => {
-    // Debug: Log all player positions from server occasionally
-    if (Math.random() < 0.05) { // 5% of updates
-      console.log('🎯 [STATE DEBUG] Server state update received:', {
-        localPlayerId: state.localPlayerId,
-        playerCount: state.players.size,
-        playerPositions: Array.from(state.players.entries()).map(([id, player]) => ({
-          id,
-          position: { x: player.position.x.toFixed(2), y: player.position.y.toFixed(2) },
-          isLocal: id === state.localPlayerId
-        }))
-      });
-    }
-    
-    // Apply local player overrides (client authoritative/predicted) to state
-    if (gameEngineRef.current && state.localPlayerId) {
-      const localPlayer = state.players.get(state.localPlayerId);
-      if (localPlayer) {
-        // Override server angle with local client angle for immediate response
-        localPlayer.angle = gameEngineRef.current.getLocalPlayerAngle();
-        
-        // Override server position with local predicted position for smooth movement
-        // But respect recent server reconciliation corrections
-        const localPosition = gameEngineRef.current.getLocalPlayerPosition();
-        if (localPosition && !gameEngineRef.current.wasRecentlyReconciled()) {
-          localPlayer.position.x = localPosition.x;
-          localPlayer.position.y = localPosition.y;
-        }
-      }
-    }
-    
-    // Update ref immediately for real-time render loop
+    // Update ref immediately for real-time render loop (no React delays)
     gameStateRef.current = state;
     
     // Update React state for UI components (HUD, overlays)
     setGameState(state);
     
-    // Update input stats periodically
+    // Update input statistics for debug display
     if (gameEngineRef.current) {
       setInputStats(gameEngineRef.current.getInputStats());
     }
@@ -298,7 +270,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     };
     
     animationFrameRef.current = requestAnimationFrame(renderFrame);
-    console.log('🎬 [DEBUG] Render loop started and running');
   }, []); // Remove gameState dependency to prevent stale closures
   
   // ============================================================================
