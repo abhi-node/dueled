@@ -54,6 +54,7 @@ export class SimpleAuthController {
     
     this.router.post('/register', this.register.bind(this));
     this.router.post('/login', this.login.bind(this));
+    this.router.post('/anonymous', this.createAnonymousSession.bind(this));
     this.router.post('/logout', this.logout.bind(this));
     this.router.get('/me', this.getProfile.bind(this));
   }
@@ -123,16 +124,13 @@ export class SimpleAuthController {
       
       res.status(201).json({
         success: true,
-        data: {
-          user: {
-            id: user.id,
-            username: user.username,
-            email: user.email,
-            rating: 1000,
-            isAnonymous: user.is_anonymous,
-            createdAt: user.created_at
-          },
-          token
+        token,
+        player: {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          isAnonymous: user.is_anonymous,
+          rating: 1000
         }
       });
       
@@ -208,16 +206,13 @@ export class SimpleAuthController {
       
       res.json({
         success: true,
-        data: {
-          user: {
-            id: user.id,
-            username: user.username,
-            email: user.email,
-            rating: user.rating || 1000,
-            isAnonymous: user.is_anonymous,
-            createdAt: user.created_at
-          },
-          token
+        token,
+        player: {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          isAnonymous: user.is_anonymous,
+          rating: user.rating || 1000
         }
       });
       
@@ -226,6 +221,61 @@ export class SimpleAuthController {
       res.status(500).json({
         success: false,
         error: 'Login failed'
+      });
+    }
+  }
+
+  /**
+   * Create anonymous session for guest play
+   */
+  private async createAnonymousSession(req: Request, res: Response): Promise<void> {
+    try {
+      // Create guest user with UUID
+      const { v4: uuidv4 } = await import('uuid');
+      const userId = uuidv4();
+      const guestUsername = `Guest_${Date.now().toString().slice(-6)}`;
+
+      // Create anonymous player
+      const result = await db.query(
+        `INSERT INTO players (id, username, is_anonymous) 
+         VALUES ($1, $2, $3) 
+         RETURNING id, username, is_anonymous, created_at`,
+        [userId, guestUsername, true]
+      );
+
+      // Create player stats
+      await db.query(
+        `INSERT INTO player_stats (player_id, rating) VALUES ($1, $2)`,
+        [userId, 1000]
+      );
+
+      const user = result.rows[0];
+
+      // Generate token
+      const token = signAccessToken({
+        sub: user.id,
+        sid: `session_${Date.now()}`,
+        role: 'user'
+      });
+
+      logger.info(`Anonymous session created: ${guestUsername} (${user.id})`);
+
+      res.status(201).json({
+        success: true,
+        token,
+        player: {
+          id: user.id,
+          username: user.username,
+          isAnonymous: user.is_anonymous,
+          rating: 1000
+        }
+      });
+
+    } catch (error) {
+      logger.error('Anonymous session error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to create guest session'
       });
     }
   }
@@ -271,10 +321,12 @@ export class SimpleAuthController {
       
       // Get user data
       const result = await db.query(
-        `SELECT id, username, email, elo_rating, created_at, last_login,
-                (SELECT COUNT(*) FROM matches WHERE (player1_id = users.id OR player2_id = users.id) AND status = 'completed') as total_matches,
-                (SELECT COUNT(*) FROM matches WHERE winner_id = users.id AND status = 'completed') as wins
-         FROM users WHERE id = $1`,
+        `SELECT p.id, p.username, p.email, p.is_anonymous, p.created_at, p.last_login, ps.rating,
+                (SELECT COUNT(*) FROM matches WHERE (player1_id = p.id OR player2_id = p.id) AND status = 'completed') as total_matches,
+                (SELECT COUNT(*) FROM matches WHERE winner_id = p.id AND status = 'completed') as wins
+         FROM players p
+         LEFT JOIN player_stats ps ON p.id = ps.player_id
+         WHERE p.id = $1`,
         [decoded.sub]
       );
       
@@ -290,22 +342,19 @@ export class SimpleAuthController {
       
       res.json({
         success: true,
-        data: {
-          user: {
-            id: user.id,
-            username: user.username,
-            email: user.email,
-            eloRating: user.elo_rating,
-            createdAt: user.created_at,
-            lastLogin: user.last_login,
-            stats: {
-              totalMatches: parseInt(user.total_matches),
-              wins: parseInt(user.wins),
-              losses: parseInt(user.total_matches) - parseInt(user.wins),
-              winRate: parseInt(user.total_matches) > 0 
-                ? Math.round((parseInt(user.wins) / parseInt(user.total_matches)) * 100)
-                : 0
-            }
+        player: {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          isAnonymous: user.is_anonymous,
+          rating: user.rating || 1000,
+          stats: {
+            totalMatches: parseInt(user.total_matches),
+            wins: parseInt(user.wins),
+            losses: parseInt(user.total_matches) - parseInt(user.wins),
+            winRate: parseInt(user.total_matches) > 0 
+              ? Math.round((parseInt(user.wins) / parseInt(user.total_matches)) * 100)
+              : 0
           }
         }
       });

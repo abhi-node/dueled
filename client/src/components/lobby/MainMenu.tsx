@@ -8,6 +8,7 @@ import type { ClassType } from '@dueled/shared';
 
 export function MainMenu() {
   const [isInQueue, setIsInQueue] = useState(false);
+  // Only allow selection of available classes (berserker or archer)
   const [selectedClass, setSelectedClass] = useState<ClassType>('berserker' as ClassType);
   // Keep the latest class in a ref so socket callbacks always use the up-to-date value
   const selectedClassRef = useRef<ClassType>('berserker' as ClassType);
@@ -73,7 +74,7 @@ export function MainMenu() {
     console.log('Connecting to WebSocket with token...');
     setConnectionStatus('connecting');
     
-    const newSocket = io('http://localhost:3000/game', {
+    const newSocket = io('http://localhost:3000', {
       auth: { token },
       autoConnect: true,
     });
@@ -81,6 +82,18 @@ export function MainMenu() {
     newSocket.on('connect', () => {
       console.log('WebSocket connected successfully');
       setConnectionStatus('connected');
+      
+      // Authenticate immediately after connection
+      newSocket.emit('authenticate', { token });
+    });
+
+    newSocket.on('authenticated', (data) => {
+      console.log('WebSocket authenticated successfully:', data);
+    });
+
+    newSocket.on('auth_error', (error) => {
+      console.error('WebSocket authentication failed:', error);
+      setConnectionStatus('disconnected');
     });
 
     newSocket.on('disconnect', (reason) => {
@@ -378,26 +391,35 @@ export function MainMenu() {
         <h3 className="text-xl font-bold text-arena-300 mb-4">Choose Your Class</h3>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-4xl">
           {[
-            { name: 'Berserker', icon: '⚔️', color: 'text-red-500', type: 'berserker' as ClassType },
-            { name: 'Mage', icon: '🧙', color: 'text-blue-500', type: 'mage' as ClassType },
-            { name: 'Bomber', icon: '💣', color: 'text-orange-500', type: 'bomber' as ClassType },
-            { name: 'Archer', icon: '🏹', color: 'text-green-500', type: 'archer' as ClassType },
+            { name: 'Berserker', icon: '⚔️', color: 'text-red-500', type: 'berserker' as ClassType, available: true },
+            { name: 'Mage', icon: '🧙', color: 'text-blue-500', type: 'mage' as ClassType, available: false },
+            { name: 'Bomber', icon: '💣', color: 'text-orange-500', type: 'bomber' as ClassType, available: false },
+            { name: 'Archer', icon: '🏹', color: 'text-green-500', type: 'archer' as ClassType, available: true },
           ].map((classType) => (
             <div
               key={classType.name}
-              className={`card p-4 text-center hover:bg-arena-700 transition-colors cursor-pointer ${
-                selectedClass === classType.type ? 'ring-2 ring-dueled-500 bg-arena-700' : ''
+              className={`card p-4 text-center transition-colors ${
+                classType.available 
+                  ? `hover:bg-arena-700 cursor-pointer ${selectedClass === classType.type ? 'ring-2 ring-dueled-500 bg-arena-700' : ''}`
+                  : 'opacity-50 cursor-not-allowed bg-arena-800'
               }`}
               onClick={() => {
-                setSelectedClass(classType.type);
-                selectedClassRef.current = classType.type;
+                if (classType.available) {
+                  setSelectedClass(classType.type);
+                  selectedClassRef.current = classType.type;
+                }
               }}
             >
-              <div className={`text-4xl mb-2 ${classType.color}`}>
+              <div className={`text-4xl mb-2 ${classType.available ? classType.color : 'text-gray-500'}`}>
                 {classType.icon}
               </div>
-              <h4 className="font-bold">{classType.name}</h4>
-              {selectedClass === classType.type && (
+              <h4 className={`font-bold ${classType.available ? '' : 'text-gray-500'}`}>
+                {classType.name}
+              </h4>
+              {!classType.available && (
+                <div className="mt-2 text-xs text-gray-500">Coming Soon</div>
+              )}
+              {classType.available && selectedClass === classType.type && (
                 <div className="mt-2 text-xs text-dueled-500">Selected</div>
               )}
             </div>
