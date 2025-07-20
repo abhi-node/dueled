@@ -52,6 +52,30 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [showDebug, setShowDebug] = useState(false);
   
+  // Round system overlay states
+  const [countdownState, setCountdownState] = useState<{
+    isActive: boolean;
+    roundNumber: number;
+    countdown: number;
+  } | null>(null);
+  
+  const [roundEndState, setRoundEndState] = useState<{
+    isActive: boolean;
+    winner: string;
+    score: { player1: number; player2: number };
+  } | null>(null);
+  
+  const [matchEndState, setMatchEndState] = useState<{
+    isActive: boolean;
+    winner: string;
+    finalScore: { player1: number; player2: number };
+  } | null>(null);
+  
+  // Debug logging for match end state changes
+  useEffect(() => {
+    console.log('🔄 Match end state changed:', matchEndState);
+  }, [matchEndState]);
+  
   // Real-time game state ref for render loop (avoids React async state issues)
   const gameStateRef = useRef<ClientGameState | null>(null);
   
@@ -118,6 +142,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         onMatchEnd: handleMatchEnd,
         onRoundStart: handleRoundStart,
         onRoundEnd: handleRoundEnd,
+        onCountdownTick: handleCountdownTick,
+        onCountdownComplete: handleCountdownComplete,
+        onReturnToLobby: handleReturnToLobby,
         onStateUpdate: handleStateUpdate,
         onError: handleNetworkError
       });
@@ -205,16 +232,93 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   
   const handleMatchEnd = useCallback((data: MatchEndData) => {
     console.log('🏁 Match ended:', data);
-    onGameEnd?.();
-  }, [onGameEnd]);
+    console.log('🎯 Setting match end overlay state for winner:', data.winnerUsername);
+    
+    // Show match end overlay with winner username
+    setMatchEndState({
+      isActive: true,
+      winner: data.winnerUsername || 'Unknown Player',
+      finalScore: data.finalScore || { player1: 0, player2: 0 }
+    });
+    
+    // Hide other overlays
+    setCountdownState(null);
+    setRoundEndState(null);
+    
+    console.log('✅ Match end overlay state has been set');
+  }, []);
   
   const handleRoundStart = useCallback((data: RoundStartData) => {
     console.log('⚡ Round started:', data.roundNumber);
+    console.log('🚨 WARNING: Clearing match end overlay due to round start');
+    
+    // Hide all overlays when round actually starts
+    setCountdownState(null);
+    setRoundEndState(null);
+    setMatchEndState(null);
   }, []);
   
   const handleRoundEnd = useCallback((data: RoundEndData) => {
     console.log('🎌 Round ended:', data);
+    
+    // Show round end overlay with winner username and current score from server
+    setRoundEndState({
+      isActive: true,
+      winner: data.winnerUsername || 'Unknown Player',
+      score: data.currentScore || { player1: 0, player2: 0 }
+    });
+    
+    // Hide countdown overlay
+    setCountdownState(null);
+    
+    // Auto-hide round end overlay after 3 seconds
+    setTimeout(() => {
+      setRoundEndState(null);
+    }, 3000);
   }, []);
+  
+  const handleCountdownTick = useCallback((roundNumber: number, countdown: number) => {
+    console.log(`⏰ Countdown: Round ${roundNumber}, ${countdown}s`);
+    
+    setCountdownState({
+      isActive: true,
+      roundNumber,
+      countdown
+    });
+    
+    // Hide other overlays
+    setRoundEndState(null);
+    setMatchEndState(null);
+  }, []);
+  
+  const handleCountdownComplete = useCallback((roundNumber: number) => {
+    console.log(`🚀 Round ${roundNumber} starting!`);
+    
+    // Show GO! for a brief moment
+    setCountdownState({
+      isActive: true,
+      roundNumber,
+      countdown: 0
+    });
+    
+    // Auto-hide countdown after 1 second
+    setTimeout(() => {
+      setCountdownState(null);
+    }, 1000);
+  }, []);
+  
+  const handleReturnToLobby = useCallback((matchId: string) => {
+    console.log('🏠 Returning to lobby from match:', matchId);
+    console.log('🚨 Clearing match end overlay for return to lobby');
+    
+    // Hide all overlays and return to game end
+    setCountdownState(null);
+    setRoundEndState(null);
+    setMatchEndState(null);
+    
+    // Trigger return to lobby
+    onGameEnd?.();
+  }, [onGameEnd]);
   
   /**
    * Handle game state updates from GameEngine
@@ -382,6 +486,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           connectionInfo={connectionInfo}
           showDebug={showDebug}
           inputStats={inputStats}
+          countdownState={countdownState || undefined}
+          roundEndState={roundEndState || undefined}
+          matchEndState={matchEndState || undefined}
+          onReturnToLobby={onGameEnd}
         />
       )}
       

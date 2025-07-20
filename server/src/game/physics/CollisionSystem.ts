@@ -231,6 +231,18 @@ export class CollisionSystem {
     excludePlayerId: string,
     players: PlayerState[]
   ): { hit: boolean; playerId?: string; hitPosition?: Position; distance?: number } {
+    logger.info(`🔍 LINE COLLISION CHECK:`, {
+      excludePlayerId,
+      startPos,
+      endPos,
+      playerCount: players.length,
+      eligiblePlayers: players.filter(p => p.id !== excludePlayerId && p.isAlive).map(p => ({
+        id: p.id,
+        position: p.position,
+        alive: p.isAlive
+      }))
+    });
+    
     let closestHit = { hit: false, distance: Infinity } as any;
     
     for (const player of players) {
@@ -254,7 +266,16 @@ export class CollisionSystem {
       }
     }
     
-    return closestHit.hit ? closestHit : { hit: false };
+    const result = closestHit.hit ? closestHit : { hit: false };
+    
+    logger.info(`🔍 LINE COLLISION RESULT:`, {
+      hit: result.hit,
+      hitPlayerId: result.playerId,
+      hitPosition: result.hitPosition,
+      distance: result.distance
+    });
+    
+    return result;
   }
   
   /**

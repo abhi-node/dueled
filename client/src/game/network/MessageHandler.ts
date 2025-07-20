@@ -60,8 +60,11 @@ export class MessageHandler {
       roundTimeLeft: data.roundDuration,
       score: { player1: 0, player2: 0 },
       
-      // Players
+      // Players - determine player1/player2 assignment
+      // Use lexicographic order to ensure consistent assignment across clients
       localPlayerId: data.yourPlayerId,
+      player1Id: data.yourPlayerId < data.opponentId ? data.yourPlayerId : data.opponentId,
+      player2Id: data.yourPlayerId < data.opponentId ? data.opponentId : data.yourPlayerId,
       players: new Map(),
       
       // Projectiles

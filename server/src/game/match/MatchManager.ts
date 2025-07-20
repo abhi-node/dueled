@@ -33,10 +33,13 @@ export interface MatchPlayer {
 export interface MatchManagerCallbacks {
   onMatchStart?: (matchId: string) => void;
   onMatchEnd?: (result: MatchResult) => void;
+  onMatchCompletelyFinished?: (matchId: string) => void;
   onPlayerDisconnected?: (matchId: string, playerId: string) => void;
   onDeltaUpdate?: (matchId: string, delta: DeltaUpdate) => void;
   onRoundStart?: (matchId: string, roundNumber: number) => void;
-  onRoundEnd?: (matchId: string, winnerId: string, reason: string) => void;
+  onRoundEnd?: (matchId: string, result: any) => void;
+  onCountdownTick?: (matchId: string, roundNumber: number, countdown: number) => void;
+  onCountdownComplete?: (matchId: string, roundNumber: number) => void;
 }
 
 export class MatchManager {
@@ -123,12 +126,24 @@ export class MatchManager {
       },
       onRoundEnd: (result) => {
         logger.info(`Round ended in match ${matchId}`, result);
-        this.callbacks.onRoundEnd?.(matchId, result.winnerId, result.reason);
+        this.callbacks.onRoundEnd?.(matchId, result);
       },
       onMatchEnd: (result) => {
         logger.info(`Match ${matchId} ended`, result);
         this.stop();
         this.callbacks.onMatchEnd?.(result);
+      },
+      onMatchCompletelyFinished: (matchId) => {
+        logger.info(`Match ${matchId} completely finished - triggering final cleanup`);
+        this.callbacks.onMatchCompletelyFinished?.(matchId);
+      },
+      onCountdownTick: (roundNumber, countdown) => {
+        logger.debug(`Countdown tick: Round ${roundNumber}, ${countdown}s remaining`);
+        this.callbacks.onCountdownTick?.(matchId, roundNumber, countdown);
+      },
+      onCountdownComplete: (roundNumber) => {
+        logger.info(`Countdown complete for round ${roundNumber} in match ${matchId}`);
+        this.callbacks.onCountdownComplete?.(matchId, roundNumber);
       },
       onTimeWarning: (timeLeft) => {
         logger.debug(`Time warning: ${timeLeft}s remaining in match ${matchId}`);
@@ -157,7 +172,7 @@ export class MatchManager {
   // ============================================================================
   
   /**
-   * Start the match and begin game loop
+   * Start the match systems but wait for player readiness
    */
   start(): void {
     if (this.isActive) {
@@ -170,14 +185,15 @@ export class MatchManager {
     // Start game loop
     this.startGameLoop();
     
-    // Start round system
-    this.roundSystem.startMatch();
-    
-    // Notify callback
+    // Notify callback that match systems are ready
     this.callbacks.onMatchStart?.(this.matchId);
     
-    logger.info(`Match ${this.matchId} started`);
+    logger.info(`Match ${this.matchId} systems started`);
+    
+    // Start rounds immediately
+    this.roundSystem.startMatch();
   }
+  
   
   /**
    * Stop the match and cleanup resources
@@ -230,6 +246,7 @@ export class MatchManager {
     player.lastInputTime = Date.now();
     
     logger.info(`Player ${playerId} connected to match ${this.matchId}`);
+    
     return true;
   }
   
@@ -453,6 +470,8 @@ export class MatchManager {
   private processAttackInput(playerId: string, command: InputCommand): void {
     const { action } = command.data;
     
+    logger.info(`⚔️ ATTACK INPUT: Player ${playerId} action: ${action}`);
+    
     if (action === 'primary_attack') {
       const player = this.gameState.getPlayer(playerId);
       if (!player || !player.isAlive) {
@@ -477,6 +496,18 @@ export class MatchManager {
         // HITSCAN PROCESSING
         logger.debug(`Processing hitscan attack for player ${playerId}`);
         
+        logger.info(`🎯 HITSCAN ATTACK: Player ${playerId} shooting`, {
+          shooterPosition: player.position,
+          shooterAngle: player.angle,
+          shooterAlive: player.isAlive,
+          range: weaponConfig.range,
+          playersInGame: this.gameState.getAllPlayers().map(p => ({
+            id: p.id,
+            position: p.position,
+            alive: p.isAlive
+          }))
+        });
+        
         const hitscanResult = this.projectilePhysics.processHitscanWeapon(
           player.position,
           player.angle,
@@ -486,14 +517,24 @@ export class MatchManager {
           this.collisionSystem
         );
         
+        logger.info(`🎯 HITSCAN RESULT:`, {
+          shooterId: playerId,
+          hitType: hitscanResult.hitType,
+          hitPlayerId: hitscanResult.hitPlayerId,
+          hitPosition: hitscanResult.hitPosition,
+          distance: hitscanResult.distance
+        });
+        
         // Apply damage immediately if hit player
         if (hitscanResult.hitType === 'player' && hitscanResult.hitPlayerId) {
-          logger.debug(`Hitscan hit player ${hitscanResult.hitPlayerId} for ${weaponConfig.damage} damage`);
+          logger.info(`💥 DAMAGE APPLIED: ${playerId} hit ${hitscanResult.hitPlayerId} for ${weaponConfig.damage} damage`);
           this.gameState.damagePlayer(
             hitscanResult.hitPlayerId,
             weaponConfig.damage,
             playerId
           );
+        } else {
+          logger.info(`❌ NO DAMAGE: ${playerId} missed (${hitscanResult.hitType})`);
         }
         
         // Create hitscan event for client rendering

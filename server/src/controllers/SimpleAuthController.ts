@@ -108,7 +108,8 @@ export class SimpleAuthController {
       const token = signAccessToken({
         sub: user.id,
         sid: `session_${Date.now()}`,
-        role: 'user'
+        role: 'user',
+        username: user.username
       });
       
       logger.info(`User registered: ${username} (${user.id})`);
@@ -184,7 +185,8 @@ export class SimpleAuthController {
       const token = signAccessToken({
         sub: user.id,
         sid: `session_${Date.now()}`,
-        role: 'user'
+        role: 'user',
+        username: user.username
       });
       
       // Update last login
@@ -246,7 +248,8 @@ export class SimpleAuthController {
       const token = signAccessToken({
         sub: user.id,
         sid: `session_${Date.now()}`,
-        role: 'user'
+        role: 'user',
+        username: user.username
       });
 
       logger.info(`Anonymous session created: ${guestUsername} (${user.id})`);

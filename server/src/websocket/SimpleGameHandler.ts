@@ -482,18 +482,47 @@ export class SimpleGameHandler {
   private createMatchManagerCallbacks(matchId: string): MatchManagerCallbacks {
     return {
       onMatchStart: (matchId: string) => {
-        logger.info(`🎯 Match ${matchId} started`);
-        this.broadcastToMatch(matchId, 'match_started', { matchId });
+        logger.info(`🎯 Match ${matchId} systems started - individual join_match calls will send proper match_start events`);
+        // Don't broadcast match_start here - it's sent individually when each player joins via handleJoinMatch
       },
       
       onMatchEnd: (result) => {
         logger.info(`🏁 Match ${matchId} ended`, result);
-        this.broadcastToMatch(matchId, 'match_ended', result);
         
-        // Cleanup MatchManager
-        this.matchManagers.delete(matchId);
-        this.activeMatches.delete(matchId);
-        this.matchInitializationStatus.delete(matchId);
+        const matchEndData = {
+          winnerId: result.winnerId,
+          winnerUsername: result.winnerUsername,
+          finalScore: result.finalScore,
+          matchDuration: result.totalDuration,
+          reason: 'victory'
+        };
+        
+        logger.info(`📡 Broadcasting match_end event to match ${matchId}:`, matchEndData);
+        this.broadcastToMatch(matchId, 'match_end', matchEndData);
+        
+        // Keep WebSocket connections alive for match end sequence
+        // Cleanup will be handled after ELO updates and match end overlay
+        logger.info(`🔗 Keeping WebSocket connections alive for match end sequence: ${matchId}`);
+        
+        // Schedule delayed cleanup (fallback safety mechanism)
+        setTimeout(() => {
+          this.cleanupMatchConnections(matchId);
+        }, 30000); // 30 second failsafe
+      },
+      
+      onMatchCompletelyFinished: (matchId: string) => {
+        logger.info(`🏠 Match ${matchId} completely finished - returning players to lobby`);
+        this.returnPlayersToLobby(matchId);
+      },
+      
+      onCountdownTick: (matchId: string, roundNumber: number, countdown: number) => {
+        logger.debug(`⏰ Countdown tick: Round ${roundNumber}, ${countdown}s`);
+        this.broadcastToMatch(matchId, 'countdown_tick', { roundNumber, countdown });
+      },
+      
+      onCountdownComplete: (matchId: string, roundNumber: number) => {
+        logger.info(`🚀 Countdown complete: Round ${roundNumber} starting`);
+        this.broadcastToMatch(matchId, 'countdown_complete', { roundNumber });
       },
       
       onPlayerDisconnected: (matchId: string, playerId: string) => {
@@ -508,12 +537,45 @@ export class SimpleGameHandler {
       
       onRoundStart: (matchId: string, roundNumber: number) => {
         logger.info(`⚡ Round ${roundNumber} started in match ${matchId}`);
-        this.broadcastToMatch(matchId, 'round_started', { roundNumber });
+        
+        // Get spawn positions for both players
+        const activeMatch = this.activeMatches.get(matchId);
+        const spawnPositions: { [key: string]: { position: { x: number; y: number }; angle: number } } = {};
+        
+        if (activeMatch) {
+          // Use default spawn positions for each player
+          const defaultSpawns = [
+            { position: { x: 2, y: 2 }, angle: 0 },     // Player 1 spawn
+            { position: { x: 18, y: 18 }, angle: Math.PI } // Player 2 spawn (facing opposite)
+          ];
+          
+          activeMatch.players.forEach((playerId, index) => {
+            spawnPositions[playerId] = defaultSpawns[index] || defaultSpawns[0];
+          });
+        }
+        
+        this.broadcastToMatch(matchId, 'round_start', { 
+          roundNumber,
+          roundDuration: 60000, // 60 seconds default
+          spawnPositions
+        });
       },
       
-      onRoundEnd: (matchId: string, winnerId: string, reason: string) => {
-        logger.info(`🎌 Round ended in match ${matchId}: ${winnerId} wins (${reason})`);
-        this.broadcastToMatch(matchId, 'round_ended', { winnerId, reason });
+      onRoundEnd: (matchId: string, result: any) => {
+        logger.info(`🎌 Round ended in match ${matchId}: ${result.winnerId} wins (${result.reason})`);
+        
+        // Get winner username from playerSockets
+        const winnerPlayerSocket = this.playerSockets.get(result.winnerId);
+        const winnerUsername = winnerPlayerSocket?.username || 'Unknown Player';
+        
+        this.broadcastToMatch(matchId, 'round_end', { 
+          winnerId: result.winnerId, 
+          winnerUsername,
+          reason: result.reason,
+          roundDuration: result.duration || 0,
+          nextRoundIn: 2000, // 2 second intermission
+          currentScore: result.score || { player1: 0, player2: 0 }
+        });
       }
     };
   }
@@ -523,12 +585,20 @@ export class SimpleGameHandler {
    */
   private broadcastToMatch(matchId: string, event: string, data: any): void {
     const activeMatch = this.activeMatches.get(matchId);
-    if (!activeMatch) return;
+    if (!activeMatch) {
+      logger.warn(`Cannot broadcast ${event} to match ${matchId}: match not found`);
+      return;
+    }
+    
+    logger.info(`📤 Broadcasting ${event} to match ${matchId} players:`, activeMatch.players);
     
     for (const playerId of activeMatch.players) {
       const playerSocket = this.playerSockets.get(playerId);
       if (playerSocket && playerSocket.socket.connected) {
+        logger.info(`  ✅ Sent ${event} to player ${playerId} (${playerSocket.username})`);
         playerSocket.socket.emit(event, data);
+      } else {
+        logger.warn(`  ❌ Cannot send ${event} to player ${playerId}: ${playerSocket ? 'disconnected' : 'not found'}`);
       }
     }
   }
@@ -691,6 +761,45 @@ export class SimpleGameHandler {
       playersInMatches,
       activeMatches
     };
+  }
+  
+  /**
+   * Clean up match connections and resources (called after match end sequence)
+   */
+  cleanupMatchConnections(matchId: string): void {
+    logger.info(`🧹 Cleaning up match connections: ${matchId}`);
+    
+    // Remove match resources
+    this.matchManagers.delete(matchId);
+    this.activeMatches.delete(matchId);
+    this.matchInitializationStatus.delete(matchId);
+    
+    // Find players in this match and reset their match state
+    for (const [playerId, playerSocket] of this.playerSockets.entries()) {
+      if (playerSocket.matchId === matchId) {
+        logger.info(`🔄 Resetting player ${playerId} match state`);
+        playerSocket.matchId = undefined;
+        // Leave the socket room
+        playerSocket.socket.leave(matchId);
+      }
+    }
+    
+    logger.info(`✅ Match ${matchId} connections cleaned up`);
+  }
+  
+  /**
+   * Explicitly end match and return players to lobby
+   */
+  returnPlayersToLobby(matchId: string): void {
+    logger.info(`🏠 Returning players to lobby from match: ${matchId}`);
+    
+    // Notify all players to return to lobby
+    this.broadcastToMatch(matchId, 'return_to_lobby', { matchId });
+    
+    // Clean up connections after short delay to allow client processing
+    setTimeout(() => {
+      this.cleanupMatchConnections(matchId);
+    }, 2000); // 2 second delay
   }
   
   /**

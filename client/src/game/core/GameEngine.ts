@@ -37,6 +37,9 @@ export interface GameEngineCallbacks {
   onMatchEnd?: (data: MatchEndData) => void;
   onRoundStart?: (data: RoundStartData) => void;
   onRoundEnd?: (data: RoundEndData) => void;
+  onCountdownTick?: (roundNumber: number, countdown: number) => void;
+  onCountdownComplete?: (roundNumber: number) => void;
+  onReturnToLobby?: (matchId: string) => void;
   onStateUpdate?: (state: ClientGameState) => void;
   onError?: (error: NetworkError) => void;
 }
@@ -116,6 +119,9 @@ export class GameEngine {
       onMatchEnd: this.onMatchEnd.bind(this),
       onRoundStart: this.onRoundStart.bind(this),
       onRoundEnd: this.onRoundEnd.bind(this),
+      onCountdownTick: this.onCountdownTick.bind(this),
+      onCountdownComplete: this.onCountdownComplete.bind(this),
+      onReturnToLobby: this.onReturnToLobby.bind(this),
       onError: this.onNetworkError.bind(this)
     });
     
@@ -491,6 +497,21 @@ export class GameEngine {
     
     this.messageHandler.handleRoundEnd(data);
     this.callbacks.onRoundEnd?.(data);
+  }
+  
+  private onCountdownTick(roundNumber: number, countdown: number): void {
+    console.log(`Countdown tick: Round ${roundNumber}, ${countdown}s`);
+    this.callbacks.onCountdownTick?.(roundNumber, countdown);
+  }
+  
+  private onCountdownComplete(roundNumber: number): void {
+    console.log(`Countdown complete: Round ${roundNumber} starting`);
+    this.callbacks.onCountdownComplete?.(roundNumber);
+  }
+  
+  private onReturnToLobby(matchId: string): void {
+    console.log('Return to lobby:', matchId);
+    this.callbacks.onReturnToLobby?.(matchId);
   }
   
   private onNetworkError(error: NetworkError): void {

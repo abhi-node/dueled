@@ -9,9 +9,12 @@ import { logger } from '../../utils/logger.js';
 import type { GameStateManager } from './GameState.js';
 import type { GAME_CONSTANTS } from '../types.js';
 
+export type RoundState = 'waiting' | 'countdown' | 'active' | 'ended' | 'intermission';
+
 export interface RoundResult {
   roundNumber: number;
   winnerId: string;
+  winnerUsername: string;
   reason: 'elimination' | 'timeout' | 'forfeit';
   duration: number;
   score: { player1: number; player2: number };
@@ -20,6 +23,7 @@ export interface RoundResult {
 export interface MatchResult {
   matchId: string;
   winnerId: string;
+  winnerUsername: string;
   finalScore: { player1: number; player2: number };
   totalDuration: number;
   roundResults: RoundResult[];
@@ -29,8 +33,11 @@ export interface RoundSystemCallbacks {
   onRoundStart?: (roundNumber: number) => void;
   onRoundEnd?: (result: RoundResult) => void;
   onMatchEnd?: (result: MatchResult) => void;
+  onMatchCompletelyFinished?: (matchId: string) => void; // Called after ELO updates and overlay
   onIntermissionStart?: (nextRound: number) => void;
   onTimeWarning?: (timeLeft: number) => void; // Called at 30s, 10s, 5s remaining
+  onCountdownTick?: (roundNumber: number, countdown: number) => void; // Called during 3-2-1 countdown
+  onCountdownComplete?: (roundNumber: number) => void; // Called when countdown finishes
 }
 
 export class RoundSystem {
@@ -44,15 +51,20 @@ export class RoundSystem {
   private roundTimer: NodeJS.Timeout | null = null;
   private intermissionTimer: NodeJS.Timeout | null = null;
   private tickTimer: NodeJS.Timeout | null = null;
+  private countdownTimer: NodeJS.Timeout | null = null;
   
   // State
   private isActive: boolean = false;
+  private isCountdownActive: boolean = false;
+  private currentCountdown: number = 0;
+  private roundState: RoundState = 'waiting';
   private roundResults: RoundResult[] = [];
   private startTime: number;
   
   // Constants
   private readonly ROUND_DURATION = 60; // seconds
   private readonly INTERMISSION_DURATION = 10; // seconds
+  private readonly COUNTDOWN_DURATION = 3; // seconds (3-2-1)
   private readonly ROUNDS_TO_WIN = 3;
   private readonly MAX_ROUNDS = 5;
   private readonly TICK_INTERVAL = 1000; // 1 second
@@ -104,9 +116,15 @@ export class RoundSystem {
   endMatch(winnerId: string, reason: 'forfeit' | 'disconnection' = 'forfeit'): void {
     this.cleanup();
     
+    // Get winner username from game state
+    const players = this.gameState.getAllPlayers();
+    const winner = players.find(p => p.id === winnerId);
+    const winnerUsername = winner?.username || 'Unknown Player';
+    
     const matchResult: MatchResult = {
       matchId: this.matchId,
       winnerId,
+      winnerUsername,
       finalScore: this.getCurrentScore(),
       totalDuration: Date.now() - this.startTime,
       roundResults: [...this.roundResults]
@@ -126,14 +144,134 @@ export class RoundSystem {
   }
   
   // ============================================================================
+  // STATE TRANSITION MANAGEMENT
+  // ============================================================================
+  
+  /**
+   * Transition to a new round state
+   */
+  private transitionToState(newState: RoundState): void {
+    const oldState = this.roundState;
+    this.roundState = newState;
+    
+    logger.info(`Round state transition: ${oldState} → ${newState}`, {
+      matchId: this.matchId,
+      roundNumber: this.gameState.getMatchState().currentRound
+    });
+    
+    // Update legacy state flags for compatibility
+    this.updateLegacyFlags();
+  }
+  
+  /**
+   * Update legacy boolean flags based on round state
+   */
+  private updateLegacyFlags(): void {
+    this.isCountdownActive = this.roundState === 'countdown';
+    this.isActive = this.roundState === 'active';
+  }
+  
+  /**
+   * Get current round state
+   */
+  getCurrentRoundState(): RoundState {
+    return this.roundState;
+  }
+  
+  // ============================================================================
   // ROUND MANAGEMENT
   // ============================================================================
   
   /**
-   * Start a specific round
+   * Start a specific round with countdown (checks player readiness first)
    */
   private startRound(roundNumber: number): void {
-    logger.info(`Starting round ${roundNumber} for match ${this.matchId}`);
+    logger.info(`🚀 startRound(${roundNumber}) called`);
+    
+    // Safety check: Don't start if match should be over
+    if (this.shouldMatchBeOver()) {
+      logger.warn(`❌ EARLY MATCH END: Attempted to start round ${roundNumber} but match should be over`);
+      this.completeMatch();
+      return;
+    }
+    
+    // Player readiness is checked at MatchManager level before calling startMatch()
+    // No need for additional checks here since rounds should only start when ready
+    
+    logger.info(`Starting countdown for round ${roundNumber} in match ${this.matchId}`);
+    
+    // Transition to countdown state
+    this.transitionToState('countdown');
+    
+    // Start with 3-2-1 countdown
+    this.startCountdown(roundNumber);
+  }
+  
+  /**
+   * Check if match should be over due to win conditions
+   */
+  private shouldMatchBeOver(): boolean {
+    const matchState = this.gameState.getMatchState();
+    const { player1: score1, player2: score2 } = matchState.score;
+    const maxScore = Math.max(score1, score2);
+    const currentRound = matchState.currentRound;
+    
+    const shouldEnd = maxScore >= this.ROUNDS_TO_WIN || currentRound >= this.MAX_ROUNDS;
+    
+    logger.info(`🚨 shouldMatchBeOver() called:`, {
+      score1,
+      score2,
+      maxScore,
+      currentRound,
+      roundsToWin: this.ROUNDS_TO_WIN,
+      maxRounds: this.MAX_ROUNDS,
+      winCondition: maxScore >= this.ROUNDS_TO_WIN,
+      roundCondition: currentRound >= this.MAX_ROUNDS,
+      shouldEnd
+    });
+    
+    return shouldEnd;
+  }
+  
+  /**
+   * Start the 3-2-1 countdown before round begins
+   */
+  private startCountdown(roundNumber: number): void {
+    this.isCountdownActive = true;
+    this.currentCountdown = this.COUNTDOWN_DURATION;
+    
+    logger.info(`Starting countdown for round ${roundNumber}: ${this.currentCountdown}`);
+    
+    // Notify initial countdown
+    this.callbacks.onCountdownTick?.(roundNumber, this.currentCountdown);
+    
+    // Start countdown interval
+    this.countdownTimer = setInterval(() => {
+      this.currentCountdown--;
+      
+      if (this.currentCountdown > 0) {
+        // Continue countdown
+        logger.info(`Countdown: ${this.currentCountdown}`);
+        this.callbacks.onCountdownTick?.(roundNumber, this.currentCountdown);
+      } else {
+        // Countdown complete - start the actual round
+        this.stopCountdownTimer();
+        
+        logger.info(`Countdown complete - starting round ${roundNumber}`);
+        this.callbacks.onCountdownComplete?.(roundNumber);
+        
+        // Transition to active state and start the round
+        this.transitionToState('active');
+        this.beginRound(roundNumber);
+      }
+    }, 1000);
+  }
+  
+  /**
+   * Begin the actual round after countdown completes
+   */
+  private beginRound(roundNumber: number): void {
+    logger.info(`Round ${roundNumber} active for match ${this.matchId}`);
     
     // Update game state
     this.gameState.startRound();
@@ -156,33 +294,74 @@ export class RoundSystem {
     const roundNumber = matchState.currentRound;
     const duration = this.ROUND_DURATION - matchState.roundTimeLeft;
     
+    // Transition to ended state
+    this.transitionToState('ended');
+    
     // Stop timers
     this.stopRoundTimer();
     this.stopTickTimer();
     
-    // Create round result
+    // Get winner username from game state
+    const players = this.gameState.getAllPlayers();
+    const winner = players.find(p => p.id === winnerId);
+    const winnerUsername = winner?.username || 'Unknown Player';
+    
+    // Update game state FIRST
+    this.gameState.endRound(winnerId, reason);
+    
+    // Get updated state with new score
+    const updatedMatchState = this.gameState.getMatchState();
+    
+    // Create round result with UPDATED score
     const roundResult: RoundResult = {
       roundNumber,
       winnerId,
+      winnerUsername,
       reason,
       duration,
-      score: { ...matchState.score }
+      score: { ...updatedMatchState.score }
     };
     
     this.roundResults.push(roundResult);
+    const { player1: score1, player2: score2 } = updatedMatchState.score;
+    const maxScore = Math.max(score1, score2);
     
-    // Update game state
-    this.gameState.endRound(winnerId, reason);
+    // Debug logging to trace the exact decision making
+    logger.info(`🔍 MATCH END CHECK:`, {
+      roundNumber,
+      score1,
+      score2,
+      maxScore,
+      roundsToWin: this.ROUNDS_TO_WIN,
+      currentRoundAfterIncrement: updatedMatchState.currentRound,
+      maxRounds: this.MAX_ROUNDS,
+      shouldEndForWins: maxScore >= this.ROUNDS_TO_WIN,
+      shouldEndForMaxRounds: updatedMatchState.currentRound > this.MAX_ROUNDS
+    });
     
-    // Check if match is over
-    const updatedMatchState = this.gameState.getMatchState();
-    const maxScore = Math.max(updatedMatchState.score.player1, updatedMatchState.score.player2);
-    
-    if (maxScore >= this.ROUNDS_TO_WIN || roundNumber >= this.MAX_ROUNDS) {
-      // Match is over
+    // Check for 3-win match limit (primary condition)
+    if (maxScore >= this.ROUNDS_TO_WIN) {
+      const matchWinner = score1 >= this.ROUNDS_TO_WIN ? this.player1Id : this.player2Id;
+      logger.info(`🏆 MATCH END DECISION: ${matchWinner} reached ${this.ROUNDS_TO_WIN} wins`, {
+        finalScore: { player1: score1, player2: score2 },
+        roundsPlayed: roundNumber
+      });
       this.completeMatch();
-    } else {
-      // Start intermission before next round
+    }
+    // Check for max rounds failsafe (only after all 5 rounds completed)
+    else if (updatedMatchState.currentRound > this.MAX_ROUNDS) {
+      const matchWinner = score1 > score2 ? this.player1Id : 
+                         score2 > score1 ? this.player2Id : this.player1Id; // Tie goes to player1
+      logger.info(`🏆 MATCH END DECISION: Reached maximum ${this.MAX_ROUNDS} rounds`, {
+        finalScore: { player1: score1, player2: score2 },
+        winner: matchWinner,
+        totalRoundsPlayed: this.MAX_ROUNDS
+      });
+      this.completeMatch();
+    }
+    // Continue to next round
+    else {
+      logger.info(`▶️ CONTINUING TO NEXT ROUND: Round ${roundNumber} complete. Score: ${score1}-${score2}.`);
       this.startIntermission();
     }
     
@@ -202,7 +381,10 @@ export class RoundSystem {
    */
   private startIntermission(): void {
     const matchState = this.gameState.getMatchState();
-    const nextRound = matchState.currentRound + 1;
+    const nextRound = matchState.currentRound; // currentRound was already incremented in endRound()
+    
+    // Transition to intermission state
+    this.transitionToState('intermission');
     
     logger.info(`Starting intermission before round ${nextRound}`);
     
@@ -224,9 +406,15 @@ export class RoundSystem {
     
     this.cleanup();
     
+    // Get winner username from game state
+    const players = this.gameState.getAllPlayers();
+    const winner = players.find(p => p.id === winnerId);
+    const winnerUsername = winner?.username || 'Unknown Player';
+    
     const matchResult: MatchResult = {
       matchId: this.matchId,
       winnerId,
+      winnerUsername,
       finalScore: matchState.score,
       totalDuration: Date.now() - this.startTime,
       roundResults: [...this.roundResults]
@@ -241,6 +429,12 @@ export class RoundSystem {
       totalDuration: matchResult.totalDuration,
       totalRounds: this.roundResults.length
     });
+    
+    // Schedule final cleanup after ELO updates and match end overlay
+    setTimeout(() => {
+      logger.info(`🧹 Initiating final match cleanup for ${this.matchId}`);
+      this.callbacks.onMatchCompletelyFinished?.(this.matchId);
+    }, 5000); // 5 second delay for ELO updates and overlay display
   }
   
   // ============================================================================
@@ -305,6 +499,16 @@ export class RoundSystem {
     }
   }
   
+  /**
+   * Stop the countdown timer
+   */
+  private stopCountdownTimer(): void {
+    if (this.countdownTimer) {
+      clearInterval(this.countdownTimer);
+      this.countdownTimer = null;
+    }
+  }
+  
   // ============================================================================
   // GAME EVENT HANDLERS
   // ============================================================================
@@ -313,7 +517,7 @@ export class RoundSystem {
    * Handle player elimination
    */
   onPlayerEliminated(deadPlayerId: string, killerId?: string): void {
-    if (!this.isActive) {
+    if (!this.isActive || this.isCountdownActive) {
       return;
     }
     
@@ -329,20 +533,65 @@ export class RoundSystem {
   }
   
   /**
-   * Handle player disconnection
+   * Check for round end conditions (health ≤ 0 or timer = 0)
    */
-  onPlayerDisconnected(playerId: string): void {
-    if (!this.isActive) {
+  checkRoundEndConditions(): void {
+    if (!this.isActive || this.isCountdownActive) {
       return;
     }
     
+    const players = this.gameState.getAllPlayers();
+    const alivePlayers = players.filter(p => p.isAlive && p.health > 0);
+    const deadPlayers = players.filter(p => !p.isAlive || p.health <= 0);
+    
+    // Check for elimination scenario
+    if (alivePlayers.length === 0) {
+      // Both players died simultaneously - use timeout logic
+      logger.info('Both players eliminated simultaneously - using timeout logic');
+      const winnerId = this.determineTimeoutWinner();
+      this.endRound(winnerId, 'elimination');
+      return;
+    }
+    
+    if (alivePlayers.length === 1) {
+      // One player eliminated
+      const winnerId = alivePlayers[0].id;
+      const deadPlayerId = deadPlayers[0]?.id || 'unknown';
+      
+      logger.info(`Player eliminated by health check`, {
+        deadPlayerId,
+        winnerId
+      });
+      
+      this.endRound(winnerId, 'elimination');
+      return;
+    }
+    
+    // Check for timer timeout
+    const matchState = this.gameState.getMatchState();
+    if (matchState.roundTimeLeft <= 0) {
+      logger.info('Round ended by timeout');
+      const winnerId = this.determineTimeoutWinner();
+      this.endRound(winnerId, 'timeout');
+      return;
+    }
+  }
+  
+  /**
+   * Handle player disconnection
+   */
+  onPlayerDisconnected(playerId: string): void {
+    // Handle disconnection during any phase of the match
     const winnerId = this.getOtherPlayer(playerId);
     
-    logger.info(`Player disconnected during round`, {
+    logger.info(`🔌 Player disconnected from match ${this.matchId}`, {
       disconnectedPlayer: playerId,
-      winnerId
+      winnerId,
+      currentState: this.roundState,
+      isMatchActive: this.isActive
     });
     
+    // Immediately end the match and declare the remaining player as winner
     this.endMatch(winnerId, 'disconnection');
   }
   
@@ -351,7 +600,7 @@ export class RoundSystem {
   // ============================================================================
   
   /**
-   * Determine winner when round times out
+   * Determine winner when round times out or both players die
    */
   private determineTimeoutWinner(): string {
     const players = this.gameState.getAllPlayers();
@@ -364,21 +613,35 @@ export class RoundSystem {
     }
     
     // Winner determination priority:
-    // 1. Player with higher health percentage
+    // 1. Player still alive (if one died)
+    if (player1.isAlive && !player2.isAlive) {
+      logger.info('Player1 wins by survival');
+      return this.player1Id;
+    }
+    if (player2.isAlive && !player1.isAlive) {
+      logger.info('Player2 wins by survival');
+      return this.player2Id;
+    }
+    
+    // 2. Player with higher health percentage
     const player1HealthPct = player1.health / player1.maxHealth;
     const player2HealthPct = player2.health / player2.maxHealth;
     
     if (player1HealthPct !== player2HealthPct) {
-      return player1HealthPct > player2HealthPct ? this.player1Id : this.player2Id;
+      const winnerId = player1HealthPct > player2HealthPct ? this.player1Id : this.player2Id;
+      logger.info(`Winner by health: ${winnerId} (${player1HealthPct.toFixed(2)} vs ${player2HealthPct.toFixed(2)})`);
+      return winnerId;
     }
     
-    // 2. Player with more damage dealt this round
+    // 3. Player with more damage dealt this round
     if (player1.roundDamageDealt !== player2.roundDamageDealt) {
-      return player1.roundDamageDealt > player2.roundDamageDealt ? this.player1Id : this.player2Id;
+      const winnerId = player1.roundDamageDealt > player2.roundDamageDealt ? this.player1Id : this.player2Id;
+      logger.info(`Winner by damage dealt: ${winnerId} (${player1.roundDamageDealt} vs ${player2.roundDamageDealt})`);
+      return winnerId;
     }
     
-    // 3. Tie - default to player1
-    logger.info('Timeout tie - defaulting to player1');
+    // 4. Tie - default to player1
+    logger.info('Perfect tie - defaulting to player1');
     return this.player1Id;
   }
   
@@ -408,9 +671,10 @@ export class RoundSystem {
    * Clean up all timers and resources
    */
   private cleanup(): void {
-    this.isActive = false;
+    this.transitionToState('ended');
     this.stopRoundTimer();
     this.stopTickTimer();
+    this.stopCountdownTimer();
     
     if (this.intermissionTimer) {
       clearTimeout(this.intermissionTimer);
@@ -430,13 +694,19 @@ export class RoundSystem {
     timeLeft: number;
     score: { player1: number; player2: number };
     status: string;
+    roundState: RoundState;
+    isCountdownActive: boolean;
+    countdownValue: number;
   } {
     const matchState = this.gameState.getMatchState();
     return {
       currentRound: matchState.currentRound,
       timeLeft: matchState.roundTimeLeft,
       score: { ...matchState.score },
-      status: matchState.status
+      status: matchState.status,
+      roundState: this.roundState,
+      isCountdownActive: this.isCountdownActive,
+      countdownValue: this.currentCountdown
     };
   }
   

@@ -82,7 +82,7 @@ export class SimpleMatchmakingController {
       }
       
       // Add user info to request
-      (req as any).user = { playerId: decoded.sub, username: decoded.sub };
+      (req as any).user = { playerId: decoded.sub, username: decoded.username || 'Unknown' };
       next();
       
     } catch (error) {

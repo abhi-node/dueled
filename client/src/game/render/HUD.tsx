@@ -21,13 +21,35 @@ interface HUDProps {
     queue: any;
     sequence: number;
   };
+  // Round system overlays
+  countdownState?: {
+    isActive: boolean;
+    roundNumber: number;
+    countdown: number;
+  };
+  roundEndState?: {
+    isActive: boolean;
+    winner: string;
+    score: { player1: number; player2: number };
+  };
+  matchEndState?: {
+    isActive: boolean;
+    winner: string;
+    finalScore: { player1: number; player2: number };
+  };
+  // Callbacks
+  onReturnToLobby?: () => void;
 }
 
 export const HUD: React.FC<HUDProps> = ({ 
   gameState, 
   connectionInfo, 
   showDebug = false,
-  inputStats 
+  inputStats,
+  countdownState,
+  roundEndState,
+  matchEndState,
+  onReturnToLobby
 }) => {
   const localPlayer = gameState?.players.get(gameState.localPlayerId || '');
   
@@ -77,8 +99,39 @@ export const HUD: React.FC<HUDProps> = ({
         </div>
       )}
       
-      {/* Game Over / Round End Overlay */}
-      {gameState && gameState.roundTimeLeft <= 0 && (
+      {/* Countdown Overlay (3-2-1 GO!) */}
+      {countdownState?.isActive && (
+        <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+          <CountdownOverlay 
+            roundNumber={countdownState.roundNumber}
+            countdown={countdownState.countdown}
+          />
+        </div>
+      )}
+      
+      {/* Round End Overlay */}
+      {roundEndState?.isActive && (
+        <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+          <SimpleRoundEndOverlay 
+            winner={roundEndState.winner}
+            score={roundEndState.score}
+          />
+        </div>
+      )}
+      
+      {/* Match End Overlay */}
+      {matchEndState?.isActive && (
+        <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+          <MatchEndOverlay 
+            winner={matchEndState.winner}
+            finalScore={matchEndState.finalScore}
+            onReturnToLobby={onReturnToLobby}
+          />
+        </div>
+      )}
+      
+      {/* Legacy Game Over Overlay (kept for compatibility) */}
+      {gameState && gameState.roundTimeLeft <= 0 && !roundEndState?.isActive && !matchEndState?.isActive && (
         <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center">
           <RoundEndOverlay gameState={gameState} />
         </div>
@@ -185,6 +238,14 @@ interface ScoreDisplayProps {
 }
 
 const ScoreDisplay: React.FC<ScoreDisplayProps> = ({ gameState }) => {
+  // Get player usernames by properly matching player IDs to scores
+  const player1 = gameState.players.get(gameState.player1Id);
+  const player2 = gameState.players.get(gameState.player2Id);
+  
+  // Use usernames from the matched players
+  const player1Name = player1?.username || 'Player 1';
+  const player2Name = player2?.username || 'Player 2';
+  
   return (
     <div className="bg-black bg-opacity-60 rounded-lg p-3 text-center">
       <div className="text-white text-sm font-bold mb-2">
@@ -193,15 +254,19 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({ gameState }) => {
       
       <div className="flex gap-4 text-lg font-bold text-white">
         <div className="text-center">
+          <div className="text-xs text-gray-300 mb-1 truncate max-w-20">
+            {player1Name}
+          </div>
           <div className="text-blue-400">{gameState.score.player1}</div>
-          <div className="text-xs text-gray-300">P1</div>
         </div>
         
-        <div className="text-gray-500">-</div>
+        <div className="text-gray-500 self-end">-</div>
         
         <div className="text-center">
+          <div className="text-xs text-gray-300 mb-1 truncate max-w-20">
+            {player2Name}
+          </div>
           <div className="text-red-400">{gameState.score.player2}</div>
-          <div className="text-xs text-gray-300">P2</div>
         </div>
       </div>
     </div>
@@ -398,6 +463,105 @@ const RoundEndOverlay: React.FC<RoundEndOverlayProps> = ({ gameState }) => {
       <div className="text-sm text-gray-300">
         Next round starting soon...
       </div>
+    </div>
+  );
+};
+
+// ============================================================================
+// NEW ROUND SYSTEM OVERLAYS
+// ============================================================================
+
+/**
+ * Countdown Overlay - Shows 3-2-1 countdown before round starts
+ */
+interface CountdownOverlayProps {
+  roundNumber: number;
+  countdown: number;
+}
+
+const CountdownOverlay: React.FC<CountdownOverlayProps> = ({ roundNumber, countdown }) => {
+  const displayText = countdown > 0 ? countdown.toString() : 'GO!';
+  const isGo = countdown === 0;
+  
+  return (
+    <div className="text-center text-white">
+      <div className="text-3xl font-bold mb-4">
+        Round {roundNumber}
+      </div>
+      
+      <div className={`text-8xl font-bold ${isGo ? 'text-green-400' : 'text-yellow-400'} animate-pulse`}>
+        {displayText}
+      </div>
+    </div>
+  );
+};
+
+/**
+ * Simple Round End Overlay - Shows round winner and current score
+ */
+interface SimpleRoundEndOverlayProps {
+  winner: string;
+  score: { player1: number; player2: number };
+}
+
+const SimpleRoundEndOverlay: React.FC<SimpleRoundEndOverlayProps> = ({ winner, score }) => {
+  return (
+    <div className="text-center text-white">
+      <div className="text-4xl font-bold mb-4">
+        Round Over!
+      </div>
+      
+      <div className="text-2xl mb-4">
+        <span className="text-yellow-400">{winner}</span> wins!
+      </div>
+      
+      <div className="text-xl mb-2">
+        Score: {score.player1} - {score.player2}
+      </div>
+      
+      <div className="text-sm text-gray-300">
+        Next round starting soon...
+      </div>
+    </div>
+  );
+};
+
+/**
+ * Match End Overlay - Shows match winner and final score
+ */
+interface MatchEndOverlayProps {
+  winner: string;
+  finalScore: { player1: number; player2: number };
+  onReturnToLobby?: () => void;
+}
+
+const MatchEndOverlay: React.FC<MatchEndOverlayProps> = ({ winner, finalScore, onReturnToLobby }) => {
+  return (
+    <div className="text-center text-white">
+      <div className="text-5xl font-bold mb-6 text-yellow-400">
+        Match Complete!
+      </div>
+      
+      <div className="text-3xl mb-6">
+        <span className="text-green-400">{winner}</span> wins the match!
+      </div>
+      
+      <div className="text-2xl mb-6">
+        Final Score: {finalScore.player1} - {finalScore.player2}
+      </div>
+      
+      <div className="text-lg text-gray-300 mb-6">
+        Returning to lobby automatically...
+      </div>
+      
+      {onReturnToLobby && (
+        <button
+          onClick={onReturnToLobby}
+          className="pointer-events-auto px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors"
+        >
+          Return to Lobby Now
+        </button>
+      )}
     </div>
   );
 };

@@ -36,6 +36,9 @@ export class GameSocket {
     onMatchEnd: (data: MatchEndData) => {},
     onRoundStart: (data: RoundStartData) => {},
     onRoundEnd: (data: RoundEndData) => {},
+    onCountdownTick: (roundNumber: number, countdown: number) => {},
+    onCountdownComplete: (roundNumber: number) => {},
+    onReturnToLobby: (matchId: string) => {},
     onError: (error: NetworkError) => {}
   };
   
@@ -186,6 +189,11 @@ export class GameSocket {
     this.socket.on('round_start', this.onRoundStart);
     this.socket.on('round_end', this.onRoundEnd);
     
+    // Round system events
+    this.socket.on('countdown_tick', this.onCountdownTick);
+    this.socket.on('countdown_complete', this.onCountdownComplete);
+    this.socket.on('return_to_lobby', this.onReturnToLobby);
+    
     // Error handling
     this.socket.on('error', this.onServerError);
     
@@ -244,8 +252,8 @@ export class GameSocket {
   
   private onMatchEnd = (data: MatchEndData): void => {
     console.log('Match ended, winner:', data.winnerId);
-    this.connectionInfo.matchId = undefined;
-    this.updateConnectionState('authenticated');
+    // Keep connection alive - don't clear matchId yet
+    // Wait for return_to_lobby event for final cleanup
     this.callbacks.onMatchEnd(data);
   };
   
@@ -255,6 +263,26 @@ export class GameSocket {
   
   private onRoundEnd = (data: RoundEndData): void => {
     this.callbacks.onRoundEnd(data);
+  };
+  
+  private onCountdownTick = (data: { roundNumber: number; countdown: number }): void => {
+    console.log(`Countdown: ${data.countdown}`);
+    this.callbacks.onCountdownTick(data.roundNumber, data.countdown);
+  };
+  
+  private onCountdownComplete = (data: { roundNumber: number }): void => {
+    console.log(`Round ${data.roundNumber} starting!`);
+    this.callbacks.onCountdownComplete(data.roundNumber);
+  };
+  
+  private onReturnToLobby = (data: { matchId: string }): void => {
+    console.log('Returning to lobby from match:', data.matchId);
+    
+    // Now it's safe to clear match state and return to lobby
+    this.connectionInfo.matchId = undefined;
+    this.updateConnectionState('authenticated');
+    
+    this.callbacks.onReturnToLobby(data.matchId);
   };
   
   private onServerError = (data: { message: string; code?: string }): void => {
@@ -442,6 +470,9 @@ export class GameSocket {
       onMatchEnd: () => {},
       onRoundStart: () => {},
       onRoundEnd: () => {},
+      onCountdownTick: () => {},
+      onCountdownComplete: () => {},
+      onReturnToLobby: () => {},
       onError: () => {}
     };
   }

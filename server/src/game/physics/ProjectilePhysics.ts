@@ -144,25 +144,7 @@ export class ProjectilePhysics {
       y: startPosition.y + Math.sin(angle) * range
     };
     
-    // Check wall collisions first (walls block bullets)
-    const wallHit = collisionSystem.checkProjectileWallCollision(
-      startPosition, 
-      endPosition, 
-      0.1 // Small radius for precise bullets
-    );
-    
-    if (wallHit.hit && wallHit.position && wallHit.distance !== undefined) {
-      logger.debug(`Hitscan hit wall at distance ${wallHit.distance}`);
-      return {
-        hit: true,
-        hitType: 'wall',
-        hitPosition: wallHit.position,
-        wallId: wallHit.wallId,
-        distance: wallHit.distance
-      };
-    }
-    
-    // Check player collisions along the line
+    // Check ALL potential hits along the raycast line
     const players = Array.from(gameState.players.values());
     
     const playerHit = collisionSystem.checkLinePlayerCollision(
@@ -172,24 +154,66 @@ export class ProjectilePhysics {
       players
     );
     
-    if (playerHit.hit && playerHit.playerId && playerHit.hitPosition && playerHit.distance !== undefined) {
-      logger.debug(`Hitscan hit player ${playerHit.playerId} at distance ${playerHit.distance}`);
+    const wallHit = collisionSystem.checkProjectileWallCollision(
+      startPosition, 
+      endPosition, 
+      0.1 // Small radius for precise bullets
+    );
+    
+    // Find the CLOSEST hit (smallest distance)
+    const hits = [];
+    
+    if (playerHit.hit && playerHit.distance !== undefined) {
+      hits.push({
+        type: 'player' as const,
+        distance: playerHit.distance,
+        position: playerHit.hitPosition!,
+        playerId: playerHit.playerId!
+      });
+    }
+    
+    if (wallHit.hit && wallHit.distance !== undefined) {
+      hits.push({
+        type: 'wall' as const,
+        distance: wallHit.distance,
+        position: wallHit.position!,
+        wallId: wallHit.wallId
+      });
+    }
+    
+    if (hits.length === 0) {
+      logger.debug(`Hitscan missed - no hits detected`);
       return {
-        hit: true,
-        hitType: 'player',
-        hitPosition: playerHit.hitPosition,
-        hitPlayerId: playerHit.playerId,
-        distance: playerHit.distance
+        hit: false,
+        hitType: 'none',
+        hitPosition: endPosition,
+        distance: range
       };
     }
     
-    logger.debug(`Hitscan missed - no hits detected`);
-    return {
-      hit: false,
-      hitType: 'none',
-      hitPosition: endPosition,
-      distance: range
-    };
+    // Sort by distance and take the closest hit
+    hits.sort((a, b) => a.distance - b.distance);
+    const closestHit = hits[0];
+    
+    if (closestHit.type === 'player') {
+      logger.debug(`Hitscan hit player ${closestHit.playerId} at distance ${closestHit.distance} (closest hit)`);
+      return {
+        hit: true,
+        hitType: 'player',
+        hitPosition: closestHit.position,
+        hitPlayerId: closestHit.playerId,
+        distance: closestHit.distance
+      };
+    } else {
+      logger.debug(`Hitscan hit wall at distance ${closestHit.distance} (closest hit, blocked)`);
+      return {
+        hit: true,
+        hitType: 'wall',
+        hitPosition: closestHit.position,
+        wallId: closestHit.wallId,
+        distance: closestHit.distance
+      };
+    }
   }
   
   /**

@@ -222,7 +222,7 @@ export class RaycastRenderer {
     };
     
     let closestHit: RaycastHit | null = null;
-    let minDistance = this.renderDistance;
+    let minDistance: number = this.renderDistance;
     
     // Check intersection with all walls
     for (const wall of walls) {

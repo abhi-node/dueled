@@ -92,6 +92,8 @@ export interface ClientGameState {
   
   // Players
   localPlayerId: string;
+  player1Id: string;
+  player2Id: string;
   players: Map<string, ClientPlayerState>;
   
   // Projectiles

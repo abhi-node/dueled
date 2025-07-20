@@ -44,6 +44,11 @@ export interface ServerToClientEvents {
   'round_start': (data: RoundStartData) => void;
   'round_end': (data: RoundEndData) => void;
   
+  // Round system events
+  'countdown_tick': (data: { roundNumber: number; countdown: number }) => void;
+  'countdown_complete': (data: { roundNumber: number }) => void;
+  'return_to_lobby': (data: { matchId: string }) => void;
+  
   // Connection/error handling
   'connection_confirmed': (data: { playerId: string; serverTime: number }) => void;
   'error': (data: { message: string; code?: string }) => void;
@@ -121,6 +126,7 @@ export interface MatchStartData {
 
 export interface MatchEndData {
   winnerId: string;
+  winnerUsername?: string;
   reason: 'victory' | 'forfeit' | 'disconnect';
   finalScore: { player1: number; player2: number };
   matchDuration: number;
@@ -136,6 +142,7 @@ export interface RoundStartData {
 
 export interface RoundEndData {
   winnerId: string;
+  winnerUsername?: string;
   reason: 'elimination' | 'timeout' | 'forfeit';
   roundDuration: number;
   nextRoundIn: number; // Intermission time in ms

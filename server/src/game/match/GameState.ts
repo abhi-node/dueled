@@ -404,15 +404,9 @@ export class GameStateManager {
       finalScore: { ...this.state.match.score }
     });
     
-    // Check if match is over
-    const maxScore = Math.max(this.state.match.score.player1, this.state.match.score.player2);
-    if (maxScore >= GAME_CONSTANTS.ROUNDS_TO_WIN) {
-      this.endMatch(winnerId);
-    } else {
-      // Prepare for next round
-      this.state.match.currentRound++;
-      this.state.match.status = 'intermission';
-    }
+    // Prepare for next round (match end logic handled by RoundSystem)
+    this.state.match.currentRound++;
+    this.state.match.status = 'intermission';
     
     logger.info(`Round ${this.state.match.currentRound} ended`, {
       winnerId,
