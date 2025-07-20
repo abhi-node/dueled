@@ -159,7 +159,9 @@ export class SimpleGameHandler {
       // Connection management
       socket.on('heartbeat', () => this.handleHeartbeat(socket));
       socket.on('explicit_disconnect', (data) => this.handleExplicitDisconnect(socket, data));
-      socket.on('disconnect', (reason) => this.handleDisconnect(socket, reason));
+      socket.on('disconnect', (reason) => this.handleDisconnect(socket, reason).catch(error => {
+        logger.error('Error handling disconnect:', error);
+      }));
     });
   }
 

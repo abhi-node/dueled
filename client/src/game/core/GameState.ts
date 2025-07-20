@@ -164,8 +164,14 @@ export class ClientGameStateManager {
     
     const player = this.gameState.players.get(playerId);
     if (player) {
-      // Update server state
-      Object.assign(player, playerUpdate);
+      // Update server state - but skip angle updates for local player to maintain client authority
+      if (playerId === this.gameState.localPlayerId && playerUpdate.angle !== undefined) {
+        // Skip angle update for local player - keep client-side mouse control
+        const { angle, ...updateWithoutAngle } = playerUpdate;
+        Object.assign(player, updateWithoutAngle);
+      } else {
+        Object.assign(player, playerUpdate);
+      }
       player.lastUpdateTime = Date.now();
       
       // Update predicted state if this is not the local player
