@@ -31,12 +31,12 @@ export const GAME_CONSTANTS = {
   MAX_INPUT_AGE: 5000,        // Max age for input commands (ms)
   MAX_ANGLE_DELTA: Math.PI / 4, // Max angle change per frame
   
-  // Map bounds (must match server)
+  // Map bounds (must match server - scaled 60x60 arena)
   MAP_BOUNDS: {
-    minX: -50,
-    maxX: 50,
-    minY: -50,
-    maxY: 50
+    minX: 0,
+    maxX: 60,
+    minY: 0,
+    maxY: 60
   }
 } as const;
 
@@ -46,12 +46,12 @@ export const GAME_CONSTANTS = {
 
 export const RENDER_CONSTANTS = {
   // Raycasting
-  FOV: Math.PI / 4,           // 45 degrees field of view (narrower for room feel)
-  RENDER_DISTANCE: 50,        // Increased render distance for full arena visibility
+  FOV: Math.PI / 2,           // 90 degrees field of view (wide peripheral vision)
+  RENDER_DISTANCE: 85,        // Increased for 60x60 arena diagonal visibility (60√2 ≈ 84.85)
   RAY_COUNT: 160,             // Number of rays to cast (reduced for pixel art performance)
   
   // Scale factors for room-like feel
-  WALL_HEIGHT_SCALE: 2.5,     // Makes walls appear much taller relative to distance
+  WALL_HEIGHT_SCALE: 4.6875,  // Makes walls appear much taller relative to distance (50% increase from 3.125)
   PERSPECTIVE_SCALE: 1.2,     // Makes world feel larger and more spacious
   
   // Performance

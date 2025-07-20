@@ -188,9 +188,10 @@ export class RoundSystem {
   private startRound(roundNumber: number): void {
     logger.info(`🚀 startRound(${roundNumber}) called`);
     
-    // Safety check: Don't start if match should be over
-    if (this.shouldMatchBeOver()) {
-      logger.warn(`❌ EARLY MATCH END: Attempted to start round ${roundNumber} but match should be over`);
+    // Safety check: Only prevent starting if we've exceeded max rounds (defensive check)
+    const matchState = this.gameState.getMatchState();
+    if (matchState.currentRound > this.MAX_ROUNDS) {
+      logger.warn(`❌ EARLY MATCH END: Attempted to start round ${roundNumber} after max rounds completed`);
       this.completeMatch();
       return;
     }
@@ -216,7 +217,7 @@ export class RoundSystem {
     const maxScore = Math.max(score1, score2);
     const currentRound = matchState.currentRound;
     
-    const shouldEnd = maxScore >= this.ROUNDS_TO_WIN || currentRound >= this.MAX_ROUNDS;
+    const shouldEnd = maxScore >= this.ROUNDS_TO_WIN || currentRound > this.MAX_ROUNDS;
     
     logger.info(`🚨 shouldMatchBeOver() called:`, {
       score1,
@@ -226,7 +227,7 @@ export class RoundSystem {
       roundsToWin: this.ROUNDS_TO_WIN,
       maxRounds: this.MAX_ROUNDS,
       winCondition: maxScore >= this.ROUNDS_TO_WIN,
-      roundCondition: currentRound >= this.MAX_ROUNDS,
+      roundCondition: currentRound > this.MAX_ROUNDS,
       shouldEnd
     });
     

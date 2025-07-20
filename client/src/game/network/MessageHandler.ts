@@ -78,6 +78,49 @@ export class MessageHandler {
       serverTimeDelta: 0
     };
     
+    // Create initial player objects with proper usernames and class types
+    for (const [playerId, playerData] of Object.entries(data.players)) {
+      const classConfig = getClassConfig(playerData.classType as any);
+      
+      const initialPlayer: ClientPlayerState = {
+        // Identity
+        id: playerId,
+        username: playerData.username,
+        classType: playerData.classType as any,
+        
+        // Transform - will be updated by first delta
+        position: { x: 0, y: 0 },
+        angle: 0,
+        velocity: { x: 0, y: 0 },
+        
+        // Health & Combat - use class-specific values
+        health: classConfig.stats.health,
+        maxHealth: classConfig.stats.health,
+        armor: classConfig.stats.defense,
+        
+        // Weapon State
+        weaponCooldown: 0,
+        lastAttackTime: 0,
+        
+        // Status
+        isAlive: true,
+        isMoving: false,
+        isDashing: false,
+        dashCooldown: 0,
+        
+        // Stats
+        roundKills: 0,
+        roundDamageDealt: 0,
+        
+        // Network
+        lastInputSequence: 0,
+        inputHistory: []
+      };
+      
+      this.gameState.players.set(playerId, initialPlayer);
+      console.log(`Created initial player: ${playerId} (${playerData.username}, ${playerData.classType})`);
+    }
+    
     // Reset sequence tracking
     this.lastProcessedSequence = 0;
     

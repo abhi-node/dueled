@@ -52,6 +52,9 @@ export class RaycastRenderer {
   private gameStateManager: ClientGameStateManager | null = null;
   private textureManager: TextureManager;
   
+  // Current map walls for line-of-sight calculations
+  private currentMapWalls: WallDefinition[] = [];
+  
   // Simple hitscan tracers
   private activeTracers: Map<string, HitscanTracer> = new Map();
   private tracerIdCounter = 0;
@@ -178,6 +181,9 @@ export class RaycastRenderer {
     
     // Clear screen
     this.clearScreen();
+    
+    // Store current walls for line-of-sight calculations
+    this.currentMapWalls = gameState.mapData.walls;
     
     // Render 3D world
     this.renderWalls(localPlayer, gameState.mapData.walls);
@@ -537,10 +543,9 @@ export class RaycastRenderer {
     const spriteHeight = (this.height * sprite.size) / Math.max(sprite.distance, 0.1);
     const spriteWidth = spriteHeight; // Square sprites
     
-    // Check depth against walls
-    const rayIndex = Math.floor((screenX / this.width) * this.rayCount);
-    if (rayIndex >= 0 && rayIndex < this.rayCount && sprite.distance > this.wallHeights[rayIndex]) {
-      return; // Behind wall
+    // Check line-of-sight to sprite - if blocked by walls, don't render
+    if (!this.hasLineOfSightToSprite(localPlayer.position, sprite.position)) {
+      return; // Blocked by wall
     }
     
     // Apply distance-based shading
@@ -563,6 +568,71 @@ export class RaycastRenderer {
   // ============================================================================
   // UTILITY METHODS
   // ============================================================================
+  
+  /**
+   * Check if there's a clear line of sight from viewer to sprite
+   * Uses raycasting to detect wall occlusion
+   */
+  private hasLineOfSightToSprite(viewerPos: Position, spritePos: Position): boolean {
+    // Cast a ray from viewer to sprite
+    const rayHit = this.castRayForLineOfSight(viewerPos, spritePos);
+    
+    if (!rayHit) {
+      return true; // No walls in the way
+    }
+    
+    // Check if the wall hit is closer than the sprite
+    const spriteDistance = Math.sqrt(
+      Math.pow(spritePos.x - viewerPos.x, 2) + 
+      Math.pow(spritePos.y - viewerPos.y, 2)
+    );
+    
+    // Add small tolerance to allow sprites to be visible if they're very close to walls
+    const tolerance = 0.2;
+    return rayHit.distance >= spriteDistance - tolerance;
+  }
+  
+  /**
+   * Cast a ray specifically for line-of-sight checks
+   * Returns the closest wall intersection, if any
+   */
+  private castRayForLineOfSight(start: Position, end: Position): { distance: number } | null {
+    // Use the direct ray casting to walls method
+    return this.castRayToWalls(start, end);
+  }
+  
+  /**
+   * Cast ray to walls using the same intersection logic as main renderer
+   */
+  private castRayToWalls(start: Position, end: Position): { distance: number } | null {
+    // Get current map data from the last render call
+    // We'll need to store this during the main render loop
+    if (!this.currentMapWalls) {
+      return null;
+    }
+    
+    let minDistance = Infinity;
+    let hasHit = false;
+    
+    for (const wall of this.currentMapWalls) {
+      if (!wall.solid) continue;
+      
+      const intersection = this.getLineIntersection(start, end, wall.start, wall.end);
+      if (intersection) {
+        const distance = Math.sqrt(
+          Math.pow(intersection.x - start.x, 2) + 
+          Math.pow(intersection.y - start.y, 2)
+        );
+        
+        if (distance < minDistance) {
+          minDistance = distance;
+          hasHit = true;
+        }
+      }
+    }
+    
+    return hasHit ? { distance: minDistance } : null;
+  }
   
   private getLineIntersection(
     p1: Position, p2: Position,
@@ -738,8 +808,8 @@ export class RaycastRenderer {
   onHitscanFired(event: HitscanFiredEvent): void {
     const tracer: HitscanTracer = {
       id: `tracer_${this.tracerIdCounter++}`,
-      startPos: { x: event.data.startPosition.x, y: event.data.startPosition.y },
-      endPos: { x: event.data.endPosition.x, y: event.data.endPosition.y },
+      startPos: new Vector2(event.data.startPosition.x, event.data.startPosition.y),
+      endPos: new Vector2(event.data.endPosition.x, event.data.endPosition.y),
       createdAt: Date.now(),
       duration: 250 // 250ms duration for better visibility
     };

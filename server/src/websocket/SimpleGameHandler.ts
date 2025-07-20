@@ -446,6 +446,17 @@ export class SimpleGameHandler {
         spawnPoints: matchState.gameState.mapData.spawnPoints
       };
       
+      // Get player data including usernames and class types
+      const allPlayers = matchState.gameState.players;
+      const playersData: { [playerId: string]: { username: string; classType: string } } = {};
+      
+      for (const [pId, player] of allPlayers) {
+        playersData[pId] = {
+          username: player.username,
+          classType: player.classType
+        };
+      }
+      
       // Send proper MatchStartData structure
       socket.emit('match_start', {
         matchId: data.matchId,
@@ -453,7 +464,8 @@ export class SimpleGameHandler {
         opponentId: opponentId,
         mapData: clientMapData,
         roundDuration: GAME_CONSTANTS.ROUND_DURATION * 1000, // Convert to milliseconds
-        maxRounds: GAME_CONSTANTS.MAX_ROUNDS
+        maxRounds: GAME_CONSTANTS.MAX_ROUNDS,
+        players: playersData
       });
       logger.info(`✅ [DEBUG] match_start event sent to client with proper structure`);
       

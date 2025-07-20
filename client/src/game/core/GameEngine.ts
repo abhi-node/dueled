@@ -233,9 +233,12 @@ export class GameEngine {
     if (this.gameSocket.isInMatch() && this.inputManager.isInputActive()) {
       // Read input state ONCE per frame to avoid double mouse consumption
       const keyState = this.inputManager.getKeyState();
-      const mouseState = this.inputManager.getMouseState(); // Clears mouse deltas
+      const mouseState = this.inputManager.getMouseState(); // Get mouse deltas without clearing
       
       this.processInput(keyState, mouseState);
+      
+      // Clear mouse deltas after processing them for look commands
+      this.inputManager.clearMouseDeltas();
       
       // Apply continuous movement prediction every frame for smoothness
       this.applyContinuousMovement(deltaTime, keyState);

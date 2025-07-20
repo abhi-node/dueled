@@ -318,16 +318,18 @@ export class InputManager {
   }
   
   /**
-   * Get current mouse state and clear deltas
+   * Get current mouse state without clearing deltas
    */
   getMouseState(): Readonly<MouseState> {
-    const state = { ...this.mouseState };
-    
-    // Clear mouse deltas after reading (they're per-frame)
+    return { ...this.mouseState };
+  }
+  
+  /**
+   * Clear mouse deltas after processing them
+   */
+  clearMouseDeltas(): void {
     this.mouseState.deltaX = 0;
     this.mouseState.deltaY = 0;
-    
-    return state;
   }
   
   /**

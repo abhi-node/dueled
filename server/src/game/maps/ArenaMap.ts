@@ -163,9 +163,9 @@ export function createArenaMap(): MapData {
 export function createLargeArenaMap(): MapData {
   const walls: WallDefinition[] = [];
   
-  // Arena dimensions
-  const arenaWidth = 30;
-  const arenaHeight = 30;
+  // Arena dimensions (scaled to 60x60)
+  const arenaWidth = 60;
+  const arenaHeight = 60;
   
   // Create outer walls
   walls.push(
@@ -201,9 +201,9 @@ export function createLargeArenaMap(): MapData {
   
   // ===== CENTRAL COMPOUND STRUCTURE =====
   // Rectangular building-like area in map center with multiple entrances
-  const centerX = 15;
-  const centerY = 15;
-  const compoundSize = 6;
+  const centerX = 30;  // Doubled from 15
+  const centerY = 30;  // Doubled from 15
+  const compoundSize = 12;  // Doubled from 6
   
   // Compound outer walls (with gaps for entrances)
   // North wall (with gap in middle)
@@ -311,106 +311,106 @@ export function createLargeArenaMap(): MapData {
   );
   
   // ===== CORNER L-SHAPED COVERS =====
-  // Top-left L-shaped cover
+  // Top-left L-shaped cover (scaled coordinates)
   walls.push(
     {
       id: 'cover_tl_horizontal',
-      start: { x: 4, y: 6 },
-      end: { x: 8, y: 6 },
+      start: { x: 8, y: 12 },  // Doubled from (4,6) to (8,12)
+      end: { x: 16, y: 12 },   // Doubled from (8,6) to (16,12)
       solid: true,
       textureId: 'wall_metal'
     },
     {
       id: 'cover_tl_vertical',
-      start: { x: 6, y: 4 },
-      end: { x: 6, y: 6 },
+      start: { x: 12, y: 8 },  // Doubled from (6,4) to (12,8)
+      end: { x: 12, y: 12 },   // Doubled from (6,6) to (12,12)
       solid: true,
       textureId: 'wall_metal'
     }
   );
   
-  // Top-right L-shaped cover
+  // Top-right L-shaped cover (scaled coordinates)
   walls.push(
     {
       id: 'cover_tr_horizontal',
-      start: { x: 22, y: 6 },
-      end: { x: 26, y: 6 },
+      start: { x: 44, y: 12 },  // Doubled from (22,6) to (44,12)
+      end: { x: 52, y: 12 },    // Doubled from (26,6) to (52,12)
       solid: true,
       textureId: 'wall_metal'
     },
     {
       id: 'cover_tr_vertical',
-      start: { x: 24, y: 4 },
-      end: { x: 24, y: 6 },
+      start: { x: 48, y: 8 },   // Doubled from (24,4) to (48,8)
+      end: { x: 48, y: 12 },    // Doubled from (24,6) to (48,12)
       solid: true,
       textureId: 'wall_metal'
     }
   );
   
-  // Bottom-left L-shaped cover
+  // Bottom-left L-shaped cover (scaled coordinates)
   walls.push(
     {
       id: 'cover_bl_horizontal',
-      start: { x: 4, y: 24 },
-      end: { x: 8, y: 24 },
+      start: { x: 8, y: 48 },   // Doubled from (4,24) to (8,48)
+      end: { x: 16, y: 48 },    // Doubled from (8,24) to (16,48)
       solid: true,
       textureId: 'wall_metal'
     },
     {
       id: 'cover_bl_vertical',
-      start: { x: 6, y: 24 },
-      end: { x: 6, y: 26 },
+      start: { x: 12, y: 48 },  // Doubled from (6,24) to (12,48)
+      end: { x: 12, y: 52 },    // Doubled from (6,26) to (12,52)
       solid: true,
       textureId: 'wall_metal'
     }
   );
   
-  // Bottom-right L-shaped cover
+  // Bottom-right L-shaped cover (scaled coordinates)
   walls.push(
     {
       id: 'cover_br_horizontal',
-      start: { x: 22, y: 24 },
-      end: { x: 26, y: 24 },
+      start: { x: 44, y: 48 },  // Doubled from (22,24) to (44,48)
+      end: { x: 52, y: 48 },    // Doubled from (26,24) to (52,48)
       solid: true,
       textureId: 'wall_metal'
     },
     {
       id: 'cover_br_vertical',
-      start: { x: 24, y: 24 },
-      end: { x: 24, y: 26 },
+      start: { x: 48, y: 48 },  // Doubled from (24,24) to (48,48)
+      end: { x: 48, y: 52 },    // Doubled from (24,26) to (48,52)
       solid: true,
       textureId: 'wall_metal'
     }
   );
   
   // ===== VARIED PILLAR TYPES =====
-  // Thin pillars (1x1) for light cover
+  // Thin pillars (2x2) for light cover (scaled coordinates)
   walls.push(
     {
       id: 'thin_pillar_1_n',
-      start: { x: 9, y: 9 },
-      end: { x: 10, y: 9 },
+      start: { x: 18, y: 18 },  // Doubled from (9,9) to (18,18)
+      end: { x: 20, y: 18 },    // Doubled from (10,9) to (20,18)
       solid: true,
       textureId: 'wall_metal'
     },
     {
       id: 'thin_pillar_1_e',
-      start: { x: 10, y: 9 },
-      end: { x: 10, y: 10 },
+      start: { x: 20, y: 18 },  // Doubled from (10,9) to (20,18)
+      end: { x: 20, y: 20 },    // Doubled from (10,10) to (20,20)
       solid: true,
       textureId: 'wall_metal'
     },
     {
       id: 'thin_pillar_1_s',
-      start: { x: 10, y: 10 },
-      end: { x: 9, y: 10 },
+      start: { x: 20, y: 20 },  // Doubled from (10,10) to (20,20)
+      end: { x: 18, y: 20 },    // Doubled from (9,10) to (18,20)
       solid: true,
       textureId: 'wall_metal'
     },
     {
       id: 'thin_pillar_1_w',
-      start: { x: 9, y: 10 },
-      end: { x: 9, y: 9 },
+      start: { x: 18, y: 20 },  // Doubled from (9,10) to (18,20)
+      end: { x: 18, y: 18 },    // Doubled from (9,9) to (18,18)
       solid: true,
       textureId: 'wall_metal'
     }
@@ -544,17 +544,17 @@ export function createLargeArenaMap(): MapData {
   );
   
   // ===== SPAWN POINTS =====
-  // Positioned for balanced tactical advantage
+  // Positioned for balanced tactical advantage (scaled coordinates)
   const spawnPoints = [
     { 
       id: 'spawn_player1',
-      position: { x: 3, y: 3 },
+      position: { x: 6, y: 6 },    // Doubled from (3,3) to (6,6)
       angle: Math.PI / 4, // Face northeast toward center
       team: 'player1' as const
     },
     { 
       id: 'spawn_player2',
-      position: { x: 27, y: 27 },
+      position: { x: 54, y: 54 },  // Doubled from (27,27) to (54,54)
       angle: (5 * Math.PI) / 4, // Face southwest toward center
       team: 'player2' as const
     }

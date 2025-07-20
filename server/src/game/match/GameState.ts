@@ -209,7 +209,9 @@ export class GameStateManager {
     }
     
     // Calculate actual damage after armor
-    const armorReduction = Math.min(player.armor * 0.5, damage * 0.7);
+    // Improved armor formula: armor provides more effective damage reduction
+    // Formula: damage reduction = armor * 0.6, with no percentage cap
+    const armorReduction = player.armor * 0.6;
     const actualDamage = Math.max(1, Math.round(damage - armorReduction));
     
     // Apply damage

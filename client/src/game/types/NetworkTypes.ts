@@ -122,6 +122,12 @@ export interface MatchStartData {
   opponentId: string;
   roundDuration: number;
   maxRounds: number;
+  players: {
+    [playerId: string]: {
+      username: string;
+      classType: string;
+    };
+  };
 }
 
 export interface MatchEndData {
