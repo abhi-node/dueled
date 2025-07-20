@@ -14,6 +14,9 @@ import { MatchManager, type MatchManagerCallbacks } from '../game/match/MatchMan
 import { createLargeArenaMap } from '../game/maps/ArenaMap.js';
 import { GAME_CONSTANTS } from '../game/types.js';
 import type { ClassType } from '@dueled/shared';
+import { GameStateAwareConnectionManager } from './GameStateAwareConnectionManager.js';
+import type { RoundState } from '../game/match/RoundSystem.js';
+import { getConnectionPolicyConfig, type ConnectionPolicyConfig } from '../config/ConnectionPolicies.js';
 
 export interface PlayerSocket {
   id: string;
@@ -24,12 +27,40 @@ export interface PlayerSocket {
   matchId?: string;
   authenticated: boolean;
   lastHeartbeat: number;
+  isTemporarilyDisconnected?: boolean;
+  disconnectionTime?: number;
 }
+
+export interface DisconnectionInfo {
+  playerId: string;
+  reason: string;
+  timestamp: number;
+  isTemporary: boolean;
+  gracePeriodMs: number;
+  matchId?: string;
+}
+
+export type DisconnectReason = 
+  | 'client disconnect'     // Intentional disconnect (browser close, etc.)
+  | 'transport close'       // Network issue
+  | 'ping timeout'          // Connection timeout
+  | 'transport error'       // Transport error
+  | 'explicit_disconnect'   // Client explicitly sent disconnect
+  | 'server ns disconnect'  // Server-side disconnect
+  | 'unknown';              // Fallback
 
 export interface SimpleGameHandlerConfig {
   heartbeatInterval: number;    // ms between heartbeat checks
   connectionTimeout: number;    // ms before disconnect
   maxPlayersPerMatch: number;   // Always 2 for 1v1
+  connectionPolicyPreset?: 'default' | 'aggressive' | 'lenient' | 'custom'; // Connection policy preset
+  connectionPolicyConfig?: ConnectionPolicyConfig; // Custom connection policy configuration
+  
+  // Disconnection grace periods
+  intentionalDisconnectGracePeriod?: number;    // 0ms - immediate for intentional disconnects
+  networkIssueGracePeriod?: number;             // 3000ms - 3s for network issues
+  unknownDisconnectGracePeriod?: number;        // 5000ms - 5s for unknown disconnects
+  matchActiveGracePeriodMultiplier?: number;    // 1.5x - extend grace periods during active rounds
 }
 
 /**
@@ -55,8 +86,15 @@ export class SimpleGameHandler {
   private simpleConnectionManager: SimpleConnectionManager;
   private simpleAuth: SimpleAuth;
   
-  // Heartbeat management
+  // Game-state-aware connection management
+  private gameStateConnectionManager: GameStateAwareConnectionManager;
+  
+  // Legacy heartbeat management (will be replaced)
   private heartbeatTimer: NodeJS.Timeout | null = null;
+  
+  // Disconnection management
+  private pendingDisconnections = new Map<string, DisconnectionInfo>(); // playerId -> disconnection info
+  private gracePeriodTimers = new Map<string, NodeJS.Timeout>();        // playerId -> timer
   
   constructor(
     io: Server,
@@ -70,18 +108,32 @@ export class SimpleGameHandler {
     this.simpleConnectionManager = simpleConnectionManager;
     this.simpleAuth = simpleAuth || new SimpleAuth();
     
+    // Initialize game-state-aware connection manager with configuration
+    // COMMENTED OUT FOR DEBUGGING - using legacy heartbeat instead
+    // const connectionPolicyConfig = config?.connectionPolicyConfig || 
+    //                               getConnectionPolicyConfig(config?.connectionPolicyPreset);
+    // this.gameStateConnectionManager = new GameStateAwareConnectionManager(connectionPolicyConfig);
+    
     this.config = {
       heartbeatInterval: 30000,  // 30 seconds
       connectionTimeout: 60000,  // 60 seconds
       maxPlayersPerMatch: 2,
+      // Disconnection grace period defaults
+      intentionalDisconnectGracePeriod: 0,      // Immediate for intentional disconnects
+      networkIssueGracePeriod: 3000,            // 3 seconds for network issues
+      unknownDisconnectGracePeriod: 5000,       // 5 seconds for unknown disconnects
+      matchActiveGracePeriodMultiplier: 1.5,    // 1.5x during active rounds
       ...config
     };
     
     this.setupSocketHandling();
     this.setupMatchmakingIntegration();
-    this.startHeartbeatMonitoring();
+    // COMMENTED OUT FOR DEBUGGING - using legacy heartbeat instead
+    // this.startGameStateAwareMonitoring();
+    // COMMENTED OUT - removing heartbeat monitoring entirely for now
+    // this.startLegacyHeartbeatMonitoring();
     
-    logger.info('SimpleGameHandler initialized (minimal version)');
+    logger.info('SimpleGameHandler initialized WITHOUT heartbeat monitoring (debugging mode)');
   }
   
   /**
@@ -106,6 +158,7 @@ export class SimpleGameHandler {
       
       // Connection management
       socket.on('heartbeat', () => this.handleHeartbeat(socket));
+      socket.on('explicit_disconnect', (data) => this.handleExplicitDisconnect(socket, data));
       socket.on('disconnect', (reason) => this.handleDisconnect(socket, reason));
     });
   }
@@ -167,8 +220,12 @@ export class SimpleGameHandler {
       this.playerSockets.set(playerId, playerSocket);
       this.socketToPlayer.set(socket.id, playerId);
       
-      // Register with connection manager
+      // Register with legacy connection manager
       this.simpleConnectionManager.addConnection(playerId, username, socket);
+      
+      // COMMENTED OUT FOR DEBUGGING
+      // Register with game-state-aware connection manager
+      // this.gameStateConnectionManager.registerPlayer(playerId);
       
       socket.emit('authenticated', { 
         playerId, 
@@ -588,7 +645,29 @@ export class SimpleGameHandler {
           nextRoundIn: 2000, // 2 second intermission
           currentScore: result.score || { player1: 0, player2: 0 }
         });
-      }
+      },
+      
+      // COMMENTED OUT FOR DEBUGGING
+      // Connection management callbacks for game-state-aware monitoring
+      // onStateChange: (matchId: string, newState: RoundState, oldState: RoundState) => {
+      //   logger.debug(`🔄 Match ${matchId} state transition: ${oldState} → ${newState}`);
+      //   this.gameStateConnectionManager.updateMatchState(matchId, newState);
+      // },
+      
+      // onSuspendMonitoring: (matchId: string, durationMs: number) => {
+      //   logger.debug(`⏸️ Suspending connection monitoring for match ${matchId} (${durationMs}ms)`);
+      //   this.gameStateConnectionManager.suspendMonitoring(matchId, durationMs);
+      // },
+      
+      // onMatchRegistered: (matchId: string, playerIds: string[]) => {
+      //   logger.info(`📝 Registering match ${matchId} with connection manager`, { playerIds });
+      //   this.gameStateConnectionManager.registerMatch(matchId, playerIds);
+      // },
+      
+      // onMatchUnregistered: (matchId: string) => {
+      //   logger.info(`🗑️ Unregistering match ${matchId} from connection manager`);
+      //   this.gameStateConnectionManager.unregisterMatch(matchId);
+      // }
     };
   }
   
@@ -670,40 +749,325 @@ export class SimpleGameHandler {
     
     if (playerSocket) {
       playerSocket.lastHeartbeat = Date.now();
+      
+      // COMMENTED OUT FOR DEBUGGING
+      // Update game-state-aware connection manager
+      // this.gameStateConnectionManager.updatePlayerHeartbeat(playerId!);
+      
       socket.emit('heartbeat_ack');
     }
   }
+
+  /**
+   * Handle explicit disconnect from client
+   */
+  private async handleExplicitDisconnect(socket: Socket, data: { reason?: string }): Promise<void> {
+    const playerId = this.getPlayerIdFromSocket(socket);
+    
+    if (!playerId) {
+      logger.warn(`Explicit disconnect from unknown socket: ${socket.id}`);
+      return;
+    }
+
+    const explicitReason = data?.reason || 'user_action';
+    logger.info(`🚪 Explicit disconnect from ${playerId}: ${explicitReason}`);
+
+    // Force immediate disconnection by simulating explicit_disconnect reason
+    await this.handleDisconnect(socket, 'explicit_disconnect');
+  }
   
   /**
-   * Handle disconnect
+   * Handle disconnect with intelligent grace period management
    */
   private async handleDisconnect(socket: Socket, reason: string): Promise<void> {
     const playerId = this.getPlayerIdFromSocket(socket);
     
-    if (playerId) {
-      const playerSocket = this.playerSockets.get(playerId);
+    if (!playerId) {
+      logger.warn(`Disconnect event for unknown socket: ${socket.id}`);
+      return;
+    }
+
+    const playerSocket = this.playerSockets.get(playerId);
+    if (!playerSocket) {
+      logger.warn(`Disconnect event for unknown player: ${playerId}`);
+      return;
+    }
+
+    logger.info(`🔌 Player ${playerId} disconnected with reason: "${reason}"`);
+
+    // Classify the disconnect reason and determine grace period
+    const disconnectType = this.classifyDisconnectReason(reason);
+    const gracePeriodMs = this.calculateGracePeriod(disconnectType, playerSocket.matchId);
+    
+    // Create disconnection info
+    const disconnectionInfo: DisconnectionInfo = {
+      playerId,
+      reason,
+      timestamp: Date.now(),
+      isTemporary: gracePeriodMs > 0,
+      gracePeriodMs,
+      matchId: playerSocket.matchId
+    };
+
+    if (gracePeriodMs === 0) {
+      // Immediate disconnection for intentional disconnects
+      logger.info(`⚡ Immediate disconnection for ${playerId} (intentional disconnect)`);
+      await this.processDisconnection(disconnectionInfo);
+    } else {
+      // Start grace period for potential reconnection
+      logger.info(`⏱️ Starting ${gracePeriodMs}ms grace period for ${playerId} (${disconnectType})`);
+      await this.startGracePeriod(disconnectionInfo);
+    }
+  }
+
+  /**
+   * Classify disconnect reason into categories
+   */
+  private classifyDisconnectReason(reason: string): DisconnectReason {
+    const normalizedReason = reason.toLowerCase();
+    
+    if (normalizedReason.includes('client disconnect') || normalizedReason === 'io client disconnect') {
+      return 'client disconnect';
+    } else if (normalizedReason.includes('transport close')) {
+      return 'transport close';
+    } else if (normalizedReason.includes('ping timeout')) {
+      return 'ping timeout';
+    } else if (normalizedReason.includes('transport error')) {
+      return 'transport error';
+    } else if (normalizedReason.includes('explicit_disconnect')) {
+      return 'explicit_disconnect';
+    } else if (normalizedReason.includes('server ns disconnect')) {
+      return 'server ns disconnect';
+    } else {
+      return 'unknown';
+    }
+  }
+
+  /**
+   * Calculate appropriate grace period based on disconnect type and match state
+   */
+  private calculateGracePeriod(disconnectType: DisconnectReason, matchId?: string): number {
+    let baseGracePeriod = 0;
+
+    switch (disconnectType) {
+      case 'client disconnect':
+      case 'explicit_disconnect':
+        baseGracePeriod = this.config.intentionalDisconnectGracePeriod || 0;
+        break;
       
-      // Disconnect from MatchManager if player was in a match
-      if (playerSocket?.matchId) {
-        const matchManager = this.matchManagers.get(playerSocket.matchId);
-        if (matchManager) {
-          matchManager.disconnectPlayer(playerId);
-        }
-        
-        // Notify other players in match
-        socket.to(playerSocket.matchId).emit('player_disconnected', {
-          playerId,
-          reason
-        });
+      case 'transport close':
+      case 'ping timeout':
+      case 'transport error':
+        baseGracePeriod = this.config.networkIssueGracePeriod || 3000;
+        break;
+      
+      case 'unknown':
+      case 'server ns disconnect':
+      default:
+        baseGracePeriod = this.config.unknownDisconnectGracePeriod || 5000;
+        break;
+    }
+
+    // Apply multiplier if player is in an active match
+    if (matchId && this.isMatchActive(matchId)) {
+      const multiplier = this.config.matchActiveGracePeriodMultiplier || 1.5;
+      baseGracePeriod = Math.round(baseGracePeriod * multiplier);
+    }
+
+    return baseGracePeriod;
+  }
+
+  /**
+   * Check if a match is currently active (not in lobby or completed)
+   */
+  private isMatchActive(matchId: string): boolean {
+    const matchManager = this.matchManagers.get(matchId);
+    if (!matchManager) return false;
+
+    const roundInfo = matchManager.getRoundInfo();
+    return roundInfo.roundState === 'active' || roundInfo.roundState === 'countdown';
+  }
+
+  // ============================================================================
+  // GRACE PERIOD AND DISCONNECTION PROCESSING
+  // ============================================================================
+
+  /**
+   * Start grace period for potential reconnection
+   */
+  private async startGracePeriod(disconnectionInfo: DisconnectionInfo): Promise<void> {
+    const { playerId, gracePeriodMs, matchId } = disconnectionInfo;
+    
+    // Mark player as temporarily disconnected
+    const playerSocket = this.playerSockets.get(playerId);
+    if (playerSocket) {
+      playerSocket.isTemporarilyDisconnected = true;
+      playerSocket.disconnectionTime = Date.now();
+    }
+
+    // Store pending disconnection info
+    this.pendingDisconnections.set(playerId, disconnectionInfo);
+
+    // Notify match about temporary disconnection
+    if (matchId) {
+      this.broadcastToMatch(matchId, 'player_temporarily_disconnected', {
+        playerId,
+        gracePeriodMs,
+        reason: disconnectionInfo.reason
+      });
+
+      // Pause match if in active round
+      const matchManager = this.matchManagers.get(matchId);
+      if (matchManager && this.isMatchActive(matchId)) {
+        logger.info(`⏸️ Pausing match ${matchId} due to player disconnection`);
+        // TODO: Implement match pause functionality
+        // matchManager.pauseMatch('player_disconnection');
+      }
+    }
+
+    // Set grace period timer
+    const gracePeriodTimer = setTimeout(async () => {
+      await this.onGracePeriodExpired(playerId);
+    }, gracePeriodMs);
+
+    this.gracePeriodTimers.set(playerId, gracePeriodTimer);
+    
+    logger.info(`⏱️ Grace period started for ${playerId}: ${gracePeriodMs}ms`);
+  }
+
+  /**
+   * Handle grace period expiration
+   */
+  private async onGracePeriodExpired(playerId: string): Promise<void> {
+    const disconnectionInfo = this.pendingDisconnections.get(playerId);
+    
+    if (!disconnectionInfo) {
+      logger.warn(`Grace period expired for ${playerId} but no disconnection info found`);
+      return;
+    }
+
+    // Check if player reconnected during grace period
+    const playerSocket = this.playerSockets.get(playerId);
+    if (playerSocket && !playerSocket.isTemporarilyDisconnected) {
+      logger.info(`✅ Player ${playerId} reconnected during grace period`);
+      this.cleanupGracePeriod(playerId);
+      return;
+    }
+
+    logger.info(`⏰ Grace period expired for ${playerId} - processing disconnection`);
+    await this.processDisconnection(disconnectionInfo);
+  }
+
+  /**
+   * Process actual disconnection (after grace period or immediate)
+   */
+  private async processDisconnection(disconnectionInfo: DisconnectionInfo): Promise<void> {
+    const { playerId, matchId, reason } = disconnectionInfo;
+    const playerSocket = this.playerSockets.get(playerId);
+
+    logger.info(`🔌 Processing disconnection for ${playerId}: ${reason}`);
+
+    // Disconnect from MatchManager if player was in a match
+    if (matchId) {
+      const matchManager = this.matchManagers.get(matchId);
+      if (matchManager) {
+        matchManager.disconnectPlayer(playerId);
       }
       
-      // Clean up
-      await this.simpleConnectionManager.removeConnection(playerId);
-      await this.simpleMatchmaking.leaveQueue(playerId);
-      this.removePlayerSocket(playerId);
-      
-      logger.info(`Player ${playerId} disconnected: ${reason}`);
+      // Notify other players in match about final disconnection
+      this.broadcastToMatch(matchId, 'player_disconnected', {
+        playerId,
+        reason,
+        isFinal: true
+      });
+
+      // Resume match if it was paused
+      if (matchManager && this.isMatchActive(matchId)) {
+        logger.info(`▶️ Resuming match ${matchId} after player disconnection`);
+        // TODO: Implement match resume functionality
+        // matchManager.resumeMatch();
+      }
     }
+    
+    // Clean up player resources
+    await this.simpleConnectionManager.removeConnection(playerId);
+    await this.simpleMatchmaking.leaveQueue(playerId);
+    this.removePlayerSocket(playerId);
+    
+    // Clean up grace period tracking
+    this.cleanupGracePeriod(playerId);
+    
+    logger.info(`🧹 Player ${playerId} completely disconnected and cleaned up`);
+  }
+
+  /**
+   * Handle player reconnection during grace period
+   */
+  handlePlayerReconnection(playerId: string, newSocket: Socket): boolean {
+    const playerSocket = this.playerSockets.get(playerId);
+    const disconnectionInfo = this.pendingDisconnections.get(playerId);
+    
+    if (!playerSocket || !disconnectionInfo || !playerSocket.isTemporarilyDisconnected) {
+      return false; // Not in grace period
+    }
+
+    logger.info(`🔄 Player ${playerId} reconnecting during grace period`);
+    
+    // Update socket reference
+    playerSocket.socket = newSocket;
+    playerSocket.isTemporarilyDisconnected = false;
+    delete playerSocket.disconnectionTime;
+    
+    // Update socket mapping
+    this.socketToPlayer.set(newSocket.id, playerId);
+    
+    // Notify match about reconnection
+    if (disconnectionInfo.matchId) {
+      this.broadcastToMatch(disconnectionInfo.matchId, 'player_reconnected', {
+        playerId,
+        gracePeriodRemaining: this.getRemainingGracePeriod(playerId)
+      });
+
+      // Resume match if it was paused
+      const matchManager = this.matchManagers.get(disconnectionInfo.matchId);
+      if (matchManager && this.isMatchActive(disconnectionInfo.matchId)) {
+        logger.info(`▶️ Resuming match ${disconnectionInfo.matchId} after player reconnection`);
+        // TODO: Implement match resume functionality
+        // matchManager.resumeMatch();
+      }
+    }
+    
+    // Clean up grace period
+    this.cleanupGracePeriod(playerId);
+    
+    logger.info(`✅ Player ${playerId} successfully reconnected`);
+    return true;
+  }
+
+  /**
+   * Get remaining grace period time
+   */
+  private getRemainingGracePeriod(playerId: string): number {
+    const disconnectionInfo = this.pendingDisconnections.get(playerId);
+    if (!disconnectionInfo) return 0;
+    
+    const elapsed = Date.now() - disconnectionInfo.timestamp;
+    return Math.max(0, disconnectionInfo.gracePeriodMs - elapsed);
+  }
+
+  /**
+   * Clean up grace period tracking for a player
+   */
+  private cleanupGracePeriod(playerId: string): void {
+    // Clear timer
+    const timer = this.gracePeriodTimers.get(playerId);
+    if (timer) {
+      clearTimeout(timer);
+      this.gracePeriodTimers.delete(playerId);
+    }
+    
+    // Remove pending disconnection
+    this.pendingDisconnections.delete(playerId);
   }
   
   /**
@@ -721,13 +1085,58 @@ export class SimpleGameHandler {
     if (playerSocket) {
       this.socketToPlayer.delete(playerSocket.id);
       this.playerSockets.delete(playerId);
+      
+      // Clean up any pending grace period for this player
+      this.cleanupGracePeriod(playerId);
+      
+      // COMMENTED OUT FOR DEBUGGING
+      // Unregister from game-state-aware connection manager
+      // this.gameStateConnectionManager.unregisterPlayer(playerId);
     }
   }
   
   /**
-   * Start heartbeat monitoring
+   * Start game-state-aware connection monitoring
    */
-  private startHeartbeatMonitoring(): void {
+  private startGameStateAwareMonitoring(): void {
+    this.heartbeatTimer = setInterval(() => {
+      const playersToCheck = this.gameStateConnectionManager.getPlayersForMonitoring();
+      const disconnectedPlayers: string[] = [];
+      
+      for (const playerId of playersToCheck) {
+        const result = this.gameStateConnectionManager.shouldDisconnectPlayer(playerId);
+        
+        if (result.shouldDisconnect) {
+          disconnectedPlayers.push(playerId);
+          logger.warn(`Player ${playerId} marked for disconnection`, {
+            reason: result.reason,
+            policy: result.policy.description
+          });
+        }
+      }
+      
+      // Disconnect players that should be disconnected
+      for (const playerId of disconnectedPlayers) {
+        const playerSocket = this.playerSockets.get(playerId);
+        if (playerSocket) {
+          playerSocket.socket.disconnect(true);
+          logger.info(`Disconnected player using game-state-aware logic: ${playerId}`);
+        }
+      }
+      
+      // Log monitoring stats periodically for debugging
+      if (Math.random() < 0.1) { // 10% chance each cycle
+        const stats = this.gameStateConnectionManager.getMonitoringStats();
+        logger.debug('Connection monitoring stats', stats);
+      }
+      
+    }, this.config.heartbeatInterval);
+  }
+  
+  /**
+   * Legacy heartbeat monitoring (kept for reference)
+   */
+  private startLegacyHeartbeatMonitoring(): void {
     this.heartbeatTimer = setInterval(() => {
       const now = Date.now();
       const disconnectedPlayers: string[] = [];
@@ -818,16 +1227,24 @@ export class SimpleGameHandler {
    * Clean up resources
    */
   destroy(): void {
-    if (this.heartbeatTimer) {
-      clearInterval(this.heartbeatTimer);
-      this.heartbeatTimer = null;
+    // COMMENTED OUT - not using heartbeat timer anymore
+    // if (this.heartbeatTimer) {
+    //   clearInterval(this.heartbeatTimer);
+    //   this.heartbeatTimer = null;
+    // }
+    
+    // Clean up all grace period timers
+    for (const timer of this.gracePeriodTimers.values()) {
+      clearTimeout(timer);
     }
+    this.gracePeriodTimers.clear();
+    this.pendingDisconnections.clear();
     
     this.playerSockets.clear();
     this.socketToPlayer.clear();
     this.activeMatches.clear();
     this.matchInitializationStatus.clear();
     
-    logger.info('SimpleGameHandler destroyed');
+    logger.info('SimpleGameHandler destroyed and all resources cleaned up');
   }
 }

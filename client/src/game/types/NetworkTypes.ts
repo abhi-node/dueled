@@ -25,6 +25,7 @@ export interface ClientToServerEvents {
   // Match lifecycle
   'player_ready': (data: { playerId: string }) => void;
   'player_disconnect': (data: { reason: string }) => void;
+  'explicit_disconnect': (data: { reason: string }) => void;
   
   // Debug/testing
   'ping': (data: { timestamp: number }) => void;
@@ -51,6 +52,8 @@ export interface ServerToClientEvents {
   
   // Connection/error handling
   'connection_confirmed': (data: { playerId: string; serverTime: number }) => void;
+  'player_temporarily_disconnected': (data: { playerId: string; gracePeriodMs: number; reason: string }) => void;
+  'player_reconnected': (data: { playerId: string; gracePeriodRemaining: number }) => void;
   'error': (data: { message: string; code?: string }) => void;
   
   // Debug/testing

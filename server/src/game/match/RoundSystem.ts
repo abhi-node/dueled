@@ -38,6 +38,12 @@ export interface RoundSystemCallbacks {
   onTimeWarning?: (timeLeft: number) => void; // Called at 30s, 10s, 5s remaining
   onCountdownTick?: (roundNumber: number, countdown: number) => void; // Called during 3-2-1 countdown
   onCountdownComplete?: (roundNumber: number) => void; // Called when countdown finishes
+  
+  // Connection management callbacks
+  onStateChange?: (matchId: string, newState: RoundState, oldState: RoundState) => void;
+  onSuspendMonitoring?: (matchId: string, durationMs: number) => void;
+  onMatchRegistered?: (matchId: string, playerIds: string[]) => void;
+  onMatchUnregistered?: (matchId: string) => void;
 }
 
 export class RoundSystem {
@@ -89,6 +95,10 @@ export class RoundSystem {
       roundDuration: this.ROUND_DURATION,
       roundsToWin: this.ROUNDS_TO_WIN
     });
+    
+    // COMMENTED OUT FOR DEBUGGING
+    // Register match with connection manager
+    // this.callbacks.onMatchRegistered?.(matchId, [player1Id, player2Id]);
   }
   
   // ============================================================================
@@ -158,6 +168,19 @@ export class RoundSystem {
       matchId: this.matchId,
       roundNumber: this.gameState.getMatchState().currentRound
     });
+    
+    // COMMENTED OUT FOR DEBUGGING
+    // Notify connection manager about state change
+    // this.callbacks.onStateChange?.(this.matchId, newState, oldState);
+    
+    // Suspend monitoring during critical transitions to prevent false disconnections
+    // if (newState === 'ended') {
+    //   // Suspend monitoring for 5 seconds during round end processing
+    //   this.callbacks.onSuspendMonitoring?.(this.matchId, 5000);
+    // } else if (newState === 'intermission') {
+    //   // Brief suspension during intermission start
+    //   this.callbacks.onSuspendMonitoring?.(this.matchId, 1000);
+    // }
     
     // Update legacy state flags for compatibility
     this.updateLegacyFlags();
@@ -351,7 +374,7 @@ export class RoundSystem {
       // No round end callback - match is ending, will show match end overlay instead
     }
     // Check for max rounds failsafe (only after all 5 rounds completed)
-    else if (updatedMatchState.currentRound > this.MAX_ROUNDS) {
+    else if (roundNumber >= this.MAX_ROUNDS) {
       const matchWinner = score1 > score2 ? this.player1Id : 
                          score2 > score1 ? this.player2Id : this.player1Id; // Tie goes to player1
       logger.info(`🏆 MATCH END DECISION: Reached maximum ${this.MAX_ROUNDS} rounds`, {
@@ -744,5 +767,9 @@ export class RoundSystem {
   destroy(): void {
     logger.info(`Destroying RoundSystem for match ${this.matchId}`);
     this.cleanup();
+    
+    // COMMENTED OUT FOR DEBUGGING
+    // Unregister match from connection manager
+    // this.callbacks.onMatchUnregistered?.(this.matchId);
   }
 }

@@ -11,9 +11,9 @@
 
 export const GAME_CONSTANTS = {
   // Physics (must match server)
-  PLAYER_SPEED: 5.0,          // Units per second
+  PLAYER_SPEED: 10.0,         // Units per second (2x speed: 5.0 → 10.0)
   SPRINT_MULTIPLIER: 1.5,     // Sprint speed multiplier
-  DASH_SPEED: 12.0,           // Dash speed
+  DASH_SPEED: 24.0,           // Dash speed (2x speed: 12.0 → 24.0)
   DASH_DURATION: 200,         // Dash duration in ms
   DASH_COOLDOWN: 3000,        // Dash cooldown in ms
   
@@ -119,15 +119,15 @@ export const PREDICTION_CONSTANTS = {
   // Movement thresholds
   MOVEMENT_INPUT_THRESHOLD: 0.01,     // Minimum input to register movement
   
-  // Reconciliation thresholds - Extremely lenient for smooth movement
-  STATIC_RECONCILIATION_THRESHOLD: 1.0,   // Allow 1 unit drift when not moving
-  MOVING_RECONCILIATION_THRESHOLD: 5.0,   // Allow 5 units drift when moving actively
+  // Reconciliation thresholds - Adjusted for 2x speed
+  STATIC_RECONCILIATION_THRESHOLD: 2.0,   // Allow 2 unit drift when not moving (2x for speed)
+  MOVING_RECONCILIATION_THRESHOLD: 10.0,  // Allow 10 units drift when moving actively (2x for speed)
   
   // Correction factors - Ultra-gentle corrections
   GENTLE_CORRECTION_FACTOR: 0.01,     // Barely noticeable corrections for small errors
   MEDIUM_CORRECTION_FACTOR: 0.05,     // Still very gentle for medium errors
-  SNAP_CORRECTION_THRESHOLD: 8.0,     // Only snap for teleport-level errors
+  SNAP_CORRECTION_THRESHOLD: 16.0,    // Only snap for teleport-level errors (2x for speed)
   
   // Error magnitude thresholds
-  SMALL_ERROR_THRESHOLD: 3.0,         // Much larger boundary for small vs medium errors
+  SMALL_ERROR_THRESHOLD: 6.0,         // Much larger boundary for small vs medium errors (2x for speed)
 } as const;

@@ -45,8 +45,39 @@ export class GameSocket {
   constructor() {
     // Initialize connection info
     this.updateConnectionState('disconnected');
+    
+    // Setup explicit disconnect detection
+    this.setupDisconnectDetection();
   }
   
+  // ============================================================================
+  // EXPLICIT DISCONNECT DETECTION
+  // ============================================================================
+
+  /**
+   * Setup detection for intentional disconnects (browser close, etc.)
+   */
+  private setupDisconnectDetection(): void {
+    // Detect browser/tab close
+    window.addEventListener('beforeunload', () => {
+      this.sendExplicitDisconnect('browser_close');
+    });
+
+    // Detect when page becomes hidden (tab switch, minimize)
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden && this.isConnected() && this.connectionInfo.matchId) {
+        // Don't disconnect immediately on tab switch, but notify server
+        console.log('🔍 Tab hidden during match - potential disconnect');
+        // Could add logic here to handle tab switches during matches
+      }
+    });
+
+    // Handle page refresh/navigation
+    window.addEventListener('pagehide', () => {
+      this.sendExplicitDisconnect('page_navigation');
+    });
+  }
+
   // ============================================================================
   // CONNECTION MANAGEMENT
   // ============================================================================
@@ -112,7 +143,8 @@ export class GameSocket {
       if (this.socket.connected) {
         console.log('🟢 [DEBUG] Socket is connected, updating state');
         this.updateConnectionState('connected');
-        this.startHeartbeat();
+        // COMMENTED OUT FOR DEBUGGING
+        // this.startHeartbeat();
         console.log('💓 [DEBUG] Heartbeat started');
         console.log('✅ [DEBUG] GameSocket.connectWithExistingSocket COMPLETE');
       } else {
@@ -205,13 +237,15 @@ export class GameSocket {
     console.log('Socket connected');
     this.updateConnectionState('connected');
     this.reconnectAttempts = 0;
-    this.startHeartbeat();
+    // COMMENTED OUT FOR DEBUGGING
+    // this.startHeartbeat();
   };
   
   private onDisconnect = (reason: string): void => {
     console.log('Socket disconnected:', reason);
     this.updateConnectionState('disconnected');
-    this.stopHeartbeat();
+    // COMMENTED OUT FOR DEBUGGING
+    // this.stopHeartbeat();
     
     // Attempt reconnection if not intentional
     if (reason !== 'io client disconnect') {
@@ -350,6 +384,16 @@ export class GameSocket {
     this.pingStartTime = Date.now();
     this.socket!.emit('ping', { timestamp: this.pingStartTime });
   }
+
+  /**
+   * Send explicit disconnect notification to server
+   */
+  sendExplicitDisconnect(reason: string = 'user_action'): void {
+    if (!this.isConnected()) return;
+    
+    console.log(`🚪 Sending explicit disconnect: ${reason}`);
+    this.socket!.emit('explicit_disconnect', { reason });
+  }
   
   // ============================================================================
   // CONNECTION STATE
@@ -437,7 +481,8 @@ export class GameSocket {
   // ============================================================================
   
   private cleanup(): void {
-    this.stopHeartbeat();
+    // COMMENTED OUT FOR DEBUGGING
+    // this.stopHeartbeat();
     
     if (this.socket) {
       this.socket.removeAllListeners();

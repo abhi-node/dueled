@@ -364,9 +364,9 @@ export const WEAPON_CONFIGS: Record<ClassType, WeaponConfig> = {
 
 export const GAME_CONSTANTS = {
   // Physics
-  PLAYER_SPEED: 5.0,      // Units per second
+  PLAYER_SPEED: 10.0,     // Units per second (2x speed: 5.0 → 10.0)
   SPRINT_MULTIPLIER: 1.5,
-  DASH_SPEED: 12.0,
+  DASH_SPEED: 24.0,       // 2x speed (12.0 → 24.0)
   DASH_DURATION: 200,     // Milliseconds
   DASH_COOLDOWN: 3000,    // 3 seconds
   
@@ -386,7 +386,7 @@ export const GAME_CONSTANTS = {
   MAX_INPUT_AGE: 1000,    // Max ms old input to process
   
   // Anti-cheat
-  MAX_SPEED: 10.0,        // Max units per second
+  MAX_SPEED: 20.0,        // Max units per second (2x speed: 10.0 → 20.0)
   MAX_ANGLE_DELTA: Math.PI, // Max radians per input
   
   // Map bounds (updated for scaled 60x60 tactical arena)
