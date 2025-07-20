@@ -15,7 +15,7 @@ import type { ClassType } from '@dueled/shared';
 
 // Simple validation schemas
 const joinQueueSchema = z.object({
-  classType: z.enum(['archer', 'berserker'])
+  classType: z.enum(['gunslinger', 'demolitionist', 'buckshot'])
 });
 
 // Rate limiting for matchmaking

@@ -465,28 +465,72 @@ export class MatchManager {
         return; // Still on cooldown
       }
       
-      // Create projectile using physics system
-      const projectile = this.projectilePhysics.createProjectile(
-        playerId,
-        player.position,
-        player.angle,
-        player.classType
-      );
-      
-      // Add projectile to game state
-      this.gameState.addProjectile(projectile);
-      
-      // Set weapon cooldown (from WEAPON_CONFIGS)
+      // Get weapon configuration
       const weaponConfig = WEAPON_CONFIGS[player.classType];
-      if (weaponConfig) {
-        // TODO: Update weapon cooldown in GameState
-        // For now, just log the attack
+      if (!weaponConfig) {
+        logger.error(`No weapon config found for class ${player.classType}`);
+        return;
+      }
+      
+      // Branch: Hitscan vs Ballistic
+      if (weaponConfig.projectileSpeed === 0) {
+        // HITSCAN PROCESSING
+        logger.debug(`Processing hitscan attack for player ${playerId}`);
+        
+        const hitscanResult = this.projectilePhysics.processHitscanWeapon(
+          player.position,
+          player.angle,
+          weaponConfig.range,
+          playerId,
+          this.gameState.getState(),
+          this.collisionSystem
+        );
+        
+        // Apply damage immediately if hit player
+        if (hitscanResult.hitType === 'player' && hitscanResult.hitPlayerId) {
+          logger.debug(`Hitscan hit player ${hitscanResult.hitPlayerId} for ${weaponConfig.damage} damage`);
+          this.gameState.damagePlayer(
+            hitscanResult.hitPlayerId,
+            weaponConfig.damage,
+            playerId
+          );
+        }
+        
+        // Create hitscan event for client rendering
+        this.gameState.addEvent('hitscan_fired', {
+          shooterId: playerId,
+          startPosition: player.position,
+          endPosition: hitscanResult.hitPosition,
+          hitType: hitscanResult.hitType,
+          damage: weaponConfig.damage,
+          hitPlayerId: hitscanResult.hitPlayerId
+        });
+        
+        logger.debug(`Hitscan processed - ${hitscanResult.hitType} at distance ${hitscanResult.distance}`);
+        
+      } else {
+        // BALLISTIC PROCESSING (existing system)
+        logger.debug(`Processing ballistic attack for player ${playerId}`);
+        
+        const projectile = this.projectilePhysics.createProjectile(
+          playerId,
+          player.position,
+          player.angle,
+          player.classType
+        );
+        
+        // Add projectile to game state
+        this.gameState.addProjectile(projectile);
+        
         logger.debug(`Player ${playerId} fired ${projectile.type}`, {
           projectileId: projectile.id,
           position: projectile.position,
           angle: projectile.angle
         });
       }
+      
+      // Set weapon cooldown for both hitscan and ballistic
+      // TODO: Update weapon cooldown in GameState player state
     }
   }
   

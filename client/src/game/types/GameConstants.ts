@@ -69,30 +69,26 @@ export const RENDER_CONSTANTS = {
 // ============================================================================
 
 export const WEAPON_CONSTANTS = {
-  archer: {
-    damage: 35,
-    range: 20,
-    cooldown: 1000,             // 1 second
-    projectileSpeed: 15,
-  },
-  mage: {
-    damage: 25,
+  gunslinger: {
+    damage: 45,
     range: 15,
     cooldown: 800,              // 0.8 seconds
-    projectileSpeed: 10,
+    projectileSpeed: 0,         // Hitscan
+    piercing: true,
   },
-  bomber: {
-    damage: 40,
-    range: 12,
-    cooldown: 1500,             // 1.5 seconds
+  demolitionist: {
+    damage: 70,
+    range: 8,
+    cooldown: 2000,             // 2 seconds
     projectileSpeed: 8,
     explosionRadius: 3,
   },
-  berserker: {
-    damage: 50,
-    range: 3,
-    cooldown: 600,              // 0.6 seconds
-    projectileSpeed: 0,         // Melee
+  buckshot: {
+    damage: 25,                 // Per pellet
+    range: 6,
+    cooldown: 1200,             // 1.2 seconds
+    projectileSpeed: 12,
+    pelletCount: 4,
   }
 } as const;
 

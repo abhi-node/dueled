@@ -33,7 +33,7 @@ interface GameCanvasProps {
 export const GameCanvas: React.FC<GameCanvasProps> = ({
   matchId,
   selectedClass,
-  serverUrl = 'http://localhost:3001',
+  serverUrl = 'http://localhost:3000',
   authToken,
   onGameEnd,
   onError
@@ -107,6 +107,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       
       // Connect renderer to game state manager for interpolation
       renderer.setGameStateManager(gameEngine.getGameStateManager());
+      
+      // Connect renderer to game engine for effects
+      gameEngine.setRenderer(renderer);
       
       // Setup callbacks and start engine
       gameEngine.initialize(canvas, {

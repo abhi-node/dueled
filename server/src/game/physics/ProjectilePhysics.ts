@@ -8,14 +8,26 @@ import { logger } from '../../utils/logger.js';
 import type { 
   Position, 
   Velocity, 
-  ProjectileState
+  ProjectileState,
+  PlayerState,
+  GameState
 } from '../types.js';
 import { GAME_CONSTANTS, WEAPON_CONFIGS } from '../types.js';
 import type { ClassType } from '@dueled/shared';
+import type { CollisionSystem } from './CollisionSystem.js';
 
 export interface ProjectileUpdateResult {
   updated: ProjectileState[];
   expired: string[]; // IDs of projectiles that should be removed
+}
+
+export interface HitscanResult {
+  hit: boolean;
+  hitType: 'wall' | 'player' | 'none';
+  hitPosition: Position;
+  hitPlayerId?: string;
+  wallId?: string;
+  distance: number;
 }
 
 /**
@@ -113,6 +125,71 @@ export class ProjectilePhysics {
     }
     
     return { updated, expired };
+  }
+  
+  /**
+   * Process hitscan weapon (instant hit detection)
+   */
+  processHitscanWeapon(
+    startPosition: Position,
+    angle: number,
+    range: number,
+    ownerId: string,
+    gameState: GameState,
+    collisionSystem: CollisionSystem
+  ): HitscanResult {
+    // Calculate end position based on range
+    const endPosition: Position = {
+      x: startPosition.x + Math.cos(angle) * range,
+      y: startPosition.y + Math.sin(angle) * range
+    };
+    
+    // Check wall collisions first (walls block bullets)
+    const wallHit = collisionSystem.checkProjectileWallCollision(
+      startPosition, 
+      endPosition, 
+      0.1 // Small radius for precise bullets
+    );
+    
+    if (wallHit.hit && wallHit.position && wallHit.distance !== undefined) {
+      logger.debug(`Hitscan hit wall at distance ${wallHit.distance}`);
+      return {
+        hit: true,
+        hitType: 'wall',
+        hitPosition: wallHit.position,
+        wallId: wallHit.wallId,
+        distance: wallHit.distance
+      };
+    }
+    
+    // Check player collisions along the line
+    const players = Array.from(gameState.players.values());
+    
+    const playerHit = collisionSystem.checkLinePlayerCollision(
+      startPosition,
+      endPosition,
+      ownerId,
+      players
+    );
+    
+    if (playerHit.hit && playerHit.playerId && playerHit.hitPosition && playerHit.distance !== undefined) {
+      logger.debug(`Hitscan hit player ${playerHit.playerId} at distance ${playerHit.distance}`);
+      return {
+        hit: true,
+        hitType: 'player',
+        hitPosition: playerHit.hitPosition,
+        hitPlayerId: playerHit.playerId,
+        distance: playerHit.distance
+      };
+    }
+    
+    logger.debug(`Hitscan missed - no hits detected`);
+    return {
+      hit: false,
+      hitType: 'none',
+      hitPosition: endPosition,
+      distance: range
+    };
   }
   
   /**
@@ -256,5 +333,15 @@ export class ProjectilePhysics {
     stats.averageSpeed = projectiles.size > 0 ? totalSpeed / projectiles.size : 0;
     
     return stats;
+  }
+  
+  /**
+   * Calculate distance between two positions
+   */
+  private getDistance(pos1: Position, pos2: Position): number {
+    return Math.sqrt(
+      Math.pow(pos1.x - pos2.x, 2) + 
+      Math.pow(pos1.y - pos2.y, 2)
+    );
   }
 }

@@ -1,7 +1,7 @@
 # Dueled - AI Development Context
 
 ## Project Overview
-Dueled is a web-based real-time 1v1 combat simulator with class-based gameplay. Players engage in arena-style duels with four unique classes: Berserker, Mage, Bomber, and Archer.
+Dueled is a web-based real-time 1v1 combat simulator with class-based gameplay. Players engage in arena-style duels with three unique classes: Gunslinger, Demolitionist, and Buckshot.
 
 ## Tech Stack
 
@@ -42,7 +42,7 @@ Dueled/
 - **Goal**: Two players can queue and see each other in game world
 
 ### Phase 2: Combat (Weeks 5-8)
-- Complete combat system with all four classes
+- Complete combat system with all three classes
 - **Goal**: Fully functional combat with balanced mechanics
 
 ### Phase 3: Polish & Deploy (Weeks 9-12)
@@ -72,25 +72,20 @@ Dueled/
 
 ## Game Classes
 
-### Berserker
-- **Weapon**: Two-handed sword (AOE slash, 120° arc)
-- **Stats**: 150 HP, 50 armor
-- **Special**: Rage mode (+10% damage when <50% HP)
+### Gunslinger
+- **Weapon**: Six-Shooter (hitscan, precision)
+- **Stats**: 80 HP, 20 armor, 120 speed
+- **Special**: Quick Draw (instant shot) & Fan the Hammer (6-shot burst)
 
-### Mage
-- **Weapon**: Ice projectiles (ranged, slow effect)
-- **Stats**: 100 HP, 30 armor
-- **Special**: Frost effect (30% speed reduction, 2s)
+### Demolitionist
+- **Weapon**: Grenade Launcher (explosive, AOE)
+- **Stats**: 150 HP, 50 armor, 80 speed
+- **Special**: Sticky Bombs & Carpet Bomb (area denial)
 
-### Bomber
-- **Weapon**: Fire bombs (AOE, 3-tile radius)
-- **Stats**: 120 HP, 40 armor
-- **Special**: Armor burn (bypasses 25% armor)
-
-### Archer
-- **Weapon**: Longbow (high-velocity, piercing)
-- **Stats**: 80 HP, 20 armor
-- **Special**: Piercing shot (ignores 50% armor)
+### Buckshot
+- **Weapon**: Combat Shotgun (4-pellet spread, close-range)
+- **Stats**: 120 HP, 40 armor, 100 speed
+- **Special**: Shell Shock (knockback) & Dragon Breath (fire DOT)
 
 ## Performance Targets
 - **Client**: 60 FPS, <2s load time

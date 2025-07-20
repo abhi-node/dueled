@@ -8,8 +8,9 @@
 import React from 'react';
 import type { 
   ClientGameState, 
-  ClientPlayerState 
+  ClientPlayerState
 } from '../types/GameTypes.js';
+import { getClassConfig } from '@dueled/shared';
 import type { ConnectionInfo } from '../types/NetworkTypes.js';
 
 interface HUDProps {
@@ -95,20 +96,30 @@ interface HealthBarProps {
 }
 
 const HealthBar: React.FC<HealthBarProps> = ({ player }) => {
-  const healthPercent = (player.health / player.maxHealth) * 100;
-  const armorPercent = Math.min((player.armor / 50) * 100, 100); // Assume max armor 50
+  const classConfig = getClassConfig(player.classType);
+  const healthPercent = (player.health / classConfig.stats.health) * 100;
+  const armorPercent = (player.armor / classConfig.stats.defense) * 100;
+  
+  // Calculate weapon cooldown percentage
+  const currentTime = Date.now();
+  const cooldownRemaining = Math.max(0, player.weaponCooldown - currentTime);
+  // Convert attackSpeed (attacks per second) to cooldown milliseconds
+  const weaponCooldownMs = (1 / classConfig.weapon.attackSpeed) * 1000;
+  const cooldownPercent = Math.min((cooldownRemaining / weaponCooldownMs) * 100, 100);
+  const isOnCooldown = cooldownRemaining > 0;
   
   return (
-    <div className="bg-black bg-opacity-60 rounded-lg p-3 min-w-[200px]">
-      <div className="text-white text-sm font-bold mb-2">
-        {player.username}
+    <div className="bg-black bg-opacity-60 rounded-lg p-3 min-w-[220px]">
+      <div className="text-white text-sm font-bold mb-2 flex justify-between">
+        <span>{player.username}</span>
+        <span className="text-xs text-gray-300 capitalize">{classConfig.name}</span>
       </div>
       
       {/* Health Bar */}
       <div className="mb-2">
         <div className="flex justify-between text-xs text-white mb-1">
           <span>Health</span>
-          <span>{player.health}/{player.maxHealth}</span>
+          <span>{player.health}/{classConfig.stats.health}</span>
         </div>
         <div className="w-full bg-red-900 rounded-full h-2">
           <div 
@@ -119,15 +130,31 @@ const HealthBar: React.FC<HealthBarProps> = ({ player }) => {
       </div>
       
       {/* Armor Bar */}
-      <div>
+      <div className="mb-2">
         <div className="flex justify-between text-xs text-white mb-1">
-          <span>Armor</span>
-          <span>{player.armor}</span>
+          <span>Defense</span>
+          <span>{player.armor}/{classConfig.stats.defense}</span>
         </div>
         <div className="w-full bg-blue-900 rounded-full h-2">
           <div 
             className="bg-blue-500 h-2 rounded-full transition-all duration-200"
             style={{ width: `${armorPercent}%` }}
+          ></div>
+        </div>
+      </div>
+      
+      {/* Weapon Cooldown Bar */}
+      <div className="mb-2">
+        <div className="flex justify-between text-xs text-white mb-1">
+          <span>{classConfig.weapon.name}</span>
+          <span>{isOnCooldown ? `${(cooldownRemaining / 1000).toFixed(1)}s` : 'Ready'}</span>
+        </div>
+        <div className="w-full bg-gray-700 rounded-full h-2">
+          <div 
+            className={`h-2 rounded-full transition-all duration-100 ${
+              isOnCooldown ? 'bg-orange-500' : 'bg-green-500'
+            }`}
+            style={{ width: isOnCooldown ? `${100 - cooldownPercent}%` : '100%' }}
           ></div>
         </div>
       </div>
@@ -139,9 +166,9 @@ const HealthBar: React.FC<HealthBarProps> = ({ player }) => {
             DASH
           </span>
         )}
-        {player.weaponCooldown > Date.now() && (
-          <span className="bg-red-600 text-white px-2 py-1 rounded">
-            RELOAD
+        {isOnCooldown && (
+          <span className="bg-orange-600 text-white px-2 py-1 rounded">
+            RELOADING
           </span>
         )}
       </div>

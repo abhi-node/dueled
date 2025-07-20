@@ -19,7 +19,7 @@ export function MainGame() {
   
   // Get match data from navigation state
   const matchId = location.state?.matchId;
-  const selectedClass = location.state?.selectedClass || 'archer';
+  const selectedClass = location.state?.selectedClass || 'gunslinger';
   
   console.log('🎮 [DEBUG] MainGame navigation state:', { matchId, selectedClass });
 

@@ -15,6 +15,7 @@ import type {
 import type { ClientGameStateManager } from '../core/GameState.js';
 import { RENDER_CONSTANTS } from '../types/GameConstants.js';
 import { distance, angleFromTo, normalizeAngle, Vector2 } from '../utils/MathUtils.js';
+import type { HitscanFiredEvent } from '@dueled/shared';
 
 interface RaycastHit {
   distance: number;
@@ -34,10 +35,22 @@ interface SpriteRender {
   id: string;
 }
 
+interface HitscanTracer {
+  id: string;
+  startPos: Vector2;
+  endPos: Vector2;
+  createdAt: number;
+  duration: number;
+}
+
 export class RaycastRenderer {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
   private gameStateManager: ClientGameStateManager | null = null;
+  
+  // Simple hitscan tracers
+  private activeTracers: Map<string, HitscanTracer> = new Map();
+  private tracerIdCounter = 0;
   
   // Rendering properties
   private width: number = 0;
@@ -137,6 +150,9 @@ export class RaycastRenderer {
     // Render 3D world
     this.renderWalls(localPlayer, gameState.mapData.walls);
     this.renderSprites(localPlayer, gameState);
+    
+    // Render hitscan tracers directly in the ray tracer
+    this.renderHitscanTracers(localPlayer);
     
     // Apply post-processing effects
     this.applyDistanceFog();
@@ -620,5 +636,149 @@ export class RaycastRenderer {
     this.canvas.height = height;
     this.updateDimensions();
     this.precalculateValues();
+  }
+  
+  /**
+   * Handle hitscan fired event - add tracer to active list
+   */
+  onHitscanFired(event: HitscanFiredEvent): void {
+    const tracer: HitscanTracer = {
+      id: `tracer_${this.tracerIdCounter++}`,
+      startPos: { x: event.data.startPosition.x, y: event.data.startPosition.y },
+      endPos: { x: event.data.endPosition.x, y: event.data.endPosition.y },
+      createdAt: Date.now(),
+      duration: 250 // 250ms duration for better visibility
+    };
+    
+    this.activeTracers.set(tracer.id, tracer);
+    console.log('Added hitscan tracer:', tracer.id);
+  }
+  
+  /**
+   * Render hitscan tracers using proper ray-cast projection
+   */
+  private renderHitscanTracers(localPlayer: ClientPlayerState): void {
+    const now = Date.now();
+    const expiredTracers: string[] = [];
+    
+    for (const [id, tracer] of this.activeTracers) {
+      const age = now - tracer.createdAt;
+      
+      if (age > tracer.duration) {
+        expiredTracers.push(id);
+        continue;
+      }
+      
+      // Simple fade effect
+      const alpha = 1.0 - (age / tracer.duration);
+      
+      // Render tracer using ray-cast projection
+      this.renderTracerLine(localPlayer, tracer, alpha);
+    }
+    
+    // Remove expired tracers
+    for (const id of expiredTracers) {
+      this.activeTracers.delete(id);
+    }
+  }
+  
+  /**
+   * Render a tracer line using proper ray-cast projection
+   */
+  private renderTracerLine(localPlayer: ClientPlayerState, tracer: HitscanTracer, alpha: number): void {
+    // Sample points along the tracer line for proper projection
+    const lineLength = Math.sqrt(
+      Math.pow(tracer.endPos.x - tracer.startPos.x, 2) + 
+      Math.pow(tracer.endPos.y - tracer.startPos.y, 2)
+    );
+    
+    // Use enough samples to make the line look smooth
+    const sampleCount = Math.min(Math.max(10, Math.floor(lineLength * 20)), 100);
+    const samplePoints: Array<{ x: number; screenY: number; distance: number }> = [];
+    
+    // Calculate each sample point along the line
+    for (let i = 0; i < sampleCount; i++) {
+      const t = i / (sampleCount - 1);
+      const worldPos = {
+        x: tracer.startPos.x + t * (tracer.endPos.x - tracer.startPos.x),
+        y: tracer.startPos.y + t * (tracer.endPos.y - tracer.startPos.y)
+      };
+      
+      // Project this world position to screen coordinates
+      const projection = this.projectWorldToScreen(worldPos, localPlayer);
+      if (projection) {
+        samplePoints.push(projection);
+      }
+    }
+    
+    // Draw the tracer as connected line segments
+    if (samplePoints.length > 1) {
+      this.ctx.save();
+      this.ctx.globalAlpha = alpha;
+      this.ctx.strokeStyle = '#ff8800'; // Orange color
+      this.ctx.lineWidth = 4; // Thicker line
+      this.ctx.lineCap = 'round';
+      this.ctx.lineJoin = 'round';
+      
+      this.ctx.beginPath();
+      this.ctx.moveTo(samplePoints[0].x, samplePoints[0].screenY);
+      
+      for (let i = 1; i < samplePoints.length; i++) {
+        this.ctx.lineTo(samplePoints[i].x, samplePoints[i].screenY);
+      }
+      
+      this.ctx.stroke();
+      this.ctx.restore();
+    }
+  }
+  
+  /**
+   * Project a world position to screen coordinates using ray-cast math
+   */
+  private projectWorldToScreen(worldPos: { x: number; y: number }, localPlayer: ClientPlayerState): { x: number; screenY: number; distance: number } | null {
+    // Calculate relative position and angle from player
+    const relativeX = worldPos.x - localPlayer.position.x;
+    const relativeY = worldPos.y - localPlayer.position.y;
+    const distance = Math.sqrt(relativeX * relativeX + relativeY * relativeY);
+    
+    // Skip points that are too close to prevent division by zero
+    if (distance < 0.01) {
+      return null;
+    }
+    
+    // Calculate angle to the point
+    const worldAngle = Math.atan2(relativeY, relativeX);
+    const relativeAngle = this.normalizeAngle(worldAngle - localPlayer.angle);
+    
+    // Normalize relative angle to -PI to PI range
+    let normalizedAngle = relativeAngle;
+    if (normalizedAngle > Math.PI) {
+      normalizedAngle -= Math.PI * 2;
+    }
+    
+    // Check if point is within field of view
+    const halfFov = this.fov / 2;
+    if (Math.abs(normalizedAngle) > halfFov) {
+      return null; // Outside FOV
+    }
+    
+    // Calculate screen X position using same math as sprite rendering
+    const screenX = (normalizedAngle / this.fov + 0.5) * this.width;
+    
+    // Calculate perspective-corrected distance and screen Y position
+    const correctedDistance = distance * RENDER_CONSTANTS.PERSPECTIVE_SCALE;
+    const safeDistance = Math.max(correctedDistance, 0.01);
+    
+    // Use a small tracer "height" to position it in the middle of the screen
+    // This makes the tracer appear as a line at eye level
+    const tracerHeight = 0.1; // Small height for thin line
+    const projectedHeight = (this.height * tracerHeight) / safeDistance;
+    const screenY = this.halfHeight; // Always at eye level
+    
+    return {
+      x: screenX,
+      screenY: screenY,
+      distance: distance
+    };
   }
 }

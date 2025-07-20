@@ -20,6 +20,8 @@ import type {
   ClientProjectileState,
   GameEvent
 } from '../types/GameTypes.js';
+import type { HitscanFiredEvent } from '@dueled/shared';
+import { getClassConfig } from '@dueled/shared';
 
 export class MessageHandler {
   private gameState: ClientGameState | null = null;
@@ -32,7 +34,8 @@ export class MessageHandler {
     onPlayerUpdate: (playerId: string, player: ClientPlayerState) => {},
     onProjectileUpdate: (projectileId: string, projectile: ClientProjectileState) => {},
     onGameEvent: (event: GameEvent) => {},
-    onMatchUpdate: (matchInfo: Partial<ClientGameState>) => {}
+    onMatchUpdate: (matchInfo: Partial<ClientGameState>) => {},
+    onHitscanFired: (event: HitscanFiredEvent) => {}
   };
   
   constructor() {
@@ -214,20 +217,24 @@ export class MessageHandler {
   private createPlayerFromDelta(delta: PlayerDelta): ClientPlayerState {
     const isLocal = delta.id === this.gameState?.localPlayerId;
     
+    // Use class-specific defaults for temporary player creation
+    const defaultClassType = 'gunslinger' as any;
+    const classConfig = getClassConfig(defaultClassType);
+    
     return {
       // Identity
       id: delta.id,
       username: 'Unknown', // Will be set from full state
-      classType: 'archer' as any, // Will be set from full state
+      classType: defaultClassType, // Will be set from full state
       
       // Transform
       position: delta.position || { x: 0, y: 0 },
       angle: delta.angle || 0,
       velocity: delta.velocity || { x: 0, y: 0 },
       
-      // Health & Combat
-      health: delta.health || 100,
-      maxHealth: 100, // Will be set from full state
+      // Health & Combat - Use class-specific defaults
+      health: delta.health || classConfig.stats.health,
+      maxHealth: classConfig.stats.health, // Will be set from full state
       armor: delta.armor || 0,
       
       // Weapon State
@@ -260,6 +267,10 @@ export class MessageHandler {
     
     if (delta.health !== undefined) {
       player.health = delta.health;
+    }
+    
+    if (delta.maxHealth !== undefined) {
+      player.maxHealth = delta.maxHealth;
     }
     
     if (delta.armor !== undefined) {
@@ -407,6 +418,16 @@ export class MessageHandler {
   private processGameEvents(events: GameEvent[]): void {
     for (const event of events) {
       console.log('Game event:', event.type, event.data);
+      
+      // Handle specific event types
+      switch (event.type) {
+        case 'hitscan_fired':
+          console.log('Processing hitscan fired event:', event.data);
+          this.callbacks.onHitscanFired(event as HitscanFiredEvent);
+          break;
+      }
+      
+      // Always call the general callback
       this.callbacks.onGameEvent(event);
     }
   }

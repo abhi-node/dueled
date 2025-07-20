@@ -1,253 +1,221 @@
 /**
- * Class Configurations for Dueled
+ * Class Configurations - Complete class system definitions
  * 
- * This file defines all character classes with their complete stat configurations,
- * weapons, and special abilities. Each class is designed with specific gameplay
- * roles and balanced mechanics.
- * 
- * Stat System:
- * - Health: Maximum health points
- * - Defense: Damage reduction (armor system)
- * - Speed: Base movement speed
- * - Stamina: Dash cooldown reduction (Q/E dash mechanics)
- * - Strength: Base damage multiplier
- * - Intelligence: Special ability cooldown reduction
+ * Defines stats, weapons, and abilities for all 3 classes in the game.
+ * Used by both client and server for consistent gameplay mechanics.
  */
 
-import type { ClassConfig, ClassStats, SpecialAbility, WeaponConfig } from '../types/index.js';
 import { ClassType } from '../types/index.js';
 
-/**
- * Berserker Class Configuration
- * Role: Tank/Melee DPS - High survivability with devastating close-range attacks
- */
-export const BERSERKER_CONFIG: ClassConfig = {
-  id: ClassType.BERSERKER,
-  name: 'Berserker',
-  description: 'A heavily armored warrior wielding a two-handed sword. Excels in close combat with high health and devastating melee attacks.',
+// Base interfaces
+export interface ClassStats {
+  health: number;        // Base health points
+  defense: number;       // Armor/damage reduction
+  speed: number;         // Movement speed
+  stamina: number;       // Dash cooldown
+  strength: number;      // Damage multiplier
+  intelligence: number;  // Special ability recharge rate
+}
+
+export interface WeaponConfig {
+  id: string;
+  name: string;
+  type: 'hitscan' | 'ballistic' | 'spread';
+  damage: number;
+  range: number;         // Max effective range in tiles
+  attackSpeed: number;   // Attacks per second
+  effects: Array<{
+    type: string;
+    value: number;
+    duration?: number;
+  }>;
   
-  stats: {
-    health: 150,      // Highest health for survivability
-    defense: 50,      // High armor for damage reduction
-    speed: 85,        // Slowest movement speed
-    stamina: 60,      // Moderate dash cooldown (tanky but not agile)
-    strength: 90,     // High damage output
-    intelligence: 40  // Slowest special ability recharge
-  },
+  // Hitscan specific
+  accuracy?: number;     // 0-1 accuracy rating
+  penetration?: number;  // Number of targets it can pierce
   
-  weapon: {
-    id: 'berserker_sword',
-    name: 'Two-Handed Greatsword',
-    type: 'melee',
-    damage: 85,           // High base damage
-    range: 2.5,           // Short range (tiles)
-    attackSpeed: 0.67,    // Slow attack rate (1.5s cooldown)
-    areaOfEffect: 2.5,    // 120° arc AOE
-    effects: [
-      {
-        type: 'piercing',
-        value: 0,
-        description: 'Melee AOE slash in 120° arc'
-      }
-    ]
-  },
+  // Ballistic specific
+  projectileSpeed?: number;
+  explosive?: boolean;
+  explosionRadius?: number;
   
-  specialAbility: {
-    id: 'rage_mode',
-    name: 'Rage Mode',
-    description: 'Enter a berserker rage, increasing damage by 20% for 10 seconds. Recharges based on Intelligence.',
-    baseCooldown: 25,     // 25 second base cooldown
-    duration: 10,         // 10 second effect duration
-    effects: [
-      {
-        type: 'damage_boost',
-        value: 20,          // 20% damage increase
-        target: 'self'
-      }
-    ]
-  },
-  
-  inherentAbilities: []   // No passive abilities
-};
+  // Spread specific
+  pelletCount?: number;  // Number of pellets per shot
+  spreadAngle?: number;  // Spread in degrees
+}
+
+export interface ClassConfig {
+  id: ClassType;
+  name: string;
+  description: string;
+  stats: ClassStats;
+  weapon: WeaponConfig;
+  abilities: {
+    primary: {
+      name: string;
+      description: string;
+      cooldown: number;
+    };
+    ultimate: {
+      name: string;
+      description: string;
+      cooldown: number;
+    };
+  };
+}
 
 /**
- * Mage Class Configuration
- * Role: Ranged Support/Control - Medium survivability with crowd control and area denial
+ * Gunslinger Class Configuration
+ * Role: Precision marksman with hitscan weapons
  */
-export const MAGE_CONFIG: ClassConfig = {
-  id: ClassType.MAGE,
-  name: 'Mage',
-  description: 'A frost mage wielding ice magic. Specializes in ranged combat with slowing effects and area control.',
+export const GUNSLINGER_CONFIG: ClassConfig = {
+  id: ClassType.GUNSLINGER,
+  name: 'Gunslinger',
+  description: 'A precision marksman with instant-hit weapons. Excels at long-range combat with high accuracy and mobility.',
   
   stats: {
-    health: 100,      // Medium health
-    defense: 30,      // Low-medium armor
-    speed: 95,        // Medium movement speed
-    stamina: 80,      // Good dash cooldown for positioning
-    strength: 70,     // Medium damage output
-    intelligence: 90  // Fast special ability recharge
-  },
-  
-  weapon: {
-    id: 'ice_staff',
-    name: 'Frost Staff',
-    type: 'projectile',
-    damage: 65,           // Medium damage
-    range: 9,             // Long range
-    attackSpeed: 1.0,     // Medium attack rate (1.0s cooldown)
-    projectileSpeed: 300,
-    effects: [
-      {
-        type: 'frost',
-        value: 30,          // 30% movement speed reduction
-        description: 'Ice projectiles slow enemies on hit for 2 seconds'
-      }
-    ]
-  },
-  
-  specialAbility: {
-    id: 'ice_age',
-    name: 'Ice Age',
-    description: 'Conjure a map-wide frost effect, slowing all enemies by 20% for 6 seconds.',
-    baseCooldown: 30,     // 30 second base cooldown
-    duration: 6,          // 6 second effect duration
-    effects: [
-      {
-        type: 'movement_slow',
-        value: 20,          // 20% movement speed reduction
-        target: 'all_enemies'
-      },
-      {
-        type: 'map_wide',
-        value: 1,           // Map-wide effect
-        target: 'all_enemies'
-      }
-    ]
-  },
-  
-  inherentAbilities: ['frost_projectiles'] // Ice projectiles have inherent slow effect
-};
-
-/**
- * Bomber Class Configuration
- * Role: Area Denial/Burst DPS - Explosive specialist with armor-piercing capabilities
- */
-export const BOMBER_CONFIG: ClassConfig = {
-  id: ClassType.BOMBER,
-  name: 'Bomber',
-  description: 'An explosive specialist with fire bombs. Excels at area damage and armor penetration through explosive attacks.',
-  
-  stats: {
-    health: 120,      // Medium-high health
-    defense: 40,      // Medium armor
-    speed: 88,        // Medium-slow movement speed
-    stamina: 70,      // Medium dash cooldown
+    health: 80,       // Glass cannon - low health
+    defense: 20,      // Light armor
+    speed: 120,       // Fast movement
+    stamina: 90,      // Good mobility
     strength: 85,     // High damage output
-    intelligence: 65  // Medium special ability recharge
+    intelligence: 75  // Good ability recharge
   },
   
   weapon: {
-    id: 'fire_bombs',
-    name: 'Incendiary Grenades',
-    type: 'explosive',
-    damage: 75,           // High direct damage
-    range: 6,             // Medium range
-    attackSpeed: 0.83,    // Medium attack rate (1.2s cooldown)
-    areaOfEffect: 3,      // 3-tile explosion radius
-    projectileSpeed: 250,
-    effects: [
-      {
-        type: 'explosive',
-        value: 50,          // AOE damage (reduced from direct hit)
-        description: 'Explosive AOE damage in 3-tile radius'
-      },
-      {
-        type: 'armor_burn',
-        value: 25,          // AOE bypasses 25% armor
-        description: 'Fire damage bypasses 25% of target armor'
-      }
-    ]
+    id: 'six_shooter',
+    name: 'Six-Shooter',
+    type: 'hitscan',
+    damage: 45,
+    range: 15,        // Long range
+    attackSpeed: 1.25, // 0.8s cooldown
+    accuracy: 0.95,   // Very accurate
+    penetration: 1,   // Can hit through one target
+    effects: []
   },
   
-  specialAbility: {
-    id: 'enhanced_explosives',
-    name: 'Enhanced Explosives',
-    description: 'Next 3 bombs have increased damage and larger explosion radius for 15 seconds.',
-    baseCooldown: 35,     // 35 second base cooldown
-    duration: 15,         // 15 second effect duration
-    effects: [
-      {
-        type: 'damage_boost',
-        value: 30,          // 30% damage increase for bombs
-        target: 'self'
-      }
-    ]
-  },
-  
-  inherentAbilities: ['armor_burn'] // Fire damage bypasses 25% armor on AOE
+  abilities: {
+    primary: {
+      name: 'Quick Draw',
+      description: 'Next shot fires instantly with increased damage',
+      cooldown: 8000    // 8 seconds
+    },
+    ultimate: {
+      name: 'Fan the Hammer',
+      description: 'Rapid burst of 6 shots with no reload',
+      cooldown: 25000   // 25 seconds
+    }
+  }
 };
 
 /**
- * Archer Class Configuration
- * Role: Precision DPS/Sniper - High mobility with long-range precision attacks
+ * Demolitionist Class Configuration  
+ * Role: Explosive specialist with area denial
  */
-export const ARCHER_CONFIG: ClassConfig = {
-  id: ClassType.ARCHER,
-  name: 'Archer',
-  description: 'A skilled marksman with a longbow. Specializes in long-range precision attacks with armor-piercing arrows.',
+export const DEMOLITIONIST_CONFIG: ClassConfig = {
+  id: ClassType.DEMOLITIONIST,
+  name: 'Demolitionist',
+  description: 'An explosive specialist with area-of-effect weapons. Excels at area denial and dealing with multiple targets.',
   
   stats: {
-    health: 80,       // Lowest health (glass cannon)
-    defense: 20,      // Lowest armor
-    speed: 105,       // Fastest movement speed
-    stamina: 95,      // Fastest dash cooldown (high mobility)
-    strength: 80,     // High damage output
-    intelligence: 75  // Good special ability recharge
+    health: 150,      // Tank-like health
+    defense: 50,      // Heavy armor
+    speed: 80,        // Slow movement
+    stamina: 60,      // Limited mobility  
+    strength: 95,     // Very high damage
+    intelligence: 65  // Moderate ability recharge
   },
   
   weapon: {
-    id: 'longbow',
-    name: 'Elven Longbow',
-    type: 'projectile',
-    damage: 80,           // High precision damage
-    range: 13,            // Longest range
-    attackSpeed: 1.25,    // Fast attack rate (0.8s cooldown)
-    projectileSpeed: 500, // Fastest projectile
+    id: 'grenade_launcher',
+    name: 'Grenade Launcher',
+    type: 'ballistic',
+    damage: 70,
+    range: 8,         // Medium range
+    attackSpeed: 0.5, // 2s cooldown - slow fire rate
+    projectileSpeed: 8,
+    explosive: true,
+    explosionRadius: 3,
     effects: [
       {
-        type: 'piercing',
-        value: 50,          // Ignores 50% armor
-        description: 'Arrows pierce through 50% of target armor'
+        type: 'area_damage',
+        value: 50,      // AOE damage
+        duration: 0
       }
     ]
   },
   
-  specialAbility: {
-    id: 'dispatcher',
-    name: 'Dispatcher',
-    description: 'Fire a homing arrow that tracks the nearest enemy. Damage scales with Intelligence.',
-    baseCooldown: 20,     // 20 second base cooldown
-    duration: 0,          // Instant effect
-    effects: [
-      {
-        type: 'homing_projectile',
-        value: 120,         // 120% of normal arrow damage
-        target: 'enemy'
-      }
-    ]
-  },
-  
-  inherentAbilities: ['piercing_shot'] // Arrows naturally pierce 50% armor
+  abilities: {
+    primary: {
+      name: 'Sticky Bombs',
+      description: 'Deploy bombs that explode after a delay',
+      cooldown: 12000   // 12 seconds
+    },
+    ultimate: {
+      name: 'Carpet Bomb',
+      description: 'Rain of explosives across a large area',
+      cooldown: 30000   // 30 seconds
+    }
+  }
 };
 
 /**
- * All class configurations mapped by ClassType
+ * Buckshot Class Configuration
+ * Role: Close-range specialist with spread weapons
+ */
+export const BUCKSHOT_CONFIG: ClassConfig = {
+  id: ClassType.BUCKSHOT,
+  name: 'Buckshot',
+  description: 'A close-range specialist with devastating spread weapons. Excels in confined spaces and close-quarters combat.',
+  
+  stats: {
+    health: 120,      // Moderate health
+    defense: 40,      // Medium armor
+    speed: 100,       // Good movement speed
+    stamina: 80,      // Good mobility
+    strength: 80,     // Good damage per pellet
+    intelligence: 70  // Good ability recharge
+  },
+  
+  weapon: {
+    id: 'combat_shotgun',
+    name: 'Combat Shotgun',
+    type: 'spread',
+    damage: 25,       // Per pellet
+    range: 6,         // Short range
+    attackSpeed: 0.83, // 1.2s cooldown
+    pelletCount: 4,   // 4 pellets per shot
+    spreadAngle: 30,  // 30-degree spread
+    effects: [
+      {
+        type: 'knockback',
+        value: 2,       // Pushback effect
+        duration: 0
+      }
+    ]
+  },
+  
+  abilities: {
+    primary: {
+      name: 'Shell Shock',
+      description: 'Powerful blast with increased knockback',
+      cooldown: 10000   // 10 seconds
+    },
+    ultimate: {
+      name: 'Dragon Breath',
+      description: 'Fire damage over time in a cone',
+      cooldown: 20000   // 20 seconds
+    }
+  }
+};
+
+/**
+ * Master configuration record for all classes
  */
 export const CLASS_CONFIGURATIONS: Record<ClassType, ClassConfig> = {
-  [ClassType.BERSERKER]: BERSERKER_CONFIG,
-  [ClassType.MAGE]: MAGE_CONFIG,
-  [ClassType.BOMBER]: BOMBER_CONFIG,
-  [ClassType.ARCHER]: ARCHER_CONFIG
+  [ClassType.GUNSLINGER]: GUNSLINGER_CONFIG,
+  [ClassType.DEMOLITIONIST]: DEMOLITIONIST_CONFIG,
+  [ClassType.BUCKSHOT]: BUCKSHOT_CONFIG
 };
 
 /**
@@ -258,30 +226,15 @@ export function getClassConfig(classType: ClassType): ClassConfig {
 }
 
 /**
- * Helper function to calculate effective cooldown based on intelligence
+ * Get all available class types
  */
-export function calculateEffectiveCooldown(baseCooldown: number, intelligence: number): number {
-  // Intelligence reduces cooldown: each point reduces cooldown by 0.5%
-  const reduction = intelligence * 0.005;
-  return baseCooldown * (1 - Math.min(reduction, 0.5)); // Max 50% reduction
+export function getAvailableClasses(): ClassType[] {
+  return Object.values(ClassType);
 }
 
 /**
- * Helper function to calculate dash cooldown based on stamina
+ * Validate if a class type is valid
  */
-export function calculateDashCooldown(baseStamina: number): number {
-  // Base dash cooldown is 3 seconds, stamina reduces it
-  // Each stamina point reduces cooldown by 1%
-  const baseCooldown = 3.0;
-  const reduction = baseStamina * 0.01;
-  return baseCooldown * (1 - Math.min(reduction, 0.7)); // Max 70% reduction
+export function isValidClassType(classType: string): classType is ClassType {
+  return Object.values(ClassType).includes(classType as ClassType);
 }
-
-/**
- * Helper function to calculate damage with strength modifier
- */
-export function calculateEffectiveDamage(baseDamage: number, strength: number): number {
-  // Each strength point increases damage by 0.8%
-  const multiplier = 1 + (strength * 0.008);
-  return baseDamage * multiplier;
-} 

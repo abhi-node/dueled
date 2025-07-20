@@ -9,8 +9,8 @@ INSERT INTO players (id, username, email, password_hash, is_anonymous) VALUES
 
 -- Insert corresponding player stats
 INSERT INTO player_stats (player_id, rating, matches_played, wins, losses, favorite_class) VALUES
-    ('550e8400-e29b-41d4-a716-446655440001', 1250, 15, 9, 6, 'berserker'),
-    ('550e8400-e29b-41d4-a716-446655440002', 1150, 12, 7, 5, 'mage'),
+    ('550e8400-e29b-41d4-a716-446655440001', 1250, 15, 9, 6, 'demolitionist'),
+    ('550e8400-e29b-41d4-a716-446655440002', 1150, 12, 7, 5, 'buckshot'),
     ('550e8400-e29b-41d4-a716-446655440003', 1000, 0, 0, 0, NULL);
 
 -- Insert some sample matches for development
@@ -34,8 +34,8 @@ INSERT INTO matches (
         '450e8400-e29b-41d4-a716-446655440001',
         '550e8400-e29b-41d4-a716-446655440001',
         '550e8400-e29b-41d4-a716-446655440002',
-        'berserker',
-        'mage',
+        'demolitionist',
+        'buckshot',
         '550e8400-e29b-41d4-a716-446655440001',
         180,
         1200,
@@ -50,8 +50,8 @@ INSERT INTO matches (
         '450e8400-e29b-41d4-a716-446655440002',
         '550e8400-e29b-41d4-a716-446655440002',
         '550e8400-e29b-41d4-a716-446655440001',
-        'archer',
-        'bomber',
+        'gunslinger',
+        'demolitionist',
         '550e8400-e29b-41d4-a716-446655440002',
         145,
         1175,

@@ -222,6 +222,98 @@ export class CollisionSystem {
     return { hit: false };
   }
   
+  /**
+   * Check line-vs-player collision for hitscan weapons
+   */
+  checkLinePlayerCollision(
+    startPos: Position,
+    endPos: Position,
+    excludePlayerId: string,
+    players: PlayerState[]
+  ): { hit: boolean; playerId?: string; hitPosition?: Position; distance?: number } {
+    let closestHit = { hit: false, distance: Infinity } as any;
+    
+    for (const player of players) {
+      if (player.id === excludePlayerId || !player.isAlive) continue;
+      
+      // Line-circle intersection test
+      const hitResult = this.lineCircleIntersection(
+        startPos, 
+        endPos, 
+        player.position, 
+        this.PLAYER_RADIUS
+      );
+      
+      if (hitResult.hit && hitResult.distance !== undefined && hitResult.distance < closestHit.distance) {
+        closestHit = {
+          hit: true,
+          playerId: player.id,
+          hitPosition: hitResult.position,
+          distance: hitResult.distance
+        };
+      }
+    }
+    
+    return closestHit.hit ? closestHit : { hit: false };
+  }
+  
+  /**
+   * Calculate intersection between a line and a circle
+   */
+  private lineCircleIntersection(
+    lineStart: Position,
+    lineEnd: Position,
+    circleCenter: Position,
+    radius: number
+  ): { hit: boolean; position?: Position; distance?: number } {
+    // Vector from line start to end
+    const dx = lineEnd.x - lineStart.x;
+    const dy = lineEnd.y - lineStart.y;
+    
+    // Vector from line start to circle center
+    const fx = lineStart.x - circleCenter.x;
+    const fy = lineStart.y - circleCenter.y;
+    
+    // Quadratic formula coefficients for line-circle intersection
+    const a = dx * dx + dy * dy;
+    const b = 2 * (fx * dx + fy * dy);
+    const c = (fx * fx + fy * fy) - radius * radius;
+    
+    const discriminant = b * b - 4 * a * c;
+    
+    if (discriminant < 0) {
+      return { hit: false }; // No intersection
+    }
+    
+    // Find the closest intersection point along the line
+    const sqrt_discriminant = Math.sqrt(discriminant);
+    const t1 = (-b - sqrt_discriminant) / (2 * a);
+    const t2 = (-b + sqrt_discriminant) / (2 * a);
+    
+    // We want the first intersection along the line (smallest t >= 0 and <= 1)
+    let t = -1;
+    if (t1 >= 0 && t1 <= 1) t = t1;
+    else if (t2 >= 0 && t2 <= 1) t = t2;
+    
+    if (t < 0) {
+      return { hit: false }; // Intersection outside line segment
+    }
+    
+    // Calculate intersection position
+    const hitPosition: Position = {
+      x: lineStart.x + t * dx,
+      y: lineStart.y + t * dy
+    };
+    
+    const distance = this.getDistance(lineStart, hitPosition);
+    
+    return {
+      hit: true,
+      position: hitPosition,
+      distance
+    };
+  }
+  
   // ============================================================================
   // RAYCASTING
   // ============================================================================

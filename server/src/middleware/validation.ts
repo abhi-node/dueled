@@ -277,7 +277,7 @@ export const playerValidation = {
       .normalizeEmail(),
     body('favoriteClass')
       .optional()
-      .isIn(['berserker', 'mage', 'bomber', 'archer'])
+      .isIn(['gunslinger', 'demolitionist', 'buckshot'])
       .withMessage('Invalid class type'),
     handleValidationErrors
   ],

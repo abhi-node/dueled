@@ -8,10 +8,10 @@ import type { ClassType } from '@dueled/shared';
 
 export function MainMenu() {
   const [isInQueue, setIsInQueue] = useState(false);
-  // Only allow selection of available classes (archer only for now)
-  const [selectedClass, setSelectedClass] = useState<ClassType>('archer' as ClassType);
+  // Default to gunslinger class
+  const [selectedClass, setSelectedClass] = useState<ClassType>('gunslinger' as ClassType);
   // Keep the latest class in a ref so socket callbacks always use the up-to-date value
-  const selectedClassRef = useRef<ClassType>('archer' as ClassType);
+  const selectedClassRef = useRef<ClassType>('gunslinger' as ClassType);
   const [queueStatus, setQueueStatus] = useState<{
     inQueue: boolean;
     estimatedWait: number;
@@ -394,12 +394,11 @@ export function MainMenu() {
 
       <div className="mt-12 text-center">
         <h3 className="text-xl font-bold text-arena-300 mb-4">Choose Your Class</h3>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-4xl">
+        <div className="grid grid-cols-3 gap-4 max-w-3xl">
           {[
-            { name: 'Berserker', icon: '⚔️', color: 'text-red-500', type: 'berserker' as ClassType, available: false },
-            { name: 'Mage', icon: '🧙', color: 'text-blue-500', type: 'mage' as ClassType, available: false },
-            { name: 'Bomber', icon: '💣', color: 'text-orange-500', type: 'bomber' as ClassType, available: false },
-            { name: 'Archer', icon: '🏹', color: 'text-green-500', type: 'archer' as ClassType, available: true },
+            { name: 'Gunslinger', icon: '🔫', color: 'text-silver-500', type: 'gunslinger' as ClassType, available: true },
+            { name: 'Demolitionist', icon: '💥', color: 'text-orange-500', type: 'demolitionist' as ClassType, available: false },
+            { name: 'Buckshot', icon: '🔥', color: 'text-red-500', type: 'buckshot' as ClassType, available: false },
           ].map((classType) => (
             <div
               key={classType.name}

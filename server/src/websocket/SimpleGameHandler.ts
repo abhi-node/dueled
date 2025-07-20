@@ -386,13 +386,13 @@ export class SimpleGameHandler {
             {
               id: player1Data.playerId,
               username: player1Data.username || 'Player1',
-              classType: (player1Data.classType || 'archer') as ClassType,
+              classType: (player1Data.classType || 'gunslinger') as ClassType,
               rating: 1000 // Default rating for now
             },
             {
               id: player2Data.playerId,
               username: player2Data.username || 'Player2',
-              classType: (player2Data.classType || 'archer') as ClassType,
+              classType: (player2Data.classType || 'gunslinger') as ClassType,
               rating: 1000 // Default rating for now
             },
             mapData,

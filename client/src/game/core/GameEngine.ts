@@ -28,6 +28,7 @@ import type {
   DeltaUpdate,
   NetworkError
 } from '../types/NetworkTypes.js';
+import type { HitscanFiredEvent } from '@dueled/shared';
 import type { ClientGameState } from '../types/GameTypes.js';
 
 export interface GameEngineCallbacks {
@@ -49,6 +50,9 @@ export class GameEngine {
   private messageHandler: MessageHandler;
   private gameStateManager: ClientGameStateManager;
   private movementPredictor: MovementPredictor;
+  
+  // Renderer reference for effects
+  private renderer: any = null; // Will be set by GameCanvas
   
   // Game loop
   private gameLoopId: number | null = null;
@@ -119,7 +123,8 @@ export class GameEngine {
     this.messageHandler.setCallbacks({
       onStateUpdate: this.onStateUpdate.bind(this),
       onPlayerUpdate: this.onPlayerUpdate.bind(this),
-      onProjectileUpdate: this.onProjectileUpdate.bind(this)
+      onProjectileUpdate: this.onProjectileUpdate.bind(this),
+      onHitscanFired: this.onHitscanFired.bind(this)
     });
     
     console.log('GameEngine initialized');
@@ -613,6 +618,28 @@ export class GameEngine {
   
   private onProjectileUpdate(projectileId: string, projectile: any): void {
     this.gameStateManager.updateProjectile(projectileId, projectile);
+  }
+  
+  /**
+   * Handle hitscan fired events
+   */
+  private onHitscanFired(event: HitscanFiredEvent): void {
+    console.log('GameEngine: Hitscan fired event received', event.data);
+    
+    // Forward to renderer if available
+    if (this.renderer && typeof this.renderer.onHitscanFired === 'function') {
+      this.renderer.onHitscanFired(event);
+    } else {
+      console.warn('GameEngine: No renderer available for hitscan event');
+    }
+  }
+  
+  /**
+   * Set renderer reference for effects
+   */
+  setRenderer(renderer: any): void {
+    this.renderer = renderer;
+    console.log('GameEngine: Renderer reference set');
   }
   
   // ============================================================================

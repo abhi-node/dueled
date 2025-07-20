@@ -22,6 +22,7 @@ import type {
 } from '../types.js';
 import { GAME_CONSTANTS, WEAPON_CONFIGS } from '../types.js';
 import type { ClassType } from '@dueled/shared';
+import { getClassConfig } from '@dueled/shared';
 
 export class GameStateManager {
   private state: GameState;
@@ -92,6 +93,9 @@ export class GameStateManager {
       return false;
     }
     
+    // Get class-specific stats
+    const classConfig = getClassConfig(classType);
+    
     const playerState: PlayerState = {
       // Identity
       id: playerId,
@@ -103,10 +107,10 @@ export class GameStateManager {
       angle: spawnPoint.angle,
       velocity: { x: 0, y: 0 },
       
-      // Health & Combat
-      health: GAME_CONSTANTS.BASE_HEALTH,
-      maxHealth: GAME_CONSTANTS.BASE_HEALTH,
-      armor: GAME_CONSTANTS.BASE_ARMOR,
+      // Health & Combat - Use class-specific values
+      health: classConfig.stats.health,
+      maxHealth: classConfig.stats.health,
+      armor: classConfig.stats.defense,
       
       // Weapon State
       weaponCooldown: 0,
@@ -494,6 +498,7 @@ export class GameStateManager {
       angle: player.angle,
       velocity: player.velocity,
       health: player.health,
+      maxHealth: player.maxHealth, // Include maxHealth for client synchronization
       armor: player.armor,
       weaponCooldown: player.weaponCooldown,
       isAlive: player.isAlive,
@@ -535,7 +540,7 @@ export class GameStateManager {
     this.state.timestamp = Date.now();
   }
   
-  private addEvent(type: any, data: Record<string, any>): void {
+  addEvent(type: any, data: Record<string, any>): void {
     const event: GameEvent = {
       id: `event_${this.eventIdCounter++}`,
       type,

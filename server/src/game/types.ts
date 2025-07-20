@@ -59,7 +59,7 @@ export interface PlayerState {
 // PROJECTILE STATE
 // ============================================================================
 
-export type ProjectileType = 'arrow' | 'fireball' | 'bomb';
+export type ProjectileType = 'bullet' | 'grenade' | 'pellet';
 
 export interface ProjectileState {
   id: string;
@@ -287,6 +287,7 @@ export interface PlayerDelta {
   angle?: number;
   velocity?: Velocity;
   health?: number;
+  maxHealth?: number;
   armor?: number;
   weaponCooldown?: number;
   isAlive?: boolean;
@@ -324,47 +325,36 @@ export interface WeaponConfig {
 
 // Default weapon configs
 export const WEAPON_CONFIGS: Record<ClassType, WeaponConfig> = {
-  archer: {
-    type: 'longbow',
-    damage: 35,
-    range: 20,
-    cooldown: 1000,       // 1 second
-    projectileSpeed: 15,
-    projectileType: 'arrow',
-    piercing: true,
-    explosive: false
-  },
-  berserker: {
-    type: 'sword',
-    damage: 50,
-    range: 2,
+  gunslinger: {
+    type: 'six-shooter',
+    damage: 45,
+    range: 13,            // 13-tile range as requested
     cooldown: 800,        // 0.8 seconds
-    projectileSpeed: 0,   // Melee
-    projectileType: 'arrow', // Placeholder
-    piercing: false,
+    projectileSpeed: 0,   // Hitscan = instant
+    projectileType: 'bullet',
+    piercing: true,       // Can penetrate one target
     explosive: false
   },
-  mage: {
-    type: 'staff',
-    damage: 40,
-    range: 15,
-    cooldown: 1200,       // 1.2 seconds
-    projectileSpeed: 10,
-    projectileType: 'fireball',
+  demolitionist: {
+    type: 'grenade-launcher',
+    damage: 70,
+    range: 8,
+    cooldown: 2000,       // 2 seconds
+    projectileSpeed: 8,   // Slow grenade arc
+    projectileType: 'grenade',
     piercing: false,
     explosive: true,
     explosionRadius: 3
   },
-  bomber: {
-    type: 'launcher',
-    damage: 60,
-    range: 12,
-    cooldown: 1500,       // 1.5 seconds
-    projectileSpeed: 8,
-    projectileType: 'bomb',
+  buckshot: {
+    type: 'combat-shotgun',
+    damage: 25,           // Per pellet
+    range: 6,
+    cooldown: 1200,       // 1.2 seconds
+    projectileSpeed: 12,
+    projectileType: 'pellet',
     piercing: false,
-    explosive: true,
-    explosionRadius: 4
+    explosive: false
   }
 };
 
