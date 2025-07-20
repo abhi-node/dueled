@@ -429,6 +429,30 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     }
   }, []);
   
+  /**
+   * Handle exit game button click - send exit_match event to server
+   */
+  const handleExitGame = useCallback(() => {
+    console.log('🚪 [DEBUG] Exit game button clicked - sending exit_match event');
+    
+    // Send exit_match event to server to properly terminate the match
+    if (gameEngineRef.current && gameEngineRef.current.isConnected()) {
+      // Send exit event to server - this will trigger match termination
+      // The server will send match_end to all players and clean up resources
+      gameEngineRef.current.getConnectionInfo(); // Ensure we're connected
+      
+      // TODO: Add proper exit_match event to GameEngine/GameSocket
+      // For now, disconnect with a specific reason that the server can handle
+      gameEngineRef.current.disconnectFromServer('exit_match');
+    }
+    
+    // The onGameEnd will be called when we receive the match_end event from server
+    // But also call it as fallback in case something goes wrong
+    setTimeout(() => {
+      onGameEnd?.();
+    }, 1000);
+  }, [onGameEnd]);
+  
   // ============================================================================
   // KEYBOARD SHORTCUTS
   // ============================================================================
@@ -439,10 +463,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         case 'F3':
           e.preventDefault();
           setShowDebug(!showDebug);
-          break;
-        case 'Escape':
-          e.preventDefault();
-          onGameEnd?.();
           break;
       }
     };
@@ -506,6 +526,18 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         />
       )}
       
+      {/* Exit Button - Bottom Left */}
+      {isInitialized && (
+        <div className="absolute bottom-4 left-4">
+          <button
+            onClick={handleExitGame}
+            className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-lg shadow-lg transition-colors duration-200"
+          >
+            Exit
+          </button>
+        </div>
+      )}
+      
       {/* Connection Status Overlay */}
       {connectionInfo.state === 'connecting' && (
         <div className="absolute inset-0 bg-black bg-opacity-75 flex items-center justify-center">
@@ -528,7 +560,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               <div><strong>Space:</strong> Dash</div>
               <div><strong>Shift:</strong> Sprint</div>
               <div><strong>F3:</strong> Toggle debug info</div>
-              <div><strong>Escape:</strong> Exit game</div>
             </div>
             <p className="text-sm text-gray-300">
               Click to start playing!

@@ -159,6 +159,7 @@ export class SimpleGameHandler {
       // Connection management
       socket.on('heartbeat', () => this.handleHeartbeat(socket));
       socket.on('explicit_disconnect', (data) => this.handleExplicitDisconnect(socket, data));
+      socket.on('player_disconnect', (data) => this.handlePlayerDisconnect(socket, data));
       socket.on('disconnect', (reason) => this.handleDisconnect(socket, reason).catch(error => {
         logger.error('Error handling disconnect:', error);
       }));
@@ -777,6 +778,24 @@ export class SimpleGameHandler {
     // Force immediate disconnection by simulating explicit_disconnect reason
     await this.handleDisconnect(socket, 'explicit_disconnect');
   }
+
+  /**
+   * Handle player_disconnect event from client (with custom reason)
+   */
+  private async handlePlayerDisconnect(socket: Socket, data: { reason?: string }): Promise<void> {
+    const playerId = this.getPlayerIdFromSocket(socket);
+    
+    if (!playerId) {
+      logger.warn(`Player disconnect from unknown socket: ${socket.id}`);
+      return;
+    }
+
+    const disconnectReason = data?.reason || 'user_disconnect';
+    logger.info(`🚪 Player disconnect event from ${playerId}: ${disconnectReason}`);
+
+    // Handle disconnect with the custom reason
+    await this.handleDisconnect(socket, disconnectReason);
+  }
   
   /**
    * Handle disconnect with intelligent grace period management
@@ -838,6 +857,9 @@ export class SimpleGameHandler {
       return 'transport error';
     } else if (normalizedReason.includes('explicit_disconnect')) {
       return 'explicit_disconnect';
+    } else if (normalizedReason.includes('exit_match')) {
+      // Special case: Player clicked exit button - terminate the entire match
+      return 'explicit_disconnect'; // Treat as explicit for no grace period
     } else if (normalizedReason.includes('server ns disconnect')) {
       return 'server ns disconnect';
     } else {
@@ -969,8 +991,27 @@ export class SimpleGameHandler {
 
     logger.info(`🔌 Processing disconnection for ${playerId}: ${reason}`);
 
-    // Disconnect from MatchManager if player was in a match
-    if (matchId) {
+    // Handle special case: exit_match should terminate the entire match
+    if (matchId && reason.toLowerCase().includes('exit_match')) {
+      logger.info(`🚪 Player ${playerId} clicked exit - terminating entire match ${matchId}`);
+      
+      const matchManager = this.matchManagers.get(matchId);
+      if (matchManager) {
+        // Determine the winner (the other player)
+        const activeMatch = this.activeMatches.get(matchId);
+        const otherPlayerId = activeMatch?.players.find(pId => pId !== playerId);
+        
+        if (otherPlayerId) {
+          // Force end the match immediately with the other player as winner
+          // This will trigger onMatchEnd callback which handles cleanup and notifications
+          matchManager.forceEnd(otherPlayerId, 'player_exit');
+        } else {
+          // No other player, just end the match with the current player as winner (shouldn't happen)
+          matchManager.forceEnd(playerId, 'player_exit');
+        }
+      }
+    } else if (matchId) {
+      // Normal disconnection handling
       const matchManager = this.matchManagers.get(matchId);
       if (matchManager) {
         matchManager.disconnectPlayer(playerId);

@@ -17,6 +17,7 @@ import { RENDER_CONSTANTS } from '../types/GameConstants.js';
 import { distance, angleFromTo, normalizeAngle, Vector2 } from '../utils/MathUtils.js';
 import type { HitscanFiredEvent } from '@dueled/shared';
 import { TextureManager, type RGBAColor } from './TextureManager.js';
+import { SpriteManager, type ClassType } from './SpriteManager.js';
 
 interface RaycastHit {
   distance: number;
@@ -36,6 +37,7 @@ interface SpriteRender {
   color: string;
   type: 'player' | 'projectile';
   id: string;
+  classType?: ClassType; // For player sprites
 }
 
 interface HitscanTracer {
@@ -51,6 +53,7 @@ export class RaycastRenderer {
   private ctx: CanvasRenderingContext2D;
   private gameStateManager: ClientGameStateManager | null = null;
   private textureManager: TextureManager;
+  private spriteManager: SpriteManager;
   
   // Current map walls for line-of-sight calculations
   private currentMapWalls: WallDefinition[] = [];
@@ -95,6 +98,9 @@ export class RaycastRenderer {
     // Initialize texture manager
     this.textureManager = new TextureManager();
     
+    // Initialize sprite manager
+    this.spriteManager = new SpriteManager();
+    
     // Initialize dimensions
     this.updateDimensions();
     
@@ -103,6 +109,9 @@ export class RaycastRenderer {
     
     // Preload default textures
     this.preloadTextures();
+    
+    // Preload player sprites
+    this.preloadSprites();
     
     console.log('RaycastRenderer initialized', {
       width: this.width,
@@ -129,6 +138,19 @@ export class RaycastRenderer {
       console.log('✅ Wall textures preloaded successfully');
     } catch (error) {
       console.warn('⚠️ Some textures failed to load:', error);
+    }
+  }
+  
+  /**
+   * Preload player sprite sheets
+   */
+  private async preloadSprites(): Promise<void> {
+    try {
+      console.log('🎨 Preloading player sprites...');
+      await this.spriteManager.preloadAllSprites();
+      console.log('✅ Player sprites preloaded successfully');
+    } catch (error) {
+      console.warn('⚠️ Some sprites failed to load:', error);
     }
   }
   
@@ -480,7 +502,8 @@ export class RaycastRenderer {
             size: 0.8,
             color: this.colors.player,
             type: 'player',
-            id: playerId
+            id: playerId,
+            classType: player.classType
           });
         }
       }
@@ -548,11 +571,35 @@ export class RaycastRenderer {
       return; // Blocked by wall
     }
     
+    // Render based on sprite type
+    if (sprite.type === 'player' && sprite.classType) {
+      // Render player sprite
+      const success = this.spriteManager.drawPlayerSprite(
+        this.ctx,
+        sprite.classType,
+        screenX,
+        this.halfHeight
+      );
+      
+      // Fallback to circle if sprite fails to render
+      if (!success) {
+        this.renderFallbackCircle(screenX, sprite, spriteWidth);
+      }
+    } else {
+      // Render projectiles as circles (unchanged)
+      this.renderFallbackCircle(screenX, sprite, spriteWidth);
+    }
+  }
+  
+  /**
+   * Render fallback circle sprite (for projectiles or failed sprite loads)
+   */
+  private renderFallbackCircle(screenX: number, sprite: SpriteRender, spriteWidth: number): void {
     // Apply distance-based shading
     const shadingFactor = Math.max(0.2, 1 - sprite.distance / this.renderDistance);
     const spriteColor = this.applyShading(sprite.color, shadingFactor);
     
-    // Render sprite as circle
+    // Render as circle
     this.ctx.fillStyle = spriteColor;
     this.ctx.beginPath();
     this.ctx.arc(
