@@ -597,7 +597,8 @@ export class GameStateManager {
   }
   
   private isValidPosition(position: Position): boolean {
-    const bounds = GAME_CONSTANTS.MAP_BOUNDS;
+    // Use actual map bounds from MapData instead of hardcoded constants
+    const bounds = this.state.mapData.bounds;
     return position.x >= bounds.minX && position.x <= bounds.maxX &&
            position.y >= bounds.minY && position.y <= bounds.maxY;
   }

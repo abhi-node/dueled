@@ -106,12 +106,6 @@ Dueled/
 - Focus on clean, readable code over clever optimizations
 - Progressive enhancement approach
 
-## Key Files to Reference
-- `_docs/planning/PRD.md` - Product requirements
-- `_docs/phases/phase-1-mvp.md` - Current development phase
-- `_docs/phases/phase-2-combat.md` - Combat implementation
-- `_docs/phases/phase-3-polish-deployment.md` - Deployment plan 
-
 ## Important Considerations
 - If working from a phase implementation plan, check off the tasks that were completed
 - Allow the user to test changes periodically

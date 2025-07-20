@@ -328,7 +328,7 @@ export const WEAPON_CONFIGS: Record<ClassType, WeaponConfig> = {
   gunslinger: {
     type: 'six-shooter',
     damage: 45,
-    range: 13,            // 13-tile range as requested
+    range: 43,            // Full diagonal range (30 * √2 = 42.42, rounded up)
     cooldown: 800,        // 0.8 seconds
     projectileSpeed: 0,   // Hitscan = instant
     projectileType: 'bullet',
@@ -338,7 +338,7 @@ export const WEAPON_CONFIGS: Record<ClassType, WeaponConfig> = {
   demolitionist: {
     type: 'grenade-launcher',
     damage: 70,
-    range: 8,
+    range: 16,            // Doubled from 8 to 16 tiles
     cooldown: 2000,       // 2 seconds
     projectileSpeed: 8,   // Slow grenade arc
     projectileType: 'grenade',
@@ -349,7 +349,7 @@ export const WEAPON_CONFIGS: Record<ClassType, WeaponConfig> = {
   buckshot: {
     type: 'combat-shotgun',
     damage: 25,           // Per pellet
-    range: 6,
+    range: 6,             // Kept short-range as intended
     cooldown: 1200,       // 1.2 seconds
     projectileSpeed: 12,
     projectileType: 'pellet',
@@ -389,9 +389,9 @@ export const GAME_CONSTANTS = {
   MAX_SPEED: 10.0,        // Max units per second
   MAX_ANGLE_DELTA: Math.PI, // Max radians per input
   
-  // Map bounds (for simple rectangular arena)
+  // Map bounds (updated for new tactical arena)
   MAP_BOUNDS: {
-    minX: -20, maxX: 20,
-    minY: -20, maxY: 20
+    minX: 0, maxX: 30,
+    minY: 0, maxY: 30
   }
 } as const;

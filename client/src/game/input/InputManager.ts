@@ -216,14 +216,16 @@ export class InputManager {
       return;
     }
     
-    // Use movementX/Y for proper mouse delta in pointer lock
-    this.mouseState.deltaX = event.movementX * this.config.mouseSensitivity;
-    this.mouseState.deltaY = event.movementY * this.config.mouseSensitivity;
+    // ACCUMULATE mouse deltas instead of overwriting them
+    // This prevents loss when multiple mouse events occur between game frames
+    this.mouseState.deltaX += event.movementX * this.config.mouseSensitivity;
+    this.mouseState.deltaY += event.movementY * this.config.mouseSensitivity;
     
-    if (Math.abs(this.mouseState.deltaX) > 0.1) {
-      console.log('🖱️ [MOUSE] Movement detected', {
-        deltaX: this.mouseState.deltaX,
-        deltaY: this.mouseState.deltaY
+    if (Math.abs(event.movementX) > 0.1) {
+      console.log('🖱️ [MOUSE] Movement accumulated', {
+        eventDelta: event.movementX,
+        totalDeltaX: this.mouseState.deltaX,
+        totalDeltaY: this.mouseState.deltaY
       });
     }
   };

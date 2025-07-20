@@ -11,7 +11,7 @@ import { SimpleConnectionManager } from '../services/connection/SimpleConnection
 import { SimpleAuth } from '../services/auth/SimpleAuth.js';
 import { verifyToken } from '../utils/jwt.js';
 import { MatchManager, type MatchManagerCallbacks } from '../game/match/MatchManager.js';
-import { createArenaMap } from '../game/maps/ArenaMap.js';
+import { createLargeArenaMap } from '../game/maps/ArenaMap.js';
 import { GAME_CONSTANTS } from '../game/types.js';
 import type { ClassType } from '@dueled/shared';
 
@@ -374,10 +374,10 @@ export class SimpleGameHandler {
         logger.info(`🎯 [DEBUG] Starting MatchManager creation for match ${data.matchId}`);
         
         try {
-          // Create arena map
-          logger.info(`🗺️ [DEBUG] Creating arena map`);
-          const mapData = createArenaMap();
-          logger.info(`✅ [DEBUG] Arena map created with ${mapData.walls.length} walls`);
+          // Create tactical arena map
+          logger.info(`🗺️ [DEBUG] Creating tactical arena map`);
+          const mapData = createLargeArenaMap();
+          logger.info(`✅ [DEBUG] Tactical arena map created with ${mapData.walls.length} walls`);
           
           // Create MatchManager with player data
           logger.info(`🏗️ [DEBUG] Instantiating MatchManager`);

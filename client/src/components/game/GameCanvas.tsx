@@ -172,9 +172,22 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
    * Setup canvas dimensions and resize handling
    */
   const setupCanvas = (canvas: HTMLCanvasElement) => {
+    // Fixed internal resolution for better performance
+    const INTERNAL_WIDTH = 1280;
+    const INTERNAL_HEIGHT = 720;
+    
     const resizeCanvas = () => {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
+      // Set internal resolution (what we actually render to)
+      canvas.width = INTERNAL_WIDTH;
+      canvas.height = INTERNAL_HEIGHT;
+      
+      // Scale canvas to fill screen via CSS
+      canvas.style.width = window.innerWidth + 'px';
+      canvas.style.height = window.innerHeight + 'px';
+      
+      // Ensure crisp scaling (no blur)
+      canvas.style.imageRendering = 'pixelated';
+      canvas.style.imageRendering = 'crisp-edges';
     };
     
     resizeCanvas();

@@ -63,7 +63,7 @@ export class RoundSystem {
   
   // Constants
   private readonly ROUND_DURATION = 60; // seconds
-  private readonly INTERMISSION_DURATION = 10; // seconds
+  private readonly INTERMISSION_DURATION = 2.5; // seconds (reduced from 10s)
   private readonly COUNTDOWN_DURATION = 3; // seconds (3-2-1)
   private readonly ROUNDS_TO_WIN = 3;
   private readonly MAX_ROUNDS = 5;
@@ -347,6 +347,7 @@ export class RoundSystem {
         roundsPlayed: roundNumber
       });
       this.completeMatch();
+      // No round end callback - match is ending, will show match end overlay instead
     }
     // Check for max rounds failsafe (only after all 5 rounds completed)
     else if (updatedMatchState.currentRound > this.MAX_ROUNDS) {
@@ -358,15 +359,16 @@ export class RoundSystem {
         totalRoundsPlayed: this.MAX_ROUNDS
       });
       this.completeMatch();
+      // No round end callback - match is ending, will show match end overlay instead
     }
     // Continue to next round
     else {
       logger.info(`▶️ CONTINUING TO NEXT ROUND: Round ${roundNumber} complete. Score: ${score1}-${score2}.`);
       this.startIntermission();
+      
+      // Only notify round end callback when match continues (prevents overlay conflict)
+      this.callbacks.onRoundEnd?.(roundResult);
     }
-    
-    // Notify callback
-    this.callbacks.onRoundEnd?.(roundResult);
     
     logger.info(`Round ${roundNumber} ended`, {
       winnerId,

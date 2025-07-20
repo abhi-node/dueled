@@ -16,7 +16,8 @@ import { MovementCalculator } from '@dueled/shared';
 import type { 
   InputConfig,
   InputCommand,
-  MouseState
+  MouseState,
+  KeyState
 } from '../types/InputTypes.js';
 import { DEFAULT_INPUT_CONFIG } from '../types/InputTypes.js';
 import type {
@@ -230,10 +231,14 @@ export class GameEngine {
   private tick(deltaTime: number): void {
     // Only process input if we're connected and in a match
     if (this.gameSocket.isInMatch() && this.inputManager.isInputActive()) {
-      this.processInput();
+      // Read input state ONCE per frame to avoid double mouse consumption
+      const keyState = this.inputManager.getKeyState();
+      const mouseState = this.inputManager.getMouseState(); // Clears mouse deltas
+      
+      this.processInput(keyState, mouseState);
       
       // Apply continuous movement prediction every frame for smoothness
-      this.applyContinuousMovement(deltaTime);
+      this.applyContinuousMovement(deltaTime, keyState);
     }
     
     // Update game state (prediction, interpolation, etc.)
@@ -252,14 +257,14 @@ export class GameEngine {
    * 2. Generates input commands for server
    * 3. Applies local movement prediction
    * 4. Queues commands for network transmission
+   * 
+   * @param keyState - Current keyboard input state
+   * @param mouseState - Current mouse input state (already consumed from InputManager)
    */
-  private processInput(): void {
+  private processInput(keyState: Readonly<KeyState>, mouseState: Readonly<MouseState>): void {
     if (!this.isMovementInitialized) {
       return;
     }
-    
-    const keyState = this.inputManager.getKeyState();
-    const mouseState = this.inputManager.getMouseState();
     
     // Handle mouse look immediately (client authoritative)
     this.processMouseLook(mouseState);
@@ -313,12 +318,10 @@ export class GameEngine {
    * 
    * @param deltaTime - Time since last frame in milliseconds
    */
-  private applyContinuousMovement(deltaTime: number): void {
+  private applyContinuousMovement(deltaTime: number, keyState: Readonly<KeyState>): void {
     if (!this.isMovementInitialized) {
       return;
     }
-
-    const keyState = this.inputManager.getKeyState();
     
     // Convert key states to movement input
     let forward = 0;

@@ -35,15 +35,17 @@ export interface RaycastHit {
  */
 export class CollisionSystem {
   private walls: WallDefinition[] = [];
-  private mapBounds = GAME_CONSTANTS.MAP_BOUNDS;
+  private mapBounds: { minX: number; maxX: number; minY: number; maxY: number };
   
-  // Player collision radius (for circle-wall collision)
-  private readonly PLAYER_RADIUS = 0.4;
+  // Player collision radius (for circle-wall collision) - increased for better hitbox and sprite support
+  private readonly PLAYER_RADIUS = 0.8;
   private readonly PROJECTILE_RADIUS = 0.1;
   
-  constructor(walls: WallDefinition[]) {
+  constructor(walls: WallDefinition[], mapBounds?: { minX: number; maxX: number; minY: number; maxY: number }) {
     this.walls = [...walls];
-    logger.info(`CollisionSystem initialized with ${walls.length} walls`);
+    // Use provided map bounds or fall back to game constants
+    this.mapBounds = mapBounds || GAME_CONSTANTS.MAP_BOUNDS;
+    logger.info(`CollisionSystem initialized with ${walls.length} walls and bounds:`, this.mapBounds);
   }
   
   // ============================================================================
@@ -519,9 +521,24 @@ export class CollisionSystem {
   }
   
   /**
+   * Update map bounds (for dynamic maps)
+   */
+  updateMapBounds(bounds: { minX: number; maxX: number; minY: number; maxY: number }): void {
+    this.mapBounds = { ...bounds };
+    logger.info(`CollisionSystem updated with new bounds:`, this.mapBounds);
+  }
+  
+  /**
    * Get all walls (read-only)
    */
   getWalls(): readonly WallDefinition[] {
     return this.walls;
+  }
+  
+  /**
+   * Get current map bounds (read-only)
+   */
+  getMapBounds(): { minX: number; maxX: number; minY: number; maxY: number } {
+    return { ...this.mapBounds };
   }
 }

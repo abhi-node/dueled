@@ -84,8 +84,8 @@ export class MatchManager {
     // Initialize game state
     this.gameState = new GameStateManager(matchId, player1.id, player2.id, mapData);
     
-    // Initialize physics systems
-    this.collisionSystem = new CollisionSystem(mapData.walls);
+    // Initialize physics systems with dynamic map bounds
+    this.collisionSystem = new CollisionSystem(mapData.walls, mapData.bounds);
     this.projectilePhysics = new ProjectilePhysics();
     
     // Initialize movement calculator with server config

@@ -16,6 +16,7 @@ import type { ClientGameStateManager } from '../core/GameState.js';
 import { RENDER_CONSTANTS } from '../types/GameConstants.js';
 import { distance, angleFromTo, normalizeAngle, Vector2 } from '../utils/MathUtils.js';
 import type { HitscanFiredEvent } from '@dueled/shared';
+import { TextureManager, type RGBAColor } from './TextureManager.js';
 
 interface RaycastHit {
   distance: number;
@@ -23,6 +24,8 @@ interface RaycastHit {
   textureX: number;
   wallId: string;
   isVertical: boolean;
+  textureU: number; // U coordinate for texture mapping (0-63)
+  wall: WallDefinition; // Reference to the hit wall for texture access
 }
 
 interface SpriteRender {
@@ -47,6 +50,7 @@ export class RaycastRenderer {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
   private gameStateManager: ClientGameStateManager | null = null;
+  private textureManager: TextureManager;
   
   // Simple hitscan tracers
   private activeTracers: Map<string, HitscanTracer> = new Map();
@@ -66,8 +70,10 @@ export class RaycastRenderer {
   
   // Color scheme
   private colors = {
-    ceiling: '#2a2a3a',
-    floor: '#1a1a2a',
+    skyTop: '#5a7a9a',      // Bright blue-gray at zenith
+    skyHorizon: '#3a4a5a',  // Darker blue-gray at horizon
+    ceiling: '#3a4a5a',     // For compatibility with existing code
+    floor: '#2a2a3a',       // Slightly lighter floor
     wall: '#4a4a5a',
     wallDark: '#3a3a4a',
     player: '#ff4444',
@@ -83,11 +89,17 @@ export class RaycastRenderer {
     }
     this.ctx = ctx;
     
+    // Initialize texture manager
+    this.textureManager = new TextureManager();
+    
     // Initialize dimensions
     this.updateDimensions();
     
     // Pre-calculate values
     this.precalculateValues();
+    
+    // Preload default textures
+    this.preloadTextures();
     
     console.log('RaycastRenderer initialized', {
       width: this.width,
@@ -95,6 +107,26 @@ export class RaycastRenderer {
       rayCount: this.rayCount,
       fov: this.fov
     });
+  }
+  
+  /**
+   * Get the texture manager for external texture loading
+   */
+  getTextureManager(): TextureManager {
+    return this.textureManager;
+  }
+  
+  /**
+   * Preload essential wall textures
+   */
+  private async preloadTextures(): Promise<void> {
+    try {
+      console.log('🖼️ Preloading wall textures...');
+      await this.textureManager.preloadTextures(['wall_metal']);
+      console.log('✅ Wall textures preloaded successfully');
+    } catch (error) {
+      console.warn('⚠️ Some textures failed to load:', error);
+    }
   }
   
   // ============================================================================
@@ -254,6 +286,9 @@ export class RaycastRenderer {
             const hitDistanceAlongWall = Math.sqrt(hitVector.x * hitVector.x + hitVector.y * hitVector.y);
             const textureX = Math.max(0, Math.min(1, (hitDistanceAlongWall / wallLength) % 1));
             
+            // Calculate texture U coordinate for 64×64 textures (0-63 range with tiling)
+            const textureU = (hitDistanceAlongWall * 64 / wallLength) % 64;
+            
             // Determine wall orientation more reliably
             const isVertical = Math.abs(wallVector.x) > Math.abs(wallVector.y);
             
@@ -262,7 +297,9 @@ export class RaycastRenderer {
               wallHeight: 0, // Calculated in renderWalls with fisheye correction
               textureX,
               wallId: wall.id,
-              isVertical
+              isVertical,
+              textureU,
+              wall
             };
           }
         }
@@ -298,16 +335,14 @@ export class RaycastRenderer {
     const shadingFactor = Math.max(0.1, 1 - normalizedDistance * normalizedDistance); // Quadratic falloff
     const wallColor = this.applyShading(baseColor, shadingFactor);
     
-    // Render ceiling (above wall)
+    // Render ceiling (above wall) with gradient sky
     if (screenWallTop > 0) {
-      this.ctx.fillStyle = this.colors.ceiling;
-      this.ctx.fillRect(x, 0, sliceWidth, screenWallTop);
+      this.renderGradientSky(x, sliceWidth, 0, screenWallTop);
     }
     
-    // Render wall (main section)
+    // Render wall (main section) with texture sampling
     if (wallRenderHeight > 0) {
-      this.ctx.fillStyle = wallColor;
-      this.ctx.fillRect(x, screenWallTop, sliceWidth, wallRenderHeight);
+      this.renderTexturedWallSlice(x, sliceWidth, screenWallTop, screenWallBottom, wallTop, wallBottom, clampedWallHeight, hit, shadingFactor);
     }
     
     // Render floor (below wall)
@@ -317,18 +352,77 @@ export class RaycastRenderer {
     }
   }
   
+  /**
+   * Render a wall slice with optimized texture column stretching
+   */
+  private renderTexturedWallSlice(
+    x: number, 
+    sliceWidth: number, 
+    screenWallTop: number, 
+    screenWallBottom: number,
+    wallTop: number,
+    wallBottom: number,
+    wallHeight: number,
+    hit: RaycastHit,
+    shadingFactor: number
+  ): void {
+    const wall = hit.wall;
+    const textureId = wall.textureId;
+    
+    // Get texture image for fast drawImage operation
+    const wallTexture = textureId ? this.textureManager.getTextureImage(textureId) : null;
+    
+    if (wallTexture && hit.textureX !== undefined) {
+      // Convert texture coordinate to pixel position (0-63 range)
+      const srcX = Math.floor(hit.textureX * (wallTexture.width - 1));
+      
+      // Apply distance shading using canvas global composite operation
+      const originalAlpha = this.ctx.globalAlpha;
+      this.ctx.globalAlpha = shadingFactor;
+      
+      // Draw single column from texture, stretched to wall height
+      this.ctx.drawImage(
+        wallTexture,
+        srcX, 0, 1, wallTexture.height,                    // Source: 1px wide column
+        x, screenWallTop, sliceWidth, screenWallBottom - screenWallTop  // Dest: stretched to screen
+      );
+      
+      // Restore original alpha
+      this.ctx.globalAlpha = originalAlpha;
+      
+    } else {
+      // Fallback to solid color if no texture or texture not loaded
+      const baseColor = hit.isVertical ? this.colors.wall : this.colors.wallDark;
+      const wallColor = this.applyShading(baseColor, shadingFactor);
+      this.ctx.fillStyle = wallColor;
+      this.ctx.fillRect(x, screenWallTop, sliceWidth, screenWallBottom - screenWallTop);
+    }
+  }
+  
   private renderSkySlice(rayIndex: number): void {
     // Use same pixel-perfect coordinates as wall slices
     const x = Math.floor((rayIndex / this.rayCount) * this.width);
     const sliceWidth = Math.ceil(this.width / this.rayCount);
     
-    // Render ceiling (top half)
-    this.ctx.fillStyle = this.colors.ceiling;
-    this.ctx.fillRect(x, 0, sliceWidth, this.halfHeight);
+    // Render gradient sky (top half)
+    this.renderGradientSky(x, sliceWidth, 0, this.halfHeight);
     
     // Render floor (bottom half)
     this.ctx.fillStyle = this.colors.floor;
     this.ctx.fillRect(x, this.halfHeight, sliceWidth, this.halfHeight);
+  }
+  
+  /**
+   * Render gradient sky from top (bright) to horizon (dark)
+   */
+  private renderGradientSky(x: number, width: number, startY: number, endY: number): void {
+    // Create linear gradient for this slice
+    const gradient = this.ctx.createLinearGradient(0, startY, 0, endY);
+    gradient.addColorStop(0, this.colors.skyTop);     // Bright at top
+    gradient.addColorStop(1, this.colors.skyHorizon); // Darker at horizon
+    
+    this.ctx.fillStyle = gradient;
+    this.ctx.fillRect(x, startY, width, endY - startY);
   }
   
   // ============================================================================
@@ -606,7 +700,7 @@ export class RaycastRenderer {
     }
     
     if (settings.renderDistance !== undefined) {
-      this.renderDistance = Math.max(5, Math.min(50, settings.renderDistance)) as typeof RENDER_CONSTANTS.RENDER_DISTANCE;
+      this.renderDistance = Math.max(5, Math.min(100, settings.renderDistance)) as typeof RENDER_CONSTANTS.RENDER_DISTANCE;
     }
     
     if (settings.rayCount !== undefined) {

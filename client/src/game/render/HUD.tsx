@@ -12,6 +12,7 @@ import type {
 } from '../types/GameTypes.js';
 import { getClassConfig } from '@dueled/shared';
 import type { ConnectionInfo } from '../types/NetworkTypes.js';
+import { Minimap } from './Minimap.js';
 
 interface HUDProps {
   gameState: ClientGameState | null;
@@ -88,9 +89,20 @@ export const HUD: React.FC<HUDProps> = ({
         <ConnectionStatus connectionInfo={connectionInfo} />
       </div>
       
-      {/* Debug Info */}
-      {showDebug && (
+      {/* Minimap */}
+      {gameState && (
         <div className="absolute bottom-4 right-4">
+          <Minimap 
+            gameState={gameState}
+            size={120}
+            className="rounded-lg overflow-hidden"
+          />
+        </div>
+      )}
+      
+      {/* Debug Info (positioned to avoid minimap overlap) */}
+      {showDebug && (
+        <div className="absolute bottom-32 right-4">
           <DebugPanel 
             gameState={gameState}
             connectionInfo={connectionInfo}

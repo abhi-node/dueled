@@ -47,12 +47,12 @@ export const GAME_CONSTANTS = {
 export const RENDER_CONSTANTS = {
   // Raycasting
   FOV: Math.PI / 4,           // 45 degrees field of view (narrower for room feel)
-  RENDER_DISTANCE: 15,        // Reduced render distance for tighter spaces
+  RENDER_DISTANCE: 50,        // Increased render distance for full arena visibility
   RAY_COUNT: 160,             // Number of rays to cast (reduced for pixel art performance)
   
   // Scale factors for room-like feel
-  WALL_HEIGHT_SCALE: 1.5,     // Makes walls appear taller relative to distance
-  PERSPECTIVE_SCALE: 0.8,     // Adjusts overall world scale feeling
+  WALL_HEIGHT_SCALE: 2.5,     // Makes walls appear much taller relative to distance
+  PERSPECTIVE_SCALE: 1.2,     // Makes world feel larger and more spacious
   
   // Performance
   TARGET_FPS: 60,             // Target client FPS
