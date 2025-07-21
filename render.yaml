@@ -9,6 +9,7 @@ services:
     name: dueled-redis
     plan: starter
     maxmemoryPolicy: allkeys-lru
+    ipAllowList: []
 
   - type: web
     name: dueled-backend
