@@ -437,20 +437,18 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     
     // Send exit_match event to server to properly terminate the match
     if (gameEngineRef.current && gameEngineRef.current.isConnected()) {
-      // Send exit event to server - this will trigger match termination
-      // The server will send match_end to all players and clean up resources
-      gameEngineRef.current.getConnectionInfo(); // Ensure we're connected
+      // Send exit event to server BEFORE disconnecting
+      // This allows the server to handle match termination cleanly while all WebSockets are still active
+      gameEngineRef.current.sendExitMatch();
       
-      // TODO: Add proper exit_match event to GameEngine/GameSocket
-      // For now, disconnect with a specific reason that the server can handle
-      gameEngineRef.current.disconnectFromServer('exit_match');
+      console.log('📤 [DEBUG] Exit match event sent, server will handle disconnection');
     }
     
     // The onGameEnd will be called when we receive the match_end event from server
     // But also call it as fallback in case something goes wrong
     setTimeout(() => {
       onGameEnd?.();
-    }, 1000);
+    }, 2000); // Increased timeout to allow server processing
   }, [onGameEnd]);
   
   // ============================================================================

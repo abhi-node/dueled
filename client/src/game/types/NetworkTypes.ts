@@ -24,6 +24,7 @@ export interface ClientToServerEvents {
   
   // Match lifecycle
   'player_ready': (data: { playerId: string }) => void;
+  'exit_match': (data: { playerId: string }) => void;
   'player_disconnect': (data: { reason: string }) => void;
   'explicit_disconnect': (data: { reason: string }) => void;
   

@@ -785,6 +785,13 @@ export class GameEngine {
   sendPlayerReady(): void {
     this.gameSocket.sendPlayerReady();
   }
+
+  /**
+   * Send exit match signal to server
+   */
+  sendExitMatch(): void {
+    this.gameSocket.sendExitMatch();
+  }
   
   /**
    * Get input statistics

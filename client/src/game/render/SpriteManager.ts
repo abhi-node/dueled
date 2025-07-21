@@ -95,7 +95,9 @@ export class SpriteManager {
     row: number,
     col: number,
     destX: number,
-    destY: number
+    destY: number,
+    destWidth?: number,
+    destHeight?: number
   ): boolean {
     const spriteSheet = this.spriteSheets.get(classType);
     
@@ -106,13 +108,17 @@ export class SpriteManager {
     
     const frameCoords = this.getFrameCoordinates(row, col);
     
+    // Use provided dimensions or default to frame size
+    const finalWidth = destWidth || SpriteManager.FRAME_SIZE;
+    const finalHeight = destHeight || SpriteManager.FRAME_SIZE;
+    
     try {
-      // Draw frame from sprite sheet to canvas
+      // Draw frame from sprite sheet to canvas with proper scaling
       ctx.drawImage(
         spriteSheet,
-        frameCoords.x, frameCoords.y, frameCoords.width, frameCoords.height, // Source
-        destX - SpriteManager.FRAME_SIZE / 2, destY - SpriteManager.FRAME_SIZE / 2, // Destination (centered)
-        SpriteManager.FRAME_SIZE, SpriteManager.FRAME_SIZE // Size
+        frameCoords.x, frameCoords.y, frameCoords.width, frameCoords.height, // Source (always 48x48)
+        destX - finalWidth / 2, destY - finalHeight / 2, // Destination (centered)
+        finalWidth, finalHeight // Scaled size based on distance
       );
       return true;
     } catch (error) {
@@ -128,9 +134,11 @@ export class SpriteManager {
     ctx: CanvasRenderingContext2D,
     classType: ClassType,
     x: number,
-    y: number
+    y: number,
+    width?: number,
+    height?: number
   ): boolean {
-    return this.drawFrame(ctx, classType, 0, 0, x, y);
+    return this.drawFrame(ctx, classType, 0, 0, x, y, width, height);
   }
   
   /**

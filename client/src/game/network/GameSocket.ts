@@ -374,6 +374,21 @@ export class GameSocket {
     
     this.socket!.emit('player_ready', { playerId: this.connectionInfo.playerId });
   }
+
+  /**
+   * Send exit match event to server (before disconnecting)
+   */
+  sendExitMatch(): void {
+    if (!this.isConnected() || !this.connectionInfo.playerId) {
+      console.warn('Cannot send exit match: not authenticated');
+      return;
+    }
+
+    console.log('📤 Sending exit_match event to server');
+    this.socket!.emit('exit_match', { 
+      playerId: this.connectionInfo.playerId 
+    });
+  }
   
   /**
    * Send ping to measure latency

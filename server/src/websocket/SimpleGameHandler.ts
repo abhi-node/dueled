@@ -158,6 +158,7 @@ export class SimpleGameHandler {
       
       // Connection management
       socket.on('heartbeat', () => this.handleHeartbeat(socket));
+      socket.on('exit_match', (data) => this.handleExitMatch(socket, data));
       socket.on('explicit_disconnect', (data) => this.handleExplicitDisconnect(socket, data));
       socket.on('player_disconnect', (data) => this.handlePlayerDisconnect(socket, data));
       socket.on('disconnect', (reason) => this.handleDisconnect(socket, reason).catch(error => {
@@ -675,18 +676,22 @@ export class SimpleGameHandler {
   }
   
   /**
-   * Broadcast event to all players in a match
+   * Broadcast event to all players in a match (with optional exclusions)
    */
-  private broadcastToMatch(matchId: string, event: string, data: any): void {
+  private broadcastToMatch(matchId: string, event: string, data: any, excludePlayerIds: string[] = []): void {
     const activeMatch = this.activeMatches.get(matchId);
     if (!activeMatch) {
       logger.warn(`Cannot broadcast ${event} to match ${matchId}: match not found`);
       return;
     }
     
-    logger.info(`📤 Broadcasting ${event} to match ${matchId} players:`, activeMatch.players);
+    const targetPlayers = activeMatch.players.filter(playerId => !excludePlayerIds.includes(playerId));
+    logger.info(`📤 Broadcasting ${event} to match ${matchId} players:`, targetPlayers);
+    if (excludePlayerIds.length > 0) {
+      logger.info(`🚫 Excluding players from ${event} broadcast:`, excludePlayerIds);
+    }
     
-    for (const playerId of activeMatch.players) {
+    for (const playerId of targetPlayers) {
       const playerSocket = this.playerSockets.get(playerId);
       if (playerSocket && playerSocket.socket.connected) {
         logger.info(`  ✅ Sent ${event} to player ${playerId} (${playerSocket.username})`);
@@ -758,6 +763,82 @@ export class SimpleGameHandler {
       // this.gameStateConnectionManager.updatePlayerHeartbeat(playerId!);
       
       socket.emit('heartbeat_ack');
+    }
+  }
+
+  /**
+   * Handle exit match event from client (clean exit before disconnecting)
+   */
+  private async handleExitMatch(socket: Socket, data: { playerId?: string }): Promise<void> {
+    const playerId = this.getPlayerIdFromSocket(socket);
+    
+    if (!playerId) {
+      logger.warn(`Exit match from unknown socket: ${socket.id}`);
+      return;
+    }
+
+    const playerSocket = this.playerSockets.get(playerId);
+    if (!playerSocket) {
+      logger.warn(`Exit match from unregistered player: ${playerId}`);
+      return;
+    }
+
+    const matchId = playerSocket.matchId;
+    
+    logger.info(`🚪 Player ${playerId} requested match exit from match ${matchId}`);
+
+    if (matchId) {
+      try {
+        const matchManager = this.matchManagers.get(matchId);
+        if (matchManager) {
+          // Determine the winner (the other player)
+          const activeMatch = this.activeMatches.get(matchId);
+          const otherPlayerId = activeMatch?.players.find(pId => pId !== playerId);
+          
+          if (otherPlayerId) {
+            logger.info(`🏆 Ending match ${matchId} with winner: ${otherPlayerId} (exit requested)`);
+            
+            // Force end the match - this will trigger onMatchEnd callback which broadcasts match_end
+            matchManager.forceEnd(otherPlayerId, 'player_exit');
+            
+            // Give a small delay to ensure match_end event is sent before we disconnect the exiting player
+            setTimeout(async () => {
+              try {
+                logger.info(`🔌 Disconnecting exiting player ${playerId} after match termination`);
+                await this.handleDisconnect(socket, 'exit_match');
+              } catch (error) {
+                logger.error(`❌ Error disconnecting exiting player ${playerId}:`, error);
+              }
+            }, 200);
+            
+          } else {
+            // No other player, just end the match
+            logger.info(`🏆 Ending match ${matchId} (no opponent found)`);
+            matchManager.forceEnd(playerId, 'player_exit');
+            
+            // Disconnect after a short delay
+            setTimeout(async () => {
+              try {
+                await this.handleDisconnect(socket, 'exit_match');
+              } catch (error) {
+                logger.error(`❌ Error disconnecting player ${playerId}:`, error);
+              }
+            }, 200);
+          }
+        } else {
+          logger.warn(`❌ No MatchManager found for match ${matchId} during exit`);
+          // Still disconnect the player
+          await this.handleDisconnect(socket, 'exit_match');
+        }
+      } catch (error) {
+        logger.error(`❌ Error handling exit match for ${playerId}:`, error);
+        // Still disconnect the player
+        await this.handleDisconnect(socket, 'exit_match');
+      }
+    } else {
+      // Player not in match, just disconnect
+      logger.info(`🚪 Player ${playerId} exit requested but not in match - disconnecting`);
+      await this.handleDisconnect(socket, 'exit_match');
     }
   }
 
@@ -991,56 +1072,84 @@ export class SimpleGameHandler {
 
     logger.info(`🔌 Processing disconnection for ${playerId}: ${reason}`);
 
-    // Handle special case: exit_match should terminate the entire match
-    if (matchId && reason.toLowerCase().includes('exit_match')) {
-      logger.info(`🚪 Player ${playerId} clicked exit - terminating entire match ${matchId}`);
-      
-      const matchManager = this.matchManagers.get(matchId);
-      if (matchManager) {
-        // Determine the winner (the other player)
-        const activeMatch = this.activeMatches.get(matchId);
-        const otherPlayerId = activeMatch?.players.find(pId => pId !== playerId);
+    try {
+      // Handle special case: exit_match should terminate the entire match
+      if (matchId && reason.toLowerCase().includes('exit_match')) {
+        logger.info(`🚪 Player ${playerId} clicked exit - terminating entire match ${matchId}`);
         
-        if (otherPlayerId) {
-          // Force end the match immediately with the other player as winner
-          // This will trigger onMatchEnd callback which handles cleanup and notifications
-          matchManager.forceEnd(otherPlayerId, 'player_exit');
-        } else {
-          // No other player, just end the match with the current player as winner (shouldn't happen)
-          matchManager.forceEnd(playerId, 'player_exit');
+        try {
+          const matchManager = this.matchManagers.get(matchId);
+          if (matchManager) {
+            // Determine the winner (the other player)
+            const activeMatch = this.activeMatches.get(matchId);
+            const otherPlayerId = activeMatch?.players.find(pId => pId !== playerId);
+            
+            if (otherPlayerId) {
+              // IMPORTANT: Send match_end to remaining players BEFORE cleaning up the exiting player
+              // This ensures the remaining player gets the match_end event through their active WebSocket
+              logger.info(`🏆 Ending match ${matchId} with winner: ${otherPlayerId}`);
+              
+              // Force end the match - this will trigger onMatchEnd callback which broadcasts match_end
+              // to all players in the match (including the remaining player)
+              matchManager.forceEnd(otherPlayerId, 'player_exit');
+              
+              // Give a small delay to ensure match_end event is sent before we clean up
+              await new Promise(resolve => setTimeout(resolve, 100));
+              
+            } else {
+              // No other player, just end the match with the current player as winner (shouldn't happen)
+              logger.info(`🏆 Ending match ${matchId} with winner: ${playerId} (no opponent found)`);
+              matchManager.forceEnd(playerId, 'player_exit');
+            }
+          } else {
+            logger.warn(`❌ No MatchManager found for match ${matchId} during exit`);
+          }
+        } catch (error) {
+          logger.error(`❌ Error force-ending match ${matchId} during exit:`, error);
+          // Continue with normal disconnection cleanup even if force end fails
+        }
+      } else if (matchId) {
+        // Normal disconnection handling
+        const matchManager = this.matchManagers.get(matchId);
+        if (matchManager) {
+          matchManager.disconnectPlayer(playerId);
+        }
+        
+        // Notify other players in match about final disconnection
+        this.broadcastToMatch(matchId, 'player_disconnected', {
+          playerId,
+          reason,
+          isFinal: true
+        });
+
+        // Resume match if it was paused
+        if (matchManager && this.isMatchActive(matchId)) {
+          logger.info(`▶️ Resuming match ${matchId} after player disconnection`);
+          // TODO: Implement match resume functionality
+          // matchManager.resumeMatch();
         }
       }
-    } else if (matchId) {
-      // Normal disconnection handling
-      const matchManager = this.matchManagers.get(matchId);
-      if (matchManager) {
-        matchManager.disconnectPlayer(playerId);
-      }
       
-      // Notify other players in match about final disconnection
-      this.broadcastToMatch(matchId, 'player_disconnected', {
-        playerId,
-        reason,
-        isFinal: true
-      });
-
-      // Resume match if it was paused
-      if (matchManager && this.isMatchActive(matchId)) {
-        logger.info(`▶️ Resuming match ${matchId} after player disconnection`);
-        // TODO: Implement match resume functionality
-        // matchManager.resumeMatch();
+      // Clean up player resources AFTER match termination
+      await this.simpleConnectionManager.removeConnection(playerId);
+      await this.simpleMatchmaking.leaveQueue(playerId);
+      this.removePlayerSocket(playerId);
+      
+      // Clean up grace period tracking
+      this.cleanupGracePeriod(playerId);
+      
+      logger.info(`🧹 Player ${playerId} completely disconnected and cleaned up`);
+    } catch (error) {
+      logger.error(`❌ Error during disconnection processing for ${playerId}:`, error);
+      
+      // Ensure cleanup happens even if other operations fail
+      try {
+        this.removePlayerSocket(playerId);
+        this.cleanupGracePeriod(playerId);
+      } catch (cleanupError) {
+        logger.error(`❌ Error during emergency cleanup for ${playerId}:`, cleanupError);
       }
     }
-    
-    // Clean up player resources
-    await this.simpleConnectionManager.removeConnection(playerId);
-    await this.simpleMatchmaking.leaveQueue(playerId);
-    this.removePlayerSocket(playerId);
-    
-    // Clean up grace period tracking
-    this.cleanupGracePeriod(playerId);
-    
-    logger.info(`🧹 Player ${playerId} completely disconnected and cleaned up`);
   }
 
   /**

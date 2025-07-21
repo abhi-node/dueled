@@ -573,12 +573,14 @@ export class RaycastRenderer {
     
     // Render based on sprite type
     if (sprite.type === 'player' && sprite.classType) {
-      // Render player sprite
+      // Render player sprite with proper distance-based scaling
       const success = this.spriteManager.drawPlayerSprite(
         this.ctx,
         sprite.classType,
         screenX,
-        this.halfHeight
+        this.halfHeight,
+        spriteWidth,
+        spriteHeight
       );
       
       // Fallback to circle if sprite fails to render
