@@ -5,7 +5,12 @@
  * Used by both client and server for consistent gameplay mechanics.
  */
 
-import { ClassType } from '../types/index.js';
+import { 
+  ClassType
+} from '../types/index.js';
+import type { 
+  ClassTypeValue
+} from '../types/index.js';
 
 // Base interfaces
 export interface ClassStats {
@@ -45,9 +50,10 @@ export interface WeaponConfig {
 }
 
 export interface ClassConfig {
-  id: ClassType;
+  id: ClassTypeValue;
   name: string;
   description: string;
+  icon: string;
   stats: ClassStats;
   weapon: WeaponConfig;
   abilities: {
@@ -72,6 +78,7 @@ export const GUNSLINGER_CONFIG: ClassConfig = {
   id: ClassType.GUNSLINGER,
   name: 'Gunslinger',
   description: 'A precision marksman with instant-hit weapons. Excels at long-range combat with high accuracy and mobility.',
+  icon: 'gunslinger',
   
   stats: {
     health: 80,       // Glass cannon - low health
@@ -116,6 +123,7 @@ export const DEMOLITIONIST_CONFIG: ClassConfig = {
   id: ClassType.DEMOLITIONIST,
   name: 'Demolitionist',
   description: 'An explosive specialist with area-of-effect weapons. Excels at area denial and dealing with multiple targets.',
+  icon: 'demolitionist',
   
   stats: {
     health: 150,      // Tank-like health
@@ -167,6 +175,7 @@ export const BUCKSHOT_CONFIG: ClassConfig = {
   id: ClassType.BUCKSHOT,
   name: 'Buckshot',
   description: 'A close-range specialist with devastating spread weapons. Excels in confined spaces and close-quarters combat.',
+  icon: 'buckshot',
   
   stats: {
     health: 120,      // Moderate health
@@ -212,7 +221,7 @@ export const BUCKSHOT_CONFIG: ClassConfig = {
 /**
  * Master configuration record for all classes
  */
-export const CLASS_CONFIGURATIONS: Record<ClassType, ClassConfig> = {
+export const CLASS_CONFIGURATIONS: Record<ClassTypeValue, ClassConfig> = {
   [ClassType.GUNSLINGER]: GUNSLINGER_CONFIG,
   [ClassType.DEMOLITIONIST]: DEMOLITIONIST_CONFIG,
   [ClassType.BUCKSHOT]: BUCKSHOT_CONFIG
@@ -221,20 +230,20 @@ export const CLASS_CONFIGURATIONS: Record<ClassType, ClassConfig> = {
 /**
  * Helper function to get class configuration by type
  */
-export function getClassConfig(classType: ClassType): ClassConfig {
+export function getClassConfig(classType: ClassTypeValue): ClassConfig {
   return CLASS_CONFIGURATIONS[classType];
 }
 
 /**
  * Get all available class types
  */
-export function getAvailableClasses(): ClassType[] {
-  return Object.values(ClassType);
+export function getAvailableClasses(): ClassTypeValue[] {
+  return Object.keys(CLASS_CONFIGURATIONS) as ClassTypeValue[];
 }
 
 /**
  * Validate if a class type is valid
  */
-export function isValidClassType(classType: string): classType is ClassType {
-  return Object.values(ClassType).includes(classType as ClassType);
+export function isValidClassType(classType: string): classType is ClassTypeValue {
+  return Object.values(ClassType).includes(classType as any);
 }

@@ -5,7 +5,7 @@
  * derived from server delta updates.
  */
 
-import type { ClassType } from '@dueled/shared';
+import type { ClassTypeValue } from '@dueled/shared';
 
 // ============================================================================
 // BASIC TYPES
@@ -27,7 +27,7 @@ export interface ClientPlayerState {
   // Identity
   id: string;
   username: string;
-  classType: ClassType;
+  classType: ClassTypeValue;
   
   // Transform
   position: Position;

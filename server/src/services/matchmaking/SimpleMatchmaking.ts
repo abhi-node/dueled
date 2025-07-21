@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { logger } from '../../utils/logger.js';
 import { simpleELO } from '../rating/SimpleELO.js';
-import { ClassType } from '@dueled/shared';
+import { ClassTypeValue } from '@dueled/shared';
 
 /**
  * SimpleMatchmaking - ELO-based matchmaking for 1v1 arena combat
@@ -27,7 +27,7 @@ export interface QueuedPlayer {
   playerId: string;
   username: string;
   rating: number;
-  classType: ClassType;
+  classType: ClassTypeValue;
   queuedAt: number;
   sessionId?: string;
 }

@@ -17,7 +17,7 @@ import { INPUT_CONSTANTS } from '../types/InputTypes.js';
 export class InputCommandGenerator {
   private sequenceCounter = 0;
   private lastMovementCommand: InputCommandData | null = null;
-  private lastLookCommand: InputCommandData | null = null;
+  // private lastLookCommand: InputCommandData | null = null; // For future use
   
   constructor() {
     this.sequenceCounter = 0;
@@ -117,20 +117,12 @@ export class InputCommandGenerator {
     return null;
   }
   
-  private isMovementCommandDifferent(newCommand: InputCommandData): boolean {
-    if (!this.lastMovementCommand) return true;
-    
-    return this.lastMovementCommand.forward !== newCommand.forward ||
-           this.lastMovementCommand.strafe !== newCommand.strafe ||
-           this.lastMovementCommand.sprint !== newCommand.sprint;
-  }
-  
   // ============================================================================
   // LOOK COMMANDS
   // ============================================================================
   
   private generateLookCommand(mouseState: MouseState, timestamp: number): InputCommand | null {
-    const { deltaX, deltaY } = mouseState;
+    const { deltaX } = mouseState;
     
     // Only send if there's meaningful mouse movement
     if (Math.abs(deltaX) < 0.001) {
@@ -152,7 +144,7 @@ export class InputCommandGenerator {
       angleDelta: clampedDelta
     };
     
-    this.lastLookCommand = commandData;
+    // this.lastLookCommand = commandData; // For future use
     return this.createCommand('look', timestamp, commandData);
   }
   
@@ -311,6 +303,6 @@ export class InputCommandGenerator {
   resetSequence(): void {
     this.sequenceCounter = 0;
     this.lastMovementCommand = null;
-    this.lastLookCommand = null;
+    // this.lastLookCommand = null; // For future use
   }
 }

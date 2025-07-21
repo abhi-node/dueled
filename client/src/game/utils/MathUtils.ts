@@ -12,7 +12,13 @@ import type { Position, Velocity } from '../types/GameTypes.js';
 // ============================================================================
 
 export class Vector2 {
-  constructor(public x: number, public y: number) {}
+  x: number;
+  y: number;
+  
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
   
   /**
    * Add another vector to this vector

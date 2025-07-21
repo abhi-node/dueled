@@ -12,13 +12,15 @@ export interface FrameCoordinates {
   height: number;
 }
 
-export type ClassType = 'gunslinger' | 'demolitionist' | 'buckshot';
+import type { ClassTypeValue } from '@dueled/shared';
+
+export type ClassType = ClassTypeValue;
 
 export class SpriteManager {
   // Sprite sheet constants
   private static readonly FRAME_SIZE = 48;
-  private static readonly GRID_SIZE = 4;
-  private static readonly SHEET_SIZE = SpriteManager.FRAME_SIZE * SpriteManager.GRID_SIZE; // 192x192
+  // private static readonly GRID_SIZE = 4; // For future animation support
+
   
   // Sprite sheet cache
   private spriteSheets: Map<string, HTMLImageElement> = new Map();

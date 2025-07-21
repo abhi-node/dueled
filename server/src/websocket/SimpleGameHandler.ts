@@ -13,7 +13,7 @@ import { verifyToken } from '../utils/jwt.js';
 import { MatchManager, type MatchManagerCallbacks } from '../game/match/MatchManager.js';
 import { createLargeArenaMap } from '../game/maps/ArenaMap.js';
 import { GAME_CONSTANTS } from '../game/types.js';
-import type { ClassType } from '@dueled/shared';
+import { type ClassTypeValue } from '@dueled/shared';
 import { GameStateAwareConnectionManager } from './GameStateAwareConnectionManager.js';
 import type { RoundState } from '../game/match/RoundSystem.js';
 import { getConnectionPolicyConfig, type ConnectionPolicyConfig } from '../config/ConnectionPolicies.js';
@@ -23,7 +23,7 @@ export interface PlayerSocket {
   socket: Socket;
   playerId: string;
   username?: string;
-  classType?: ClassType;
+  classType?: ClassTypeValue;
   matchId?: string;
   authenticated: boolean;
   lastHeartbeat: number;
@@ -88,7 +88,7 @@ export class SimpleGameHandler {
   private simpleAuth: SimpleAuth;
   
   // Game-state-aware connection management
-  private gameStateConnectionManager: GameStateAwareConnectionManager;
+  private gameStateConnectionManager: GameStateAwareConnectionManager | null = null;
   
   // Legacy heartbeat management (will be replaced)
   private heartbeatTimer: NodeJS.Timeout | null = null;
@@ -249,7 +249,7 @@ export class SimpleGameHandler {
   /**
    * Handle join matchmaking queue
    */
-  private async handleJoinQueue(socket: Socket, data: { classType: ClassType }): Promise<void> {
+  private async handleJoinQueue(socket: Socket, data: { classType: ClassTypeValue }): Promise<void> {
     const playerId = this.getPlayerIdFromSocket(socket);
     if (!playerId) return;
     
@@ -448,13 +448,13 @@ export class SimpleGameHandler {
             {
               id: player1Data.playerId,
               username: player1Data.username || 'Player1',
-              classType: (player1Data.classType || 'gunslinger') as ClassType,
+              classType: (player1Data.classType || 'gunslinger') as ClassTypeValue,
               rating: 1000 // Default rating for now
             },
             {
               id: player2Data.playerId,
               username: player2Data.username || 'Player2',
-              classType: (player2Data.classType || 'gunslinger') as ClassType,
+              classType: (player2Data.classType || 'gunslinger') as ClassTypeValue,
               rating: 1000 // Default rating for now
             },
             mapData,
@@ -989,7 +989,8 @@ export class SimpleGameHandler {
     const matchManager = this.matchManagers.get(matchId);
     if (!matchManager) return false;
 
-    const roundInfo = matchManager.getRoundInfo();
+    const matchState = matchManager.getMatchState();
+    const roundInfo = matchState.roundInfo;
     return roundInfo.roundState === 'active' || roundInfo.roundState === 'countdown';
   }
 
@@ -1271,13 +1272,13 @@ export class SimpleGameHandler {
    */
   private startGameStateAwareMonitoring(): void {
     this.heartbeatTimer = setInterval(() => {
-      const playersToCheck = this.gameStateConnectionManager.getPlayersForMonitoring();
+      const playersToCheck = this.gameStateConnectionManager?.getPlayersForMonitoring() || [];
       const disconnectedPlayers: string[] = [];
       
       for (const playerId of playersToCheck) {
-        const result = this.gameStateConnectionManager.shouldDisconnectPlayer(playerId);
+        const result = this.gameStateConnectionManager?.shouldDisconnectPlayer(playerId);
         
-        if (result.shouldDisconnect) {
+        if (result && result.shouldDisconnect) {
           disconnectedPlayers.push(playerId);
           logger.warn(`Player ${playerId} marked for disconnection`, {
             reason: result.reason,
@@ -1297,7 +1298,7 @@ export class SimpleGameHandler {
       
       // Log monitoring stats periodically for debugging
       if (Math.random() < 0.1) { // 10% chance each cycle
-        const stats = this.gameStateConnectionManager.getMonitoringStats();
+        const stats = this.gameStateConnectionManager?.getMonitoringStats();
         logger.debug('Connection monitoring stats', stats);
       }
       

@@ -42,7 +42,7 @@ export function Navbar() {
                       </span>
                     </div>
                     <span className="hidden md:block">{user?.username}</span>
-                    {isGuest && (
+                    {isGuest() && (
                       <span className="bg-yellow-900 text-yellow-300 px-2 py-1 rounded text-xs">
                         Guest
                       </span>
@@ -85,7 +85,7 @@ export function Navbar() {
                         onClick={handleLogout}
                         className="w-full text-left px-4 py-2 text-sm text-red-400 hover:text-red-300 hover:bg-arena-600 transition-colors"
                       >
-                        {isGuest ? 'End Session' : 'Logout'}
+                        {isGuest() ? 'End Session' : 'Logout'}
                       </button>
                     </div>
                   </div>

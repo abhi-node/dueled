@@ -13,7 +13,7 @@ import type {
   GameState
 } from '../types.js';
 import { GAME_CONSTANTS, WEAPON_CONFIGS } from '../types.js';
-import type { ClassType } from '@dueled/shared';
+import type { ClassTypeValue } from '@dueled/shared';
 import type { CollisionSystem } from './CollisionSystem.js';
 
 export interface ProjectileUpdateResult {
@@ -43,7 +43,7 @@ export class ProjectilePhysics {
     ownerId: string,
     startPosition: Position,
     angle: number,
-    classType: ClassType
+    classType: ClassTypeValue
   ): ProjectileState {
     const weaponConfig = WEAPON_CONFIGS[classType];
     const projectileId = `proj_${this.projectileIdCounter++}_${Date.now()}`;

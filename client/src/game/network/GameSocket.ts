@@ -25,21 +25,21 @@ export class GameSocket {
   private socket: Socket<ServerToClientEvents, ClientToServerEvents> | null = null;
   private connectionInfo: ConnectionInfo = { state: 'disconnected' };
   private reconnectAttempts = 0;
-  private heartbeatTimer: number | null = null;
+  // private heartbeatTimer: number | null = null; // Commented out for debugging
   private pingStartTime = 0;
   
   // Event callbacks
   private callbacks = {
-    onConnectionChange: (info: ConnectionInfo) => {},
-    onDeltaUpdate: (delta: DeltaUpdate) => {},
-    onMatchStart: (data: MatchStartData) => {},
-    onMatchEnd: (data: MatchEndData) => {},
-    onRoundStart: (data: RoundStartData) => {},
-    onRoundEnd: (data: RoundEndData) => {},
-    onCountdownTick: (roundNumber: number, countdown: number) => {},
-    onCountdownComplete: (roundNumber: number) => {},
-    onReturnToLobby: (matchId: string) => {},
-    onError: (error: NetworkError) => {}
+    onConnectionChange: (_info: ConnectionInfo) => {},
+    onDeltaUpdate: (_delta: DeltaUpdate) => {},
+    onMatchStart: (_data: MatchStartData) => {},
+    onMatchEnd: (_data: MatchEndData) => {},
+    onRoundStart: (_data: RoundStartData) => {},
+    onRoundEnd: (_data: RoundEndData) => {},
+    onCountdownTick: (_roundNumber: number, _countdown: number) => {},
+    onCountdownComplete: (_roundNumber: number) => {},
+    onReturnToLobby: (_matchId: string) => {},
+    onError: (_error: NetworkError) => {}
   };
   
   constructor() {
@@ -140,7 +140,7 @@ export class GameSocket {
       console.log('✅ [DEBUG] Event listeners setup complete');
       
       // Update connection state
-      if (this.socket.connected) {
+      if (this.socket && this.socket.connected) {
         console.log('🟢 [DEBUG] Socket is connected, updating state');
         this.updateConnectionState('connected');
         // COMMENTED OUT FOR DEBUGGING
@@ -447,18 +447,19 @@ export class GameSocket {
   // HEARTBEAT AND PING
   // ============================================================================
   
-  private startHeartbeat(): void {
-    this.heartbeatTimer = window.setInterval(() => {
-      this.sendPing();
-    }, NETWORK_CONSTANTS.HEARTBEAT_INTERVAL);
-  }
-  
-  private stopHeartbeat(): void {
-    if (this.heartbeatTimer) {
-      clearInterval(this.heartbeatTimer);
-      this.heartbeatTimer = null;
-    }
-  }
+  // Heartbeat methods commented out for debugging
+  // private startHeartbeat(): void {
+  //   this.heartbeatTimer = window.setInterval(() => {
+  //     this.sendPing();
+  //   }, NETWORK_CONSTANTS.HEARTBEAT_INTERVAL);
+  // }
+  // 
+  // private stopHeartbeat(): void {
+  //   if (this.heartbeatTimer) {
+  //     clearInterval(this.heartbeatTimer);
+  //     this.heartbeatTimer = null;
+  //   }
+  // }
   
   // ============================================================================
   // ERROR HANDLING AND RECONNECTION

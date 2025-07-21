@@ -4,14 +4,14 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../store/authStore';
 import { io, Socket } from 'socket.io-client';
 // Removed MatchFoundNotification import - now handled by socket events
-import type { ClassType } from '@dueled/shared';
+import type { ClassTypeValue } from '@dueled/shared';
 
 export function MainMenu() {
   const [isInQueue, setIsInQueue] = useState(false);
   // Default to gunslinger class
-  const [selectedClass, setSelectedClass] = useState<ClassType>('gunslinger' as ClassType);
+  const [selectedClass, setSelectedClass] = useState<ClassTypeValue>('gunslinger' as ClassTypeValue);
   // Keep the latest class in a ref so socket callbacks always use the up-to-date value
-  const selectedClassRef = useRef<ClassType>('gunslinger' as ClassType);
+  const selectedClassRef = useRef<ClassTypeValue>('gunslinger' as ClassTypeValue);
   const [queueStatus, setQueueStatus] = useState<{
     inQueue: boolean;
     estimatedWait: number;
@@ -396,9 +396,9 @@ export function MainMenu() {
         <h3 className="text-xl font-bold text-arena-300 mb-4">Choose Your Class</h3>
         <div className="grid grid-cols-3 gap-4 max-w-3xl">
           {[
-            { name: 'Gunslinger', icon: '🔫', color: 'text-silver-500', type: 'gunslinger' as ClassType, available: true },
-            { name: 'Demolitionist', icon: '💥', color: 'text-orange-500', type: 'demolitionist' as ClassType, available: false },
-            { name: 'Buckshot', icon: '🔥', color: 'text-red-500', type: 'buckshot' as ClassType, available: false },
+            { name: 'Gunslinger', icon: '🔫', color: 'text-silver-500', type: 'gunslinger' as ClassTypeValue, available: true },
+            { name: 'Demolitionist', icon: '💥', color: 'text-orange-500', type: 'demolitionist' as ClassTypeValue, available: false },
+            { name: 'Buckshot', icon: '🔥', color: 'text-red-500', type: 'buckshot' as ClassTypeValue, available: false },
           ].map((classType) => (
             <div
               key={classType.name}

@@ -21,7 +21,7 @@ import type {
   SpawnPoint
 } from '../types.js';
 import { GAME_CONSTANTS, WEAPON_CONFIGS } from '../types.js';
-import type { ClassType } from '@dueled/shared';
+import type { ClassTypeValue } from '@dueled/shared';
 import { getClassConfig } from '@dueled/shared';
 
 export class GameStateManager {
@@ -80,7 +80,7 @@ export class GameStateManager {
   /**
    * Add a player to the game state
    */
-  addPlayer(playerId: string, username: string, classType: ClassType): boolean {
+  addPlayer(playerId: string, username: string, classType: ClassTypeValue): boolean {
     if (this.state.players.has(playerId)) {
       logger.warn(`Player ${playerId} already exists in game state`);
       return false;

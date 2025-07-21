@@ -11,7 +11,7 @@ import { verifyToken } from '../utils/jwt.js';
 import { SimpleMatchmaking } from '../services/matchmaking/SimpleMatchmaking.js';
 import { logger } from '../utils/logger.js';
 import { rateLimit } from 'express-rate-limit';
-import type { ClassType } from '@dueled/shared';
+import type { ClassTypeValue } from '@dueled/shared';
 
 // Simple validation schemas
 const joinQueueSchema = z.object({
@@ -119,7 +119,7 @@ export class SimpleMatchmakingController {
         playerId: userId,
         username: username,
         rating: 1000, // Default rating, should fetch from DB
-        classType: classType as ClassType,
+        classType: classType as ClassTypeValue,
         queuedAt: Date.now()
       });
       

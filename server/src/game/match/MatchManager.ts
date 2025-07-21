@@ -19,12 +19,12 @@ import type {
   ProjectileState
 } from '../types.js';
 import { GAME_CONSTANTS, WEAPON_CONFIGS } from '../types.js';
-import type { ClassType } from '@dueled/shared';
+import type { ClassTypeValue } from '@dueled/shared';
 
 export interface MatchPlayer {
   id: string;
   username: string;
-  classType: ClassType;
+  classType: ClassTypeValue;
   rating: number;
   connected: boolean;
   lastInputTime: number;
@@ -72,8 +72,8 @@ export class MatchManager {
   
   constructor(
     matchId: string,
-    player1: { id: string; username: string; classType: ClassType; rating: number },
-    player2: { id: string; username: string; classType: ClassType; rating: number },
+    player1: { id: string; username: string; classType: ClassTypeValue; rating: number },
+    player2: { id: string; username: string; classType: ClassTypeValue; rating: number },
     mapData: MapData,
     callbacks: MatchManagerCallbacks = {}
   ) {

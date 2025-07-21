@@ -5,7 +5,7 @@ export interface Player {
   email?: string;
   isAnonymous: boolean;
   rating: number;
-  classType?: ClassType;
+  classType?: ClassTypeValue;
   position?: Vector2;
   health?: number;
   armor?: number;
@@ -16,19 +16,23 @@ export interface Vector2 {
   y: number;
 }
 
-export enum ClassType {
-  GUNSLINGER = 'gunslinger',
-  DEMOLITIONIST = 'demolitionist',
-  BUCKSHOT = 'buckshot'
-}
+export const ClassType = {
+  GUNSLINGER: 'gunslinger',
+  DEMOLITIONIST: 'demolitionist',
+  BUCKSHOT: 'buckshot'
+} as const;
+
+export type ClassTypeValue = typeof ClassType[keyof typeof ClassType];
 
 // Class-related interfaces are now exported from ClassConfigurations.js
 
-export enum DamageType {
-  PHYSICAL = 'physical',
-  EXPLOSIVE = 'explosive',
-  PIERCING = 'piercing'
-}
+export const DamageType = {
+  PHYSICAL: 'physical',
+  EXPLOSIVE: 'explosive',
+  PIERCING: 'piercing'
+} as const;
+
+export type DamageTypeValue = typeof DamageType[keyof typeof DamageType];
 
 // Authentication types
 export interface AuthRequest {
@@ -49,26 +53,28 @@ export interface Match {
   id: string;
   player1Id: string;
   player2Id: string;
-  player1Class: ClassType;
-  player2Class: ClassType;
-  status: MatchStatus;
+  player1Class: ClassTypeValue;
+  player2Class: ClassTypeValue;
+  status: MatchStatusValue;
   createdAt: Date;
   endedAt?: Date;
   winnerId?: string;
 }
 
-export enum MatchStatus {
-  WAITING = 'waiting',
-  IN_PROGRESS = 'in_progress',
-  COMPLETED = 'completed',
-  CANCELLED = 'cancelled',
-  ENDED = 'ended'
-}
+export const MatchStatus = {
+  WAITING: 'waiting',
+  IN_PROGRESS: 'in_progress',
+  COMPLETED: 'completed',
+  CANCELLED: 'cancelled',
+  ENDED: 'ended'
+} as const;
+
+export type MatchStatusValue = typeof MatchStatus[keyof typeof MatchStatus];
 
 // Matchmaking types
 export interface QueueEntry {
   playerId: string;
-  classType: ClassType;
+  classType: ClassTypeValue;
   rating: number;
   timestamp: number;
 }
@@ -81,7 +87,7 @@ export interface MatchmakingStatus {
 
 // WebSocket event types
 export interface GameAction {
-  type: ActionType;
+  type: ActionTypeValue;
   playerId: string;
   data: any;
   timestamp: number;
@@ -100,12 +106,14 @@ export interface GameAction {
   };
 }
 
-export enum ActionType {
-  MOVE = 'move',
-  ATTACK = 'attack',
-  USE_ABILITY = 'use_ability',
-  DISCONNECT = 'disconnect'
-}
+export const ActionType = {
+  MOVE: 'move',
+  ATTACK: 'attack',
+  USE_ABILITY: 'use_ability',
+  DISCONNECT: 'disconnect'
+} as const;
+
+export type ActionTypeValue = typeof ActionType[keyof typeof ActionType];
 
 // API response types
 export interface ApiResponse<T = any> {
@@ -123,7 +131,7 @@ export interface GameState {
   players: Map<string, Player>;
   arena: Arena;
   gameTime: number;
-  status: MatchStatus;
+  status: MatchStatusValue;
 }
 
 export interface Arena {
@@ -137,14 +145,16 @@ export interface Obstacle {
   id: string;
   position: Vector2;
   size: Vector2;
-  type: ObstacleType;
+  type: ObstacleTypeValue;
 }
 
-export enum ObstacleType {
-  WALL = 'wall',
-  PILLAR = 'pillar',
-  DESTRUCTIBLE = 'destructible'
-}
+export const ObstacleType = {
+  WALL: 'wall',
+  PILLAR: 'pillar',
+  DESTRUCTIBLE: 'destructible'
+} as const;
+
+export type ObstacleTypeValue = typeof ObstacleType[keyof typeof ObstacleType];
 
 // Projectile types for deterministic physics
 export interface ProjectileState {

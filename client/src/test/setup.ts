@@ -50,13 +50,23 @@ Object.defineProperty(window, 'location', {
 global.fetch = vi.fn();
 
 // Mock WebSocket
-global.WebSocket = vi.fn().mockImplementation(() => ({
+const MockWebSocket = vi.fn().mockImplementation(() => ({
   addEventListener: vi.fn(),
   removeEventListener: vi.fn(),
   send: vi.fn(),
   close: vi.fn(),
   readyState: 1,
 }));
+
+// Add static properties to MockWebSocket
+Object.assign(MockWebSocket, {
+  CONNECTING: 0,
+  OPEN: 1,
+  CLOSING: 2,
+  CLOSED: 3
+});
+
+global.WebSocket = MockWebSocket as any;
 
 // Mock ResizeObserver
 global.ResizeObserver = vi.fn().mockImplementation(() => ({
@@ -159,7 +169,7 @@ Object.defineProperty(global, 'crypto', {
 });
 
 // Mock Notification API
-global.Notification = vi.fn().mockImplementation(() => ({
+const MockNotification = vi.fn().mockImplementation(() => ({
   close: vi.fn(),
   onclick: null,
   onerror: null,
@@ -167,14 +177,16 @@ global.Notification = vi.fn().mockImplementation(() => ({
   onclose: null,
 }));
 
-Object.defineProperty(Notification, 'permission', {
+Object.defineProperty(MockNotification, 'permission', {
   value: 'granted',
   writable: true,
 });
 
-Object.defineProperty(Notification, 'requestPermission', {
+Object.defineProperty(MockNotification, 'requestPermission', {
   value: vi.fn().mockResolvedValue('granted'),
 });
+
+global.Notification = MockNotification as any;
 
 // Mock navigator
 Object.defineProperty(navigator, 'userAgent', {

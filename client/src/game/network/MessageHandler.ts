@@ -30,12 +30,12 @@ export class MessageHandler {
   
   // Event callbacks
   private callbacks = {
-    onStateUpdate: (state: ClientGameState) => {},
-    onPlayerUpdate: (playerId: string, player: ClientPlayerState) => {},
-    onProjectileUpdate: (projectileId: string, projectile: ClientProjectileState) => {},
-    onGameEvent: (event: GameEvent) => {},
-    onMatchUpdate: (matchInfo: Partial<ClientGameState>) => {},
-    onHitscanFired: (event: HitscanFiredEvent) => {}
+    onStateUpdate: (_state: ClientGameState) => {},
+    onPlayerUpdate: (_playerId: string, _player: ClientPlayerState) => {},
+    onProjectileUpdate: (_projectileId: string, _projectile: ClientProjectileState) => {},
+    onGameEvent: (_event: GameEvent) => {},
+    onMatchUpdate: (_matchInfo: Partial<ClientGameState>) => {},
+    onHitscanFired: (_event: HitscanFiredEvent) => {}
   };
   
   constructor() {
@@ -100,21 +100,15 @@ export class MessageHandler {
         
         // Weapon State
         weaponCooldown: 0,
-        lastAttackTime: 0,
         
         // Status
         isAlive: true,
         isMoving: false,
         isDashing: false,
-        dashCooldown: 0,
         
-        // Stats
-        roundKills: 0,
-        roundDamageDealt: 0,
-        
-        // Network
-        lastInputSequence: 0,
-        inputHistory: []
+        // Client-specific
+        isLocalPlayer: playerId === data.yourPlayerId,
+        lastUpdateTime: Date.now()
       };
       
       this.gameState.players.set(playerId, initialPlayer);
@@ -315,9 +309,7 @@ export class MessageHandler {
       player.health = delta.health;
     }
     
-    if (delta.maxHealth !== undefined) {
-      player.maxHealth = delta.maxHealth;
-    }
+    // maxHealth is not updated via deltas, it's set based on class
     
     if (delta.armor !== undefined) {
       player.armor = delta.armor;
@@ -376,11 +368,11 @@ export class MessageHandler {
     }
   }
   
-  private createProjectileFromDelta(delta: ProjectileDelta): ClientProjectileState | null {
+  private createProjectileFromDelta(delta: ProjectileDelta): ClientProjectileState | undefined {
     // Need full data to create projectile
     if (!delta.type || !delta.ownerId || !delta.position) {
       console.warn('Cannot create projectile from incomplete delta:', delta);
-      return null;
+      return undefined;
     }
     
     return {

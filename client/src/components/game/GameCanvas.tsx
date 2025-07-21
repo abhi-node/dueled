@@ -42,7 +42,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameEngineRef = useRef<GameEngine | null>(null);
   const rendererRef = useRef<RaycastRenderer | null>(null);
-  const animationFrameRef = useRef<number | undefined>();
+  const animationFrameRef = useRef<number | undefined>(undefined);
   
   // State
   const [gameState, setGameState] = useState<ClientGameState | null>(null);

@@ -2,7 +2,7 @@
  * Core Game Types - Compact, scalable data structures for server-authoritative gameplay
  */
 
-import type { ClassType } from '@dueled/shared';
+import type { ClassTypeValue } from '@dueled/shared';
 
 // ============================================================================
 // BASIC TYPES
@@ -24,7 +24,7 @@ export interface PlayerState {
   // Identity
   id: string;
   username: string;
-  classType: ClassType;
+  classType: ClassTypeValue;
   
   // Transform
   position: Position;
@@ -324,7 +324,7 @@ export interface WeaponConfig {
 }
 
 // Default weapon configs
-export const WEAPON_CONFIGS: Record<ClassType, WeaponConfig> = {
+export const WEAPON_CONFIGS: Record<ClassTypeValue, WeaponConfig> = {
   gunslinger: {
     type: 'six-shooter',
     damage: 37,           // Adjusted for new armor formula: 37 - 15 = 22 actual damage (3.6 shots)

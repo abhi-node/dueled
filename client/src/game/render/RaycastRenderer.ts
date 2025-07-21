@@ -8,7 +8,6 @@
 import type { 
   ClientGameState, 
   ClientPlayerState, 
-  ClientProjectileState,
   WallDefinition,
   Position 
 } from '../types/GameTypes.js';
@@ -16,7 +15,7 @@ import type { ClientGameStateManager } from '../core/GameState.js';
 import { RENDER_CONSTANTS } from '../types/GameConstants.js';
 import { distance, angleFromTo, normalizeAngle, Vector2 } from '../utils/MathUtils.js';
 import type { HitscanFiredEvent } from '@dueled/shared';
-import { TextureManager, type RGBAColor } from './TextureManager.js';
+import { TextureManager } from './TextureManager.js';
 import { SpriteManager, type ClassType } from './SpriteManager.js';
 
 interface RaycastHit {
@@ -355,13 +354,12 @@ export class RaycastRenderer {
     const wallRenderHeight = Math.max(0, screenWallBottom - screenWallTop);
     
     // Choose wall color based on orientation for depth perception
-    const baseColor = hit.isVertical ? this.colors.wall : this.colors.wallDark;
+    // const baseColor = hit.isVertical ? this.colors.wall : this.colors.wallDark; // For future use
     
     // Apply smooth distance-based shading with better curve, accounting for perspective scale
     const effectiveDistance = hit.distance * RENDER_CONSTANTS.PERSPECTIVE_SCALE;
     const normalizedDistance = Math.min(effectiveDistance / this.renderDistance, 1);
     const shadingFactor = Math.max(0.1, 1 - normalizedDistance * normalizedDistance); // Quadratic falloff
-    const wallColor = this.applyShading(baseColor, shadingFactor);
     
     // Render ceiling (above wall) with gradient sky
     if (screenWallTop > 0) {
@@ -370,7 +368,7 @@ export class RaycastRenderer {
     
     // Render wall (main section) with texture sampling
     if (wallRenderHeight > 0) {
-      this.renderTexturedWallSlice(x, sliceWidth, screenWallTop, screenWallBottom, wallTop, wallBottom, clampedWallHeight, hit, shadingFactor);
+      this.renderTexturedWallSlice(x, sliceWidth, screenWallTop, screenWallBottom, hit, shadingFactor);
     }
     
     // Render floor (below wall)
@@ -388,9 +386,6 @@ export class RaycastRenderer {
     sliceWidth: number, 
     screenWallTop: number, 
     screenWallBottom: number,
-    wallTop: number,
-    wallBottom: number,
-    wallHeight: number,
     hit: RaycastHit,
     shadingFactor: number
   ): void {
@@ -979,13 +974,11 @@ export class RaycastRenderer {
     const screenX = (normalizedAngle / this.fov + 0.5) * this.width;
     
     // Calculate perspective-corrected distance and screen Y position
-    const correctedDistance = distance * RENDER_CONSTANTS.PERSPECTIVE_SCALE;
-    const safeDistance = Math.max(correctedDistance, 0.01);
+    // const correctedDistance = distance * RENDER_CONSTANTS.PERSPECTIVE_SCALE; // For future use
+    // const safeDistance = Math.max(correctedDistance, 0.01); // For future use
     
     // Use a small tracer "height" to position it in the middle of the screen
     // This makes the tracer appear as a line at eye level
-    const tracerHeight = 0.1; // Small height for thin line
-    const projectedHeight = (this.height * tracerHeight) / safeDistance;
     const screenY = this.halfHeight; // Always at eye level
     
     return {

@@ -6,8 +6,6 @@
 
 import type { InputBatch } from './InputTypes.js';
 import type { 
-  ClientPlayerState, 
-  ClientProjectileState, 
   ClientMapData,
   GameEvent,
   Position,

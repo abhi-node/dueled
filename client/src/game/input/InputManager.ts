@@ -38,8 +38,6 @@ export class InputManager {
   
   // Mouse capture state
   private isPointerLocked = false;
-  private lastMouseX = 0;
-  private lastMouseY = 0;
   
   constructor(config: InputConfig) {
     this.config = config;

@@ -1,4 +1,4 @@
-import { ClassType } from '@dueled/shared';
+import { ClassTypeValue } from '@dueled/shared';
 
 /**
  * Database model for Player entity
@@ -24,7 +24,7 @@ export interface PlayerStatsModel {
   wins: number;
   losses: number;
   draws: number;
-  favorite_class?: ClassType;
+  favorite_class?: ClassTypeValue;
   total_damage_dealt: number;
   total_damage_taken: number;
   total_playtime_seconds: number;
@@ -43,7 +43,7 @@ export interface PlayerWithStats extends PlayerModel {
   wins: number;
   losses: number;
   draws: number;
-  favorite_class?: ClassType;
+  favorite_class?: ClassTypeValue;
   total_damage_dealt: number;
   total_damage_taken: number;
   total_playtime_seconds: number;
@@ -69,7 +69,7 @@ export interface CreatePlayerRequest {
 export interface UpdatePlayerRequest {
   username?: string;
   email?: string;
-  favorite_class?: ClassType;
+  favorite_class?: ClassTypeValue;
 }
 
 /**
@@ -79,7 +79,7 @@ export interface PlayerSearchFilters {
   username?: string;
   min_rating?: number;
   max_rating?: number;
-  class_filter?: ClassType;
+  class_filter?: ClassTypeValue;
   min_matches?: number;
   limit?: number;
   offset?: number;
@@ -94,7 +94,7 @@ export interface PlayerStatsUpdate {
   wins?: number;
   losses?: number;
   draws?: number;
-  favorite_class?: ClassType;
+  favorite_class?: ClassTypeValue;
   total_damage_dealt?: number;
   total_damage_taken?: number;
   total_playtime_seconds?: number;
@@ -115,7 +115,7 @@ export interface LeaderboardEntry {
   wins: number;
   losses: number;
   draws: number;
-  favorite_class?: ClassType;
+  favorite_class?: ClassTypeValue;
   highest_rating: number;
   win_streak: number;
   win_rate: number;

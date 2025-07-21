@@ -9,8 +9,7 @@ import type {
   ClientGameState,
   ClientPlayerState,
   ClientProjectileState,
-  Position,
-  Velocity
+  Position
 } from '../types/GameTypes.js';
 import type { InputCommand } from '../types/InputTypes.js';
 import { GAME_CONSTANTS } from '../types/GameConstants.js';
@@ -317,8 +316,6 @@ export class ClientGameStateManager {
   
   private applyLookPrediction(player: ClientPlayerState, input: InputCommand): void {
     const { angleDelta = 0 } = input.data;
-    
-    const oldAngle = player.angle;
     
     // Update facing angle
     player.angle += angleDelta;

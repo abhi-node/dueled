@@ -112,7 +112,7 @@ export function UserProfile() {
       <div className="card p-6">
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-2xl font-bold text-white">Profile</h1>
-          {isGuest && (
+          {isGuest() && (
             <span className="bg-yellow-900 text-yellow-300 px-3 py-1 rounded-full text-sm">
               Guest Account
             </span>
@@ -128,7 +128,7 @@ export function UserProfile() {
             <p className="text-white font-medium">{user.username}</p>
           </div>
           
-          {!isGuest && (
+          {!isGuest() && (
             <div>
               <label className="block text-sm font-medium text-arena-300 mb-1">
                 Email
@@ -149,14 +149,14 @@ export function UserProfile() {
               Account Type
             </label>
             <p className="text-white">
-              {isGuest ? 'Guest' : 'Registered'}
+              {isGuest() ? 'Guest' : 'Registered'}
             </p>
           </div>
         </div>
 
         {/* Actions */}
         <div className="flex flex-wrap gap-3">
-          {!isGuest && (
+          {!isGuest() && (
             <>
               <button
                 onClick={() => setIsEditing(!isEditing)}
@@ -176,13 +176,13 @@ export function UserProfile() {
             onClick={handleLogout}
             className="btn-danger px-4 py-2"
           >
-            {isGuest ? 'End Session' : 'Logout'}
+            {isGuest() ? 'End Session' : 'Logout'}
           </button>
         </div>
       </div>
 
       {/* Edit Profile Form */}
-      {isEditing && !isGuest && (
+      {isEditing && !isGuest() && (
         <div className="card p-6">
           <h2 className="text-xl font-semibold text-white mb-4">Edit Profile</h2>
           <form onSubmit={handleUpdateProfile} className="space-y-4">
@@ -250,7 +250,7 @@ export function UserProfile() {
       )}
 
       {/* Change Password Form */}
-      {showChangePassword && !isGuest && (
+      {showChangePassword && !isGuest() && (
         <div className="card p-6">
           <h2 className="text-xl font-semibold text-white mb-4">Change Password</h2>
           <form onSubmit={handleChangePassword} className="space-y-4">
@@ -339,7 +339,7 @@ export function UserProfile() {
       )}
 
       {/* Guest Account Notice */}
-      {isGuest && (
+      {isGuest() && (
         <div className="card p-6 border-yellow-600">
           <div className="flex items-start space-x-3">
             <svg className="w-6 h-6 text-yellow-500 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

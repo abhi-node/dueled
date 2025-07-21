@@ -1,4 +1,4 @@
-import { ClassType, MatchStatus } from '@dueled/shared';
+import { ClassTypeValue, MatchStatusValue } from '@dueled/shared';
 
 /**
  * Database model for Match entity
@@ -7,8 +7,8 @@ export interface MatchModel {
   id: string;
   player1_id: string;
   player2_id: string;
-  player1_class: ClassType;
-  player2_class: ClassType;
+  player1_class: ClassTypeValue;
+  player2_class: ClassTypeValue;
   winner_id?: string;
   match_duration?: number;
   arena_map: string;
@@ -16,7 +16,7 @@ export interface MatchModel {
   player2_rating_before?: number;
   player1_rating_after?: number;
   player2_rating_after?: number;
-  status: MatchStatus;
+  status: MatchStatusValue;
   match_type: string;
   created_at: Date;
   started_at?: Date;
@@ -42,8 +42,8 @@ export interface MatchEventModel {
 export interface CreateMatchRequest {
   player1_id: string;
   player2_id: string;
-  player1_class: ClassType;
-  player2_class: ClassType;
+  player1_class: ClassTypeValue;
+  player2_class: ClassTypeValue;
   arena_map?: string;
   match_type?: string;
   player1_rating_before?: number;
@@ -56,7 +56,7 @@ export interface CreateMatchRequest {
 export interface UpdateMatchRequest {
   winner_id?: string;
   match_duration?: number;
-  status?: MatchStatus;
+  status?: MatchStatusValue;
   player1_rating_after?: number;
   player2_rating_after?: number;
   started_at?: Date;
@@ -71,9 +71,9 @@ export interface MatchHistoryFilters {
   player1_id?: string;
   player2_id?: string;
   winner_id?: string;
-  class_filter?: ClassType;
+  class_filter?: ClassTypeValue;
   match_type?: string;
-  status?: MatchStatus;
+  status?: MatchStatusValue;
   start_date?: Date;
   end_date?: Date;
   limit?: number;
@@ -97,7 +97,7 @@ export interface MatchStatsSummary {
   completed_matches: number;
   cancelled_matches: number;
   average_duration: number;
-  class_distribution: Record<ClassType, number>;
+  class_distribution: Record<ClassTypeValue, number>;
   map_distribution: Record<string, number>;
 }
 

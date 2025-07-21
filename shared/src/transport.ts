@@ -5,7 +5,7 @@
  * This ensures consistency and prevents event name drift between client and server.
  */
 
-import type { Vector2, ClassType } from './types';
+import type { Vector2, ClassTypeValue } from './types';
 
 /**
  * WebSocket event constants - use these instead of string literals
@@ -44,7 +44,7 @@ export interface MovePayload {
   position: Vector2;    // Tile coordinates (not pixels)
   angle: number;        // Facing direction in radians (0 = +X east, counter-clockwise)
   isMoving: boolean;    // Whether the player is actively moving
-  classType?: ClassType;
+  classType?: ClassTypeValue;
   timestamp: number;    // Client timestamp for lag compensation
 }
 
@@ -53,7 +53,7 @@ export interface MovePayload {
  */
 export interface RotatePayload {
   angle: number;        // Facing direction in radians (0 = +X east, counter-clockwise)
-  classType?: ClassType;
+  classType?: ClassTypeValue;
   timestamp: number;    // Client timestamp for lag compensation
 }
 
@@ -112,7 +112,7 @@ export interface GameUpdatePayload {
     position: Vector2;
     velocity: Vector2;
     rotation: number;     // Authoritative facing direction
-    classType: ClassType;
+    classType: ClassTypeValue;
     health: number;
     isAlive: boolean;
   }>;
