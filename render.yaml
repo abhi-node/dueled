@@ -5,14 +5,12 @@ databases:
 services:
   - type: redis
     name: dueled-redis
-    plan: starter
     maxmemoryPolicy: allkeys-lru
     ipAllowList: []
 
   - type: web
     name: dueled-backend
     runtime: node
-    plan: starter
     buildCommand: npm ci && npm run build:shared && npm run build:server
     startCommand: cd server && npm start
     healthCheckPath: /health
@@ -71,7 +69,6 @@ services:
 
   - type: web
     name: dueled-frontend
-    plan: starter
     env: static
     buildCommand: cd client && npm install && npm run build
     staticPublishPath: dist  # Relative to client directory since we cd into it
