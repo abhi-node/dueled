@@ -35,6 +35,14 @@ const io = new SocketIOServer(server, {
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
+// Validate port number
+if (isNaN(PORT) || PORT < 1 || PORT > 65535) {
+  logger.error(`Invalid port number: ${process.env.PORT}. Using default port 3000.`);
+  process.exit(1);
+}
+
+logger.info(`Port configuration: process.env.PORT=${process.env.PORT}, parsed PORT=${PORT}`);
+
 // Initialize services
 async function initializeServices() {
   await db.connect();
