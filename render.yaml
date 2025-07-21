@@ -35,7 +35,7 @@ services:
         generateValue: true
       - key: CLIENT_URL
         fromService:
-          type: static_site
+          type: web
           name: dueled-frontend
           property: url
       # WebSocket Configuration
@@ -73,7 +73,7 @@ services:
     domains:
       - dueled-api.onrender.com
 
-  - type: static_site
+  - type: web
     name: dueled-frontend
     buildCommand: npm ci && npm run build:shared && npm run build:client
     publishPath: ./client/dist
