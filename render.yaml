@@ -2,8 +2,6 @@ databases:
   - name: dueled-postgres
     databaseName: dueled
     user: dueled_user
-    plan: basic
-
 services:
   - type: redis
     name: dueled-redis
