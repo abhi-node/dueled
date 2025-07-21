@@ -34,10 +34,7 @@ services:
       - key: JWT_SECRET
         generateValue: true
       - key: CLIENT_URL
-        fromService:
-          type: web
-          name: dueled-frontend
-          property: url
+        value: https://dueled-frontend.onrender.com
       # WebSocket Configuration
       - key: WEBSOCKET_HEARTBEAT_INTERVAL
         value: 30000
