@@ -2,7 +2,7 @@ databases:
   - name: dueled-postgres
     databaseName: dueled
     user: dueled_user
-    plan: starter
+    plan: basic
 
 services:
   - type: redis
@@ -73,7 +73,7 @@ services:
 
   - type: web
     name: dueled-frontend
-    plan: free
+    plan: starter
     env: static
     buildCommand: cd client && npm install && npm run build
     staticPublishPath: dist  # Relative to client directory since we cd into it
