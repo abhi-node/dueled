@@ -75,7 +75,7 @@ export function MainMenu() {
     console.log('Connecting to WebSocket with token...');
     setConnectionStatus('connecting');
     
-    const newSocket = io('http://localhost:3000', {
+    const newSocket = io(import.meta.env.VITE_API_URL || 'http://localhost:3000', {
       auth: { token },
       autoConnect: true,
     });

@@ -66,7 +66,12 @@ export class SimpleAuth {
   private config: SimpleAuthConfig;
   constructor(config?: SimpleAuthConfig) {
     this.config = config || {
-      jwtSecret: process.env.JWT_SECRET || 'default-secret',
+      jwtSecret: process.env.JWT_SECRET || (() => {
+        if (process.env.NODE_ENV === 'production') {
+          throw new Error('JWT_SECRET environment variable is required in production');
+        }
+        return 'development-only-secret-change-in-production';
+      })(),
       jwtExpiration: '1h',
       saltRounds: 12,
       allowGuestPlay: true
@@ -592,7 +597,12 @@ export class SimpleAuth {
  * Default configuration for SimpleAuth
  */
 export const createDefaultAuthConfig = (): SimpleAuthConfig => ({
-  jwtSecret: process.env.JWT_SECRET || 'your-secret-key-change-in-production',
+  jwtSecret: process.env.JWT_SECRET || (() => {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('JWT_SECRET environment variable is required in production');
+    }
+    return 'development-only-secret-change-in-production';
+  })(),
   jwtExpiration: '24h',
   saltRounds: 10,
   allowGuestPlay: true

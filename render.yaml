@@ -1,0 +1,99 @@
+databases:
+  - name: dueled-postgres
+    databaseName: dueled
+    user: dueled_user
+    plan: starter
+
+services:
+  - type: redis
+    name: dueled-redis
+    plan: starter
+    maxmemoryPolicy: allkeys-lru
+
+  - type: web
+    name: dueled-backend
+    runtime: node
+    plan: starter
+    buildCommand: npm ci && npm run build:shared && npm run build:server
+    startCommand: cd server && npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: $PORT
+      - key: DATABASE_URL
+        fromDatabase:
+          name: dueled-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: dueled-redis
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: CLIENT_URL
+        fromService:
+          type: static_site
+          name: dueled-frontend
+          property: url
+      # WebSocket Configuration
+      - key: WEBSOCKET_HEARTBEAT_INTERVAL
+        value: 30000
+      - key: WEBSOCKET_CONNECTION_TIMEOUT
+        value: 60000
+      - key: MAX_PLAYERS_PER_MATCH
+        value: 2
+      # Rate Limiting Configuration
+      - key: RATE_LIMIT_WINDOW_MS
+        value: 900000
+      - key: RATE_LIMIT_MAX_REQUESTS
+        value: 100
+      - key: API_RATE_LIMIT_WINDOW_MS
+        value: 900000
+      - key: API_RATE_LIMIT_MAX_REQUESTS
+        value: 60
+      - key: HEALTH_RATE_LIMIT_WINDOW_MS
+        value: 60000
+      - key: HEALTH_RATE_LIMIT_MAX_REQUESTS
+        value: 10
+      # Server Configuration
+      - key: REQUEST_TIMEOUT_MS
+        value: 30000
+      - key: HEALTH_CHECK_INTERVAL_MS
+        value: 30000
+      # Connection Policies
+      - key: CONNECTION_HEARTBEAT_INTERVAL
+        value: 30000
+      - key: CONNECTION_TIMEOUT
+        value: 60000
+      - key: CONNECTION_GRACE_PERIOD
+        value: 2000
+    domains:
+      - dueled-api.onrender.com
+
+  - type: static_site
+    name: dueled-frontend
+    buildCommand: npm ci && npm run build:shared && npm run build:client
+    publishPath: ./client/dist
+    pullRequestPreviewsEnabled: false
+    envVars:
+      - key: VITE_API_URL
+        fromService:
+          type: web
+          name: dueled-backend
+          property: url
+    domains:
+      - dueled.onrender.com
+    headers:
+      - path: /*
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

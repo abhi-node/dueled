@@ -499,7 +499,7 @@ export class RaycastRenderer {
             position: renderPosition,
             distance: dist,
             angle: angleFromTo(localPlayer.position, renderPosition),
-            size: 0.8,
+            size: 1.2, // Increased from 0.8 to make players more visible
             color: this.colors.player,
             type: 'player',
             id: playerId,
@@ -562,8 +562,8 @@ export class RaycastRenderer {
     // Calculate screen position
     const screenX = (normalizedAngle / this.fov + 0.5) * this.width;
     
-    // Calculate sprite size
-    const spriteHeight = (this.height * sprite.size) / Math.max(sprite.distance, 0.1);
+    // Calculate sprite size - 60% smaller than 10x (so 4x bigger than original)
+    const spriteHeight = (this.height * sprite.size * 4) / Math.max(sprite.distance, 0.1);
     const spriteWidth = spriteHeight; // Square sprites
     
     // Check line-of-sight to sprite - if blocked by walls, don't render

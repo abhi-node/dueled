@@ -33,7 +33,7 @@ interface GameCanvasProps {
 export const GameCanvas: React.FC<GameCanvasProps> = ({
   matchId,
   selectedClass,
-  serverUrl = 'http://localhost:3000',
+  serverUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000',
   authToken,
   onGameEnd,
   onError
@@ -420,6 +420,19 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         rendererRef.current = null;
       }
       
+      // Clean up global socket to prevent reconnection attempts
+      const globalSocket = (window as any).gameSocket;
+      if (globalSocket) {
+        console.log('🧹 [DEBUG] Cleaning up global socket');
+        try {
+          globalSocket.removeAllListeners();
+          globalSocket.disconnect();
+        } catch (socketError) {
+          console.error('❌ [DEBUG] Error cleaning up global socket:', socketError);
+        }
+        (window as any).gameSocket = null;
+      }
+      
       // Reset initialization state
       initializingRef.current = false;
       
@@ -442,6 +455,19 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       gameEngineRef.current.sendExitMatch();
       
       console.log('📤 [DEBUG] Exit match event sent, server will handle disconnection');
+    }
+    
+    // Clean up global socket immediately to prevent reconnection attempts
+    const globalSocket = (window as any).gameSocket;
+    if (globalSocket) {
+      console.log('🧹 [DEBUG] Immediately cleaning up global socket on exit');
+      try {
+        globalSocket.removeAllListeners();
+        globalSocket.disconnect();
+        (window as any).gameSocket = null;
+      } catch (socketError) {
+        console.error('❌ [DEBUG] Error cleaning up global socket on exit:', socketError);
+      }
     }
     
     // The onGameEnd will be called when we receive the match_end event from server

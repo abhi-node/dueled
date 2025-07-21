@@ -75,9 +75,13 @@ app.use(cors({
   origin: (origin, callback) => {
     const allowedOrigins = [
       process.env.CLIENT_URL || 'http://localhost:5173',
-      'http://localhost:3000',
-      'http://localhost:5000',
-    ];
+      process.env.ADDITIONAL_CORS_ORIGINS || 'http://localhost:3000',
+    ].concat(
+      // Parse additional CORS origins from environment variable (comma-separated)
+      process.env.ADDITIONAL_CORS_ORIGINS 
+        ? process.env.ADDITIONAL_CORS_ORIGINS.split(',').map(url => url.trim())
+        : ['http://localhost:3000', 'http://localhost:5000']
+    );
     
     // Allow requests with no origin (mobile apps, etc.)
     if (!origin) return callback(null, true);
@@ -96,13 +100,14 @@ app.use(cors({
 }));
 
 // Rate limiting configurations
+const rateLimitWindowMs = parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000'); // 15 minutes default
 const globalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
+  windowMs: rateLimitWindowMs,
+  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100'),
   message: {
     success: false,
     error: 'Too many requests from this IP',
-    retryAfter: 15 * 60 * 1000
+    retryAfter: rateLimitWindowMs
   },
   standardHeaders: true,
   legacyHeaders: false,
@@ -111,28 +116,30 @@ const globalLimiter = rateLimit({
     res.status(429).json({
       success: false,
       error: 'Too many requests from this IP',
-      retryAfter: 15 * 60 * 1000
+      retryAfter: rateLimitWindowMs
     });
   }
 });
 
 // API-specific rate limiting
+const apiRateLimitWindowMs = parseInt(process.env.API_RATE_LIMIT_WINDOW_MS || '900000'); // 15 minutes default
 const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 60,
+  windowMs: apiRateLimitWindowMs,
+  max: parseInt(process.env.API_RATE_LIMIT_MAX_REQUESTS || '60'),
   message: {
     success: false,
     error: 'Too many API requests',
-    retryAfter: 15 * 60 * 1000
+    retryAfter: apiRateLimitWindowMs
   },
   standardHeaders: true,
   legacyHeaders: false,
 });
 
 // Health check rate limiting (more lenient)
+const healthRateLimitWindowMs = parseInt(process.env.HEALTH_RATE_LIMIT_WINDOW_MS || '60000'); // 1 minute default
 const healthLimiter = rateLimit({
-  windowMs: 1 * 60 * 1000, // 1 minute
-  max: 10,
+  windowMs: healthRateLimitWindowMs,
+  max: parseInt(process.env.HEALTH_RATE_LIMIT_MAX_REQUESTS || '10'),
   message: {
     success: false,
     error: 'Too many health check requests'
@@ -167,7 +174,8 @@ app.use(securityHeaders);
 
 // Request timeout middleware
 app.use((req, res, next) => {
-  req.setTimeout(30000, () => {
+  const timeoutMs = parseInt(process.env.REQUEST_TIMEOUT_MS || '30000');
+  req.setTimeout(timeoutMs, () => {
     logger.warn(`Request timeout for ${req.method} ${req.path}`);
     res.status(408).json({
       success: false,
@@ -232,7 +240,11 @@ const gameHandler = new SimpleGameHandler(
   simpleMatchmaking,
   simpleConnectionManager,
   undefined, // SimpleAuth will use default
-  { heartbeatInterval: 30000, connectionTimeout: 60000, maxPlayersPerMatch: 2 }
+  { 
+    heartbeatInterval: parseInt(process.env.WEBSOCKET_HEARTBEAT_INTERVAL || '30000'),
+    connectionTimeout: parseInt(process.env.WEBSOCKET_CONNECTION_TIMEOUT || '60000'),
+    maxPlayersPerMatch: parseInt(process.env.MAX_PLAYERS_PER_MATCH || '2')
+  }
 );
 
 // Store gameHandler reference for metrics
@@ -344,7 +356,7 @@ async function startServer() {
           logger.error('Redis reconnection failed:', error);
         }
       }
-    }, 30000); // Check every 30 seconds
+    }, parseInt(process.env.HEALTH_CHECK_INTERVAL_MS || '30000')); // Check every 30 seconds by default
     
     // Simple matchmaking processes queue automatically
     

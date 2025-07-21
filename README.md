@@ -139,22 +139,38 @@ npm run lint         # Lint server code
 
 ### Environment Variables
 
-**Server (.env)**
+**Server (.env)** - Essential Variables:
 ```bash
 PORT=3000
 NODE_ENV=development
 CLIENT_URL=http://localhost:5173
-JWT_SECRET=your-secret-key
+JWT_SECRET=your-super-secret-jwt-key-change-this-in-production-min-32-chars
 DATABASE_URL=postgresql://dueled_user:dueled_password@localhost:5433/dueled
 REDIS_URL=redis://localhost:6380
 ```
 
-**Client (.env)**
+**Client (.env)**:
 ```bash
 VITE_API_URL=http://localhost:3000
-VITE_WS_URL=http://localhost:3000
-VITE_APP_NAME=Dueled
 ```
+
+**Additional Configuration** (all optional with sensible defaults):
+```bash
+# WebSocket & Game Configuration
+WEBSOCKET_HEARTBEAT_INTERVAL=30000
+WEBSOCKET_CONNECTION_TIMEOUT=60000
+MAX_PLAYERS_PER_MATCH=2
+
+# Rate Limiting
+RATE_LIMIT_WINDOW_MS=900000
+RATE_LIMIT_MAX_REQUESTS=100
+
+# Server Timeouts
+REQUEST_TIMEOUT_MS=30000
+HEALTH_CHECK_INTERVAL_MS=30000
+```
+
+📝 **See `.env.example` files for complete configuration options**
 
 ## 🧪 Database & Testing
 
