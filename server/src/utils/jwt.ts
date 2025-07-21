@@ -24,7 +24,7 @@ export interface RefreshTokenPayload {
 }
 
 /**
- * Sign an access token with RS256 algorithm
+ * Sign an access token with configured algorithm
  */
 export function signAccessToken(payload: Omit<JwtPayload, 'jti' | 'iat' | 'exp'>): string {
   return jwt.sign(
@@ -34,7 +34,7 @@ export function signAccessToken(payload: Omit<JwtPayload, 'jti' | 'iat' | 'exp'>
     },
     jwtConfig.privateKey,
     { 
-      algorithm: 'RS256', 
+      algorithm: jwtConfig.algorithm, 
       expiresIn: jwtConfig.accessTtl,
       issuer: jwtConfig.issuer,
       audience: jwtConfig.audience
@@ -43,7 +43,7 @@ export function signAccessToken(payload: Omit<JwtPayload, 'jti' | 'iat' | 'exp'>
 }
 
 /**
- * Sign a refresh token with RS256 algorithm
+ * Sign a refresh token with configured algorithm
  */
 export function signRefreshToken(sid: string, userId: string): string {
   return jwt.sign(
@@ -54,7 +54,7 @@ export function signRefreshToken(sid: string, userId: string): string {
     },
     jwtConfig.privateKey,
     { 
-      algorithm: 'RS256', 
+      algorithm: jwtConfig.algorithm, 
       expiresIn: jwtConfig.refreshTtl,
       issuer: jwtConfig.issuer,
       audience: jwtConfig.audience
@@ -63,11 +63,11 @@ export function signRefreshToken(sid: string, userId: string): string {
 }
 
 /**
- * Verify a token with RS256 algorithm and clock tolerance
+ * Verify a token with configured algorithm and clock tolerance
  */
 export function verifyToken<T = JwtPayload>(token: string): T {
   return jwt.verify(token, jwtConfig.publicKey, { 
-    algorithms: ['RS256'],
+    algorithms: [jwtConfig.algorithm],
     issuer: jwtConfig.issuer,
     audience: jwtConfig.audience,
     clockTolerance: 60 // 60 seconds tolerance for clock skew
