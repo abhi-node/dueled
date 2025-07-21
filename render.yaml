@@ -70,7 +70,7 @@ services:
   - type: web
     name: dueled-frontend
     env: static
-    buildCommand: npm install && cd ../shared && npm install && npm run build && cd ../client && npm run build
+    buildCommand: npm install && cd shared && npm install && npm run build && cd ../client && npm install && npm run build
     staticPublishPath: client/dist
     rootDir: .
     envVars:
