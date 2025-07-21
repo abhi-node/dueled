@@ -33,15 +33,20 @@ const io = new SocketIOServer(server, {
   },
 });
 
-const PORT = parseInt(process.env.PORT || '3000', 10);
-
-// Validate port number
-if (isNaN(PORT) || PORT < 1 || PORT > 65535) {
-  logger.error(`Invalid port number: ${process.env.PORT}. Using default port 3000.`);
-  process.exit(1);
+// Handle invalid PORT environment variable (like "$PORT" literal string)
+let PORT = 3000; // Default fallback
+if (process.env.PORT && process.env.PORT !== '$PORT') {
+  const parsedPort = parseInt(process.env.PORT, 10);
+  if (!isNaN(parsedPort) && parsedPort > 0 && parsedPort <= 65535) {
+    PORT = parsedPort;
+  } else {
+    logger.warn(`Invalid PORT value: ${process.env.PORT}, using default 3000`);
+  }
+} else {
+  logger.warn(`PORT not set or invalid (${process.env.PORT}), using default 3000`);
 }
 
-logger.info(`Port configuration: process.env.PORT=${process.env.PORT}, parsed PORT=${PORT}`);
+logger.info(`Port configuration: process.env.PORT=${process.env.PORT}, using PORT=${PORT}`);
 
 // Initialize services
 async function initializeServices() {
