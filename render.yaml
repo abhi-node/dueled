@@ -70,9 +70,9 @@ services:
   - type: web
     name: dueled-frontend
     env: static
-    buildCommand: npm install && cd shared && npm install && npm run build && cd ../client && npm install && npm run build
-    staticPublishPath: client/dist
-    rootDir: .
+    buildCommand: npm run build:shared && npm run build
+    staticPublishPath: dist
+    rootDir: client
     envVars:
       - key: VITE_API_URL
         value: https://dueled-backend.onrender.com
