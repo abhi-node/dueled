@@ -1,6 +1,27 @@
-# Dueled - 1v1 Combat Simulator
+# Dueled - Modern Arena Combat
 
-Real-time 1v1 combat simulator with class-based gameplay built with React, Node.js, and Phaser 3.
+**Real-time 1v1 arena combat game with Doom-style raycasting rendering and class-based gameplay.**
+
+Experience intense, fast-paced duels in retro-styled 3D arenas. Choose from three distinct classes, master their unique weapons and abilities, and dominate the battlefield in this modern take on classic arena shooters.
+
+## 🎮 Game Features
+
+### 🔫 Three Combat Classes
+- **🤠 Gunslinger**: Precision marksman with hitscan weapons. Lightning-fast draws and deadly accuracy at long range.
+- **💥 Demolitionist**: Explosive specialist with area-denial weapons. Heavy armor and devastating AOE attacks.
+- **🎯 Buckshot**: Close-quarters combat expert with spread weapons. Deadly in confined spaces with powerful knockback.
+
+### 🏟️ Arena Combat
+- **Doom-Style Rendering**: Retro 3D raycasting engine for authentic old-school aesthetics
+- **Real-time 1v1 Duels**: Fast-paced competitive matches with responsive controls  
+- **Dynamic Environments**: Stone arenas with walls, obstacles, and tactical positioning
+- **Minimap & HUD**: Full situational awareness with health, ammo, and ability cooldowns
+
+### ⚡ Core Mechanics
+- **Hitscan & Ballistic Weapons**: Mix of instant-hit and projectile-based combat
+- **Special Abilities**: Each class has unique primary and ultimate abilities
+- **Movement System**: Smooth WASD movement with dash mechanics and stamina
+- **Collision Detection**: Precise physics for fair and responsive gameplay
 
 ## 🚀 Quick Start
 
@@ -51,43 +72,63 @@ Dueled/
 ├── client/                 # React frontend (Vite + TypeScript)
 │   ├── src/
 │   │   ├── components/     # React components
-│   │   │   ├── auth/      # Authentication components
-│   │   │   ├── game/      # Game-specific UI
-│   │   │   ├── lobby/     # Matchmaking and lobby
+│   │   │   ├── auth/      # Authentication system
+│   │   │   ├── game/      # Game UI and HUD
+│   │   │   ├── lobby/     # Matchmaking and menus
 │   │   │   └── common/    # Shared components
-│   │   ├── game/          # Phaser 3 game engine
-│   │   │   └── scenes/    # Game scenes
+│   │   ├── game/          # Custom raycasting game engine
+│   │   │   ├── core/      # Game engine and state management
+│   │   │   ├── render/    # Raycasting renderer and graphics
+│   │   │   ├── input/     # Input handling and commands
+│   │   │   ├── movement/  # Movement prediction and physics
+│   │   │   ├── network/   # WebSocket communication
+│   │   │   └── types/     # Game-specific TypeScript definitions
 │   │   ├── hooks/         # Custom React hooks
-│   │   ├── services/      # API and WebSocket services
-│   │   └── store/         # State management
+│   │   ├── services/      # API and authentication services
+│   │   └── store/         # State management (Zustand)
 ├── server/                # Node.js backend (Express + TypeScript)
 │   ├── src/
 │   │   ├── controllers/   # API route handlers
-│   │   ├── services/      # Business logic
-│   │   ├── middleware/    # Express middleware
-│   │   ├── websocket/     # Socket.IO handlers
-│   │   └── utils/         # Utility functions
+│   │   ├── game/          # Game logic and systems
+│   │   │   ├── combat/    # Combat resolution and damage
+│   │   │   ├── physics/   # Server-side physics validation
+│   │   │   ├── match/     # Match management and state
+│   │   │   └── world/     # World data and entity management
+│   │   ├── services/      # Authentication and matchmaking
+│   │   ├── websocket/     # Real-time game communication
+│   │   └── middleware/    # Express middleware and validation
 ├── shared/                # Shared types and utilities
-│   └── src/types/         # TypeScript definitions
-└── _docs/                 # Documentation
-    ├── planning/          # PRD and architecture
+│   ├── src/
+│   │   ├── classes/       # Class configurations and stats
+│   │   ├── movement/      # Movement calculations and validation
+│   │   └── types/         # Shared TypeScript definitions
+└── _docs/                 # Documentation and planning
+    ├── planning/          # PRD and architecture docs
     └── phases/            # Implementation phases
 ```
 
-## 🎮 Current Features
+## 🎯 Class System
 
-### ✅ Completed (Week 1)
-- **Monorepo Setup**: Client, server, and shared packages
-- **Authentication System**: Login, register, and anonymous play
-- **Main Menu**: Class selection and matchmaking UI
-- **Basic Game Engine**: Phaser 3 integration with simple arena
-- **Real-time Communication**: Socket.IO WebSocket setup
-- **Responsive UI**: Tailwind CSS with game-themed styling
+### 🤠 Gunslinger
+**Role**: Precision Marksman  
+- **Weapon**: Six-Shooter (Hitscan)
+- **Primary**: Quick Draw - Instant shot with increased damage
+- **Ultimate**: Fan the Hammer - Rapid 6-shot burst
+- **Playstyle**: Long-range precision, high mobility, glass cannon
 
-### 🔄 In Progress
-- Database integration (PostgreSQL)
-- Redis session management
-- Advanced matchmaking system
+### 💥 Demolitionist  
+**Role**: Explosive Specialist
+- **Weapon**: Grenade Launcher (Ballistic AOE)
+- **Primary**: Sticky Bombs - Delayed explosive traps
+- **Ultimate**: Carpet Bomb - Area devastation
+- **Playstyle**: Area denial, heavy armor, crowd control
+
+### 🎯 Buckshot
+**Role**: Close-Quarters Specialist
+- **Weapon**: Combat Shotgun (Spread)
+- **Primary**: Shell Shock - Powerful knockback blast
+- **Ultimate**: Dragon Breath - Fire damage cone
+- **Playstyle**: Close-range dominance, mobility, burst damage
 
 ## 🛠️ Available Scripts
 
@@ -128,13 +169,6 @@ npm run start        # Start production server
 npm run lint         # Lint server code
 ```
 
-## 🎯 Game Classes
-
-- **🗡️ Berserker**: High damage, heavy armor, rage mode
-- **🧙 Mage**: Ice projectiles, crowd control, medium range
-- **💣 Bomber**: AOE explosives, armor penetration
-- **🏹 Archer**: Long range, piercing shots, high mobility
-
 ## 🔧 Configuration
 
 ### Environment Variables
@@ -172,18 +206,38 @@ HEALTH_CHECK_INTERVAL_MS=30000
 
 📝 **See `.env.example` files for complete configuration options**
 
+## 🎮 Technical Highlights
+
+### Custom Raycasting Engine
+- **Doom-Style 3D**: Classic pseudo-3D rendering technique
+- **60 FPS Performance**: Optimized rendering pipeline
+- **Texture Mapping**: Wall, floor, and ceiling textures
+- **Sprite Rendering**: 2D sprites in 3D space with proper depth sorting
+
+### Real-Time Networking
+- **WebSocket Architecture**: Low-latency bi-directional communication
+- **Client-Side Prediction**: Smooth movement with lag compensation  
+- **Server Reconciliation**: Authoritative game state with client validation
+- **Input Buffering**: Reliable command processing
+
+### Modern Development
+- **TypeScript**: Full type safety across client, server, and shared code
+- **Modular Architecture**: Clean separation of concerns
+- **Hot Reloading**: Instant development feedback
+- **Docker Integration**: Consistent development environment
+
 ## 🧪 Database & Testing
 
 ### Docker Development Database
-- **PostgreSQL**: Full database with schema, indexes, and seed data
-- **Redis**: Session management and caching
+- **PostgreSQL**: Player data, match history, and rankings
+- **Redis**: Session management and real-time data caching
 - **Graceful Fallbacks**: Works without Docker (in-memory storage)
-- **Test Data**: Includes sample players and matches
+- **Test Data**: Includes sample players and match statistics
 
 ### Testing Framework
 - **Jest**: Unit and integration tests
-- **Playwright**: End-to-end testing
-- **Database Testing**: Isolated test database
+- **Vitest**: Modern test runner for Vite projects
+- **Database Testing**: Isolated test database for reliable testing
 
 ## 📚 Development Notes
 
@@ -191,16 +245,10 @@ HEALTH_CHECK_INTERVAL_MS=30000
 - **Type Safety**: Full TypeScript support across all packages
 - **Code Quality**: ESLint and Prettier configured
 - **Modular Architecture**: Clean separation between packages
-- **Game Engine**: Phaser 3 integrated with React lifecycle
-
-## 🎯 Next Steps (Week 2)
-
-1. Complete authentication implementation
-2. Add WebSocket matchmaking
-3. Implement basic player movement
-4. Create game state synchronization
-5. Add match history and statistics
+- **Game Engine**: Custom raycasting engine integrated with React
 
 ---
 
 **Ready to duel? Start the development environment and visit http://localhost:5173**
+
+*Experience the thrill of 1v1 arena combat with retro aesthetics and modern gameplay mechanics.*
